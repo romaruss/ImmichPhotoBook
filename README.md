@@ -103,6 +103,13 @@ Go to Configuration in the app:
 
 ---
 
+## Generate Map
+register to https://client.stadiamaps.com and get an api key
+add .env file with key 
+STADIA_MAPS_API_KEY=XXXX
+
+---
+
 ## Export formats
 PDF: Standard print-ready PDF with crop marks.
 SVG ZIP: Editable layers (background, photos, captions, cropmarks, guides).
