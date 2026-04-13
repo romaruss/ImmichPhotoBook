@@ -323,37 +323,89 @@ def _has_large_face(asset: dict) -> bool:
     return face is not None and face["size"] > 0.25
 
 
+def _slot_is_portrait(slot: dict) -> bool:
+    return slot.get("h", 0) > slot.get("w", 0)
+
+
+def _orientation_score(tpl: dict, photos: list[dict]) -> int:
+    """
+    Conta quante coppie (foto, slot) hanno orientamento corrispondente
+    nel template dato. Più alto = template più adatto a queste foto.
+    """
+    slots = tpl["slots"]
+    n = min(len(photos), len(slots))
+    portrait_photos  = sum(1 for p in photos[:n] if _is_portrait(p))
+    landscape_photos = n - portrait_photos
+    portrait_slots   = sum(1 for s in slots[:n] if _slot_is_portrait(s))
+    landscape_slots  = n - portrait_slots
+    return min(portrait_photos, portrait_slots) + min(landscape_photos, landscape_slots)
+
+
+def _assign_photos_to_slots_smart(photos: list[dict], slots: list[dict]) -> list[dict | None]:
+    """
+    Assegna le foto agli slot massimizzando i match di orientamento:
+      - foto verticali  → slot verticali
+      - foto orizzontali → slot orizzontali
+    I residui (numero diverso) vengono assegnati agli slot restanti.
+    """
+    n = min(len(photos), len(slots))
+    photos_n = list(photos[:n])
+    slots_n  = list(slots[:n])
+
+    portrait_slot_idx  = [i for i, s in enumerate(slots_n) if _slot_is_portrait(s)]
+    landscape_slot_idx = [i for i, s in enumerate(slots_n) if not _slot_is_portrait(s)]
+    portrait_photos    = [p for p in photos_n if _is_portrait(p)]
+    landscape_photos   = [p for p in photos_n if not _is_portrait(p)]
+
+    result: list[dict | None] = [None] * n
+
+    for si, photo in zip(portrait_slot_idx, portrait_photos):
+        result[si] = photo
+    for si, photo in zip(landscape_slot_idx, landscape_photos):
+        result[si] = photo
+
+    used = set(id(p) for p in result if p is not None)
+    leftover = [p for p in photos_n if id(p) not in used]
+    empty    = [i for i, r in enumerate(result) if r is None]
+    for si, photo in zip(empty, leftover):
+        result[si] = photo
+
+    result += [None] * (len(slots) - n)
+    return result
+
+
 def _pick_template(photos: list[dict], prev_density: str) -> dict:
-    """Sceglie il template migliore. Non considera preferiti (gestiti prima)."""
+    """
+    Sceglie il template migliore per un gruppo di foto.
+    Criterio primario: massimizza il numero di coppie (foto, slot) con
+    orientamento corrispondente (portrait↔portrait, landscape↔landscape).
+    Criterio secondario: ritmo editoriale (alterna denso/minimale).
+    """
     n = min(len(photos), int(_config.get("max_per_page", 6)))
-    n_portrait  = sum(1 for p in photos[:n] if _is_portrait(p))
-    n_landscape = n - n_portrait
-    mostly_portrait  = n_portrait  > n // 2
-    mostly_landscape = n_landscape > n // 2
+    chunk = photos[:n]
 
     candidates = [
         t for t in TEMPLATES.values()
         if t["n"] == n
         and not t.get("last_is_caption")
-        and (mostly_portrait  and t["portrait_ok"]
-             or mostly_landscape and t["landscape_ok"]
-             or (not mostly_portrait and not mostly_landscape))
     ]
     if not candidates:
-        candidates = [t for t in TEMPLATES.values() if t["n"] == n and not t.get("last_is_caption")]
-    if not candidates:
-        # Fallback al template più vicino per dimensione
         by_n = sorted(TEMPLATES.values(), key=lambda t: abs(t["n"] - n))
         candidates = [by_n[0]]
 
-    # Ritmo: alterna denso/minimalista
-    if _config.get("rhythm_alternation", True):
-        if prev_density == "high" and len(candidates) > 1:
-            candidates.sort(key=lambda t: t["n"])
-        elif prev_density == "low" and len(candidates) > 1:
-            candidates.sort(key=lambda t: -t["n"])
+    # Punteggio orientamento per ogni template candidato
+    scored = sorted(
+        candidates,
+        key=lambda t: (
+            -_orientation_score(t, chunk),   # più match = meglio (negato per sort asc)
+            # Ritmo: se alternation attivo, penalizza template dello stesso tipo
+            (1 if _config.get("rhythm_alternation", True) and
+             ((prev_density == "high" and t["n"] >= 3) or
+              (prev_density == "low"  and t["n"] <= 2)) else 0),
+        )
+    )
+    return scored[0]
 
-    return candidates[0]
 
 
 # ─── 6. Costruzione pagine ────────────────────────────────────────────────────
@@ -447,48 +499,53 @@ def _build_pages_for_event(
         # Controlla se qualche foto ha un volto che non si adatta al template scelto
         tpl = _pick_template(chunk, density)
 
-        if face_aware:
-            # Per ogni foto nel chunk, controlla se si adatta al suo slot
-            for ci, photo in enumerate(chunk):
-                if ci >= len(tpl["slots"]):
-                    break
-                slot = tpl["slots"][ci]
-                face = _get_face_region(photo)
-                p_ar = _photo_ar(photo)
-                s_ar = _slot_ar(slot)
-
-                if not _face_fits_slot(face, p_ar, s_ar):
-                    # Volto tagliato → cerca un template con slot più simile all'AR della foto
-                    # Prima prova full page se è da solo
-                    if chunk_n == 1:
-                        tpl = FULL_TEMPLATE
-                    # Altrimenti accetta il template ma segnala il transform migliore
-                    # (verrà mostrato il bordo rosso e l'utente può correggere)
-
-                transform = _face_safe_transform(face, p_ar, s_ar) if face else {"x":50,"y":50,"zoom":1.0}
-                page_idx  = len(pages)
-                key = f"_event_page_{page_idx}_{ci}"
-                suggested_transforms[key] = transform
+        # face_aware: check face fit — if solo photo with bad fit, upgrade to full page
+        if face_aware and chunk_n == 1:
+            face = _get_face_region(chunk[0])
+            p_ar = _photo_ar(chunk[0])
+            slot = tpl["slots"][0]
+            s_ar = slot["w"] / slot["h"] if slot["h"] else 1.0
+            if not _face_fits_slot(face, p_ar, s_ar):
+                tpl = FULL_TEMPLATE
 
         remaining = remaining[chunk_n:]
 
-        slots    = [dict(s) for s in tpl["slots"]]
-        n_slots  = len(slots)
-        items: list[dict] = []
+        slots   = [dict(s) for s in tpl["slots"]]
+        n_slots = len(slots)
 
-        photo_idx = 0
-        for si, slot in enumerate(slots):
-            is_cap = tpl.get("last_is_caption") and si == n_slots - 1
-            if is_cap and photo_idx > 0:
-                ref = chunk[photo_idx - 1]
-                exif = ref.get("exifInfo", {}) or {}
-                has_desc = (exif.get("description") or ref.get("description") or "").strip()
-                items.append({"slot": slot, "item": _make_caption_item(ref) if has_desc else None})
-            elif photo_idx < len(chunk):
-                items.append({"slot": slot, "item": _make_photo_item(chunk[photo_idx])})
-                photo_idx += 1
+        # ── Orientation-aware slot assignment ─────────────────────────────
+        # Separate photo slots from caption slot (last slot if last_is_caption)
+        is_cap_tpl = tpl.get("last_is_caption", False)
+        photo_slots   = slots[:-1] if is_cap_tpl else slots
+        caption_slot  = slots[-1]  if is_cap_tpl else None
+
+        # Assign photos to photo slots respecting orientation
+        assigned_photos = _assign_photos_to_slots_smart(chunk, photo_slots)
+
+        items: list[dict] = []
+        for si, (slot, photo) in enumerate(zip(photo_slots, assigned_photos)):
+            if photo is not None:
+                items.append({"slot": slot, "item": _make_photo_item(photo)})
+                # Store face transform for this slot
+                if face_aware:
+                    face  = _get_face_region(photo)
+                    p_ar  = _photo_ar(photo)
+                    s_ar  = slot["w"] / slot["h"] if slot["h"] else 1.0
+                    transform = _face_safe_transform(face, p_ar, s_ar) if face else {"x": 50, "y": 50, "zoom": 1.0}
+                    key = f"_event_page_{len(pages)}_{si}"
+                    suggested_transforms[key] = transform
             else:
                 items.append({"slot": slot, "item": None})
+
+        if caption_slot is not None:
+            # Use the last assigned photo as caption reference
+            ref = next((p for p in reversed(assigned_photos) if p is not None), None)
+            if ref:
+                exif = ref.get("exifInfo", {}) or {}
+                has_desc = (exif.get("description") or ref.get("description") or "").strip()
+                items.append({"slot": caption_slot, "item": _make_caption_item(ref) if has_desc else None})
+            else:
+                items.append({"slot": caption_slot, "item": None})
 
         density = "high" if n_slots >= 3 else "low"
         tid = f"smart_{tpl['label'].replace(' ', '_').replace('(','').replace(')','').lower()}"

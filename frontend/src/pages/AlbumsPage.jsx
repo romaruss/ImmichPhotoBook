@@ -2,9 +2,12 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import axios from 'axios'
+import { useT } from '../i18n.jsx'
 
 // ── Smart Layout config modal ─────────────────────────────────────────────────
 function SmartConfigModal({ onClose }) {
+  const t = useT()
+  const sc = t.smartConfig
   const [cfg, setCfg]     = useState(null)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState(null)
@@ -17,10 +20,10 @@ function SmartConfigModal({ onClose }) {
     setSaving(true)
     try {
       await axios.put('/api/smart-config', cfg)
-      setToast({ type:'success', msg:'Configurazione salvata ✓' })
+      setToast({ type:'success', msg:sc.savedOk })
       setTimeout(onClose, 1200)
     } catch {
-      setToast({ type:'error', msg:'Errore nel salvataggio' })
+      setToast({ type:'error', msg:sc.savedErr })
     } finally { setSaving(false) }
   }
 
@@ -39,61 +42,7 @@ function SmartConfigModal({ onClose }) {
 
   if (!cfg) return null
 
-  const PARAMS = [
-    {
-      section: 'Clustering temporale',
-      fields: [
-        { key:'event_clustering', label:'Raggruppa per eventi temporali', type:'bool',
-          help:'Attivo: le foto vengono raggruppate in eventi separati in base ai gap di tempo. Disattivo: tutte le foto sono in un unico flusso.' },
-        { key:'event_gap_min', label:'Gap tra eventi (minuti)', type:'number', min:5, max:480, step:5,
-          help:'Foto scattate entro questo intervallo vengono raggruppate nello stesso evento. Attivo solo se il clustering è abilitato.',
-          disabledWhen: cfg => !cfg.event_clustering },
-      ]
-    },
-    {
-      section: 'Foto preferite ★',
-      fields: [
-        { key:'favorite_full_page', label:'Foto preferite → pagina intera', type:'bool',
-          help:'Le foto con il cuore ★ in Immich vengono posizionate da sole su una pagina intera, senza condividere lo spazio con altre foto.' },
-      ]
-    },
-    {
-      section: 'Posizionamento volti (Face-Aware)',
-      fields: [
-        { key:'face_aware_crop', label:'Centra il crop sui volti', type:'bool',
-          help:'Se Immich ha rilevato volti nella foto, il crop iniziale viene centrato automaticamente sui volti in primo piano. Evita tagli su visi.' },
-      ]
-    },
-    {
-      section: 'Filtro qualità',
-      fields: [
-        { key:'quality_filter', label:'Attiva filtro qualità', type:'bool',
-          help:'Esclude le foto con punteggio qualità troppo basso (mosse, sovra/sotto esposte).' },
-        { key:'min_quality', label:'Soglia qualità minima (0.0 – 1.0)', type:'number', min:0, max:1, step:0.01,
-          help:'0.05 = escludi solo foto chiaramente inutilizzabili. 0.3 = selezione severa. Raccomandato: 0.05.',
-          disabledWhen: cfg => !cfg.quality_filter },
-      ]
-    },
-    {
-      section: 'Rimozione duplicati',
-      fields: [
-        { key:'remove_duplicates', label:'Attiva rimozione duplicati', type:'bool',
-          help:'Rimuove foto quasi identiche per colore, tenendo quella con qualità più alta.' },
-        { key:'similarity_threshold', label:'Soglia similarità (0.0 – 1.0)', type:'number', min:0.80, max:1.0, step:0.01,
-          help:'1.0 = rimuove solo foto pixel-identiche. 0.90 = rimuove anche foto molto simili. Raccomandato: 0.95–0.98.',
-          disabledWhen: cfg => !cfg.remove_duplicates },
-      ]
-    },
-    {
-      section: 'Layout pagine',
-      fields: [
-        { key:'max_per_page', label:'Max foto per pagina', type:'number', min:1, max:9, step:1,
-          help:'Numero massimo di foto in una singola pagina.' },
-        { key:'rhythm_alternation', label:'Alterna pagine dense e minimaliste', type:'bool',
-          help:'Crea variazione visiva alternando pagine con molte foto a pagine con poche foto.' },
-      ]
-    },
-  ]
+  const PARAMS = sc.sections
 
   return createPortal(
     <>
@@ -173,11 +122,7 @@ function SmartConfigModal({ onClose }) {
           <div style={{background:'var(--bg3)',borderRadius:8,padding:14,marginTop:8}}>
             <p style={{fontSize:10,fontFamily:'var(--font-mono)',color:'var(--text3)',marginBottom:8,
               textTransform:'uppercase',letterSpacing:'0.08em'}}>Come viene calcolata la qualità</p>
-            {[
-              ['40%','Risoluzione EXIF (MP)','Più megapixel = punteggio più alto'],
-              ['30%','Nitidezza (Laplaciano)','Alta varianza bordi = foto a fuoco'],
-              ['30%','Luminosità','Preferisce esposizioni bilanciate'],
-            ].map(([pct,name,desc])=>(
+            {sc.qualityComponents.map(([pct,name,desc])=>(
               <div key={name} style={{display:'flex',gap:10,marginBottom:6,alignItems:'flex-start'}}>
                 <span style={{fontSize:12,fontWeight:700,color:'var(--gold)',width:32,flexShrink:0}}>{pct}</span>
                 <div>
@@ -198,7 +143,7 @@ function SmartConfigModal({ onClose }) {
             {toast&&<span style={{fontSize:12,color:toast.type==='success'?'var(--success)':'var(--danger)'}}>{toast.msg}</span>}
             <button className="btn" onClick={onClose}>Annulla</button>
             <button className="btn btn-primary" onClick={save} disabled={saving}>
-              {saving?<><span className="spinner" style={{width:12,height:12}}/> Salvo…</>:'💾 Salva'}
+              {saving?<><span className="spinner" style={{width:12,height:12}}/> Salvo…</>:sc.saveBtn}
             </button>
           </div>
         </div>
@@ -211,6 +156,8 @@ function SmartConfigModal({ onClose }) {
 // ── Main AlbumsPage ────────────────────────────────────────────────────────────
 export default function AlbumsPage() {
   const navigate = useNavigate()
+  const t = useT()
+  const a = t.albums
   const [albums, setAlbums]             = useState([])
   const [profiles, setProfiles]         = useState([])
   const [loading, setLoading]           = useState(true)
@@ -305,7 +252,7 @@ export default function AlbumsPage() {
             {/* Search */}
             <div style={{ flex:2, minWidth:200 }}>
               <label className="form-label">Cerca album</label>
-              <input className="form-input" placeholder="Filtra per nome…"
+              <input className="form-input" placeholder={a.searchPlaceholder}
                 value={search} onChange={e=>setSearch(e.target.value)}/>
             </div>
 

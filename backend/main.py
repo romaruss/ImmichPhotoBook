@@ -71,11 +71,42 @@ async def test_config():
     ok = await ic.test_connection()
     return {"connected": ok}
 
+CUSTOM_SIZES_PATH = DATA_DIR / "custom_sizes.json"
+
+def _load_custom_sizes() -> list:
+    if CUSTOM_SIZES_PATH.exists():
+        try: return json.loads(CUSTOM_SIZES_PATH.read_text())
+        except Exception: pass
+    return []
+
+@app.get("/api/custom-sizes")
+async def get_custom_sizes():
+    return _load_custom_sizes()
+
+class CustomSize(BaseModel):
+    name: str
+    w_mm: float
+    h_mm: float
+
+@app.post("/api/custom-sizes")
+async def add_custom_size(size: CustomSize):
+    sizes = _load_custom_sizes()
+    entry = {"id": str(uuid.uuid4()), "name": size.name, "w_mm": size.w_mm, "h_mm": size.h_mm}
+    sizes.append(entry)
+    CUSTOM_SIZES_PATH.write_text(json.dumps(sizes, indent=2))
+    return entry
+
+@app.delete("/api/custom-sizes/{sid}")
+async def delete_custom_size(sid: str):
+    sizes = [s for s in _load_custom_sizes() if s.get("id") != sid]
+    CUSTOM_SIZES_PATH.write_text(json.dumps(sizes, indent=2))
+    return {"ok": True}
+
 # ─── PROFILES ────────────────────────────────────────────────────────────────
 
 class Profile(BaseModel):
     name: str
-    page_size: str = "20x30"
+    page_size: str = "20x30"      # can be "A4", "20x30", or custom size ID
     orientation: str = "portrait"
     duplex: bool = False
     margin_mm: float = 5.0
@@ -83,6 +114,33 @@ class Profile(BaseModel):
     bleed_mm: float = 3.0
     gap_mm: float = 3.0
     page_types: list[dict] = []
+    caption_style: dict = {
+        "font": "Georgia, serif",
+        "size": 13,
+        "color": "#e8e6e0",
+        "align": "center",
+        "valign": "center",
+        "bg": "#111116",
+        "italic": True,
+        "bold": False,
+    }
+
+@app.post("/api/profiles/{pid}/duplicate")
+async def duplicate_profile(pid: str):
+    path = PROFILES_DIR / f"{pid}.json"
+    if not path.exists():
+        raise HTTPException(404, "Profile not found")
+    data = json.loads(path.read_text())
+    new_data = {**data, "name": f"{data.get('name','')} (copia)"}
+    # Give fresh UUIDs to all page types
+    new_data["page_types"] = [
+        {**pt, "id": str(uuid.uuid4())}
+        for pt in data.get("page_types", [])
+    ]
+    new_pid = str(uuid.uuid4())
+    (PROFILES_DIR / f"{new_pid}.json").write_text(json.dumps(new_data, indent=2))
+    new_data["id"] = new_pid
+    return new_data
 
 def _default_page_types():
     return [
@@ -170,6 +228,20 @@ async def get_thumbnail(asset_id: str, size: str = "thumbnail"):
         return Response(data, media_type="image/jpeg")
     except Exception as e:
         raise HTTPException(502, f"Thumb error: {e}")
+
+# ─── CAPTION → IMMICH DESCRIPTION ────────────────────────────────────────────
+
+class CaptionSyncRequest(BaseModel):
+    asset_id: str
+    description: str
+
+@app.post("/api/assets/{asset_id}/description")
+async def sync_caption_description(asset_id: str, body: CaptionSyncRequest):
+    """Sync a caption text back to the asset description in Immich."""
+    ok = await ic.update_asset_description(asset_id, body.description)
+    if not ok:
+        raise HTTPException(500, "Failed to update description in Immich")
+    return {"ok": True}
 
 # ─── LAYOUT GENERATION ───────────────────────────────────────────────────────
 

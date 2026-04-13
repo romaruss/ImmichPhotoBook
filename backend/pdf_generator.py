@@ -35,8 +35,32 @@ PAGE_SIZES_MM: dict[str, tuple[float, float]] = {
     "Custom": (200,   300),
 }
 
-PT = 2.8346456692913384   # 1 mm in points
-
+def _parse_page_size(size_name: str, custom_sizes: list | None = None) -> tuple[float, float]:
+    """
+    Resolve page size to (width_mm, height_mm).
+    Handles:
+      - Known presets: "A4", "20x30", etc.
+      - Custom size by ID (uuid string): looks up in custom_sizes list
+      - Legacy "Custom_WxH" format
+    """
+    if not size_name:
+        return (200.0, 300.0)
+    # Legacy format: Custom_210x297
+    if size_name.startswith("Custom_"):
+        try:
+            parts = size_name[7:].split("x")
+            return (float(parts[0]), float(parts[1]))
+        except Exception:
+            pass
+    # Preset name lookup
+    if size_name in PAGE_SIZES_MM:
+        return PAGE_SIZES_MM[size_name]
+    # Custom size ID lookup
+    if custom_sizes:
+        for cs in custom_sizes:
+            if cs.get("id") == size_name or cs.get("name") == size_name:
+                return (float(cs["w_mm"]), float(cs["h_mm"]))
+    return (200.0, 300.0)
 
 def _mm(v: float) -> float:
     return v * PT
@@ -350,7 +374,7 @@ def generate_pdf(
     """
     # ── Page geometry ────────────────────────────────────────────────────────
     size_name   = profile.get("page_size", "20x30")
-    pw_mm, ph_mm = PAGE_SIZES_MM.get(size_name, (200, 300))
+    pw_mm, ph_mm = _parse_page_size(size_name)
 
     if profile.get("orientation", "portrait") == "landscape":
         pw_mm, ph_mm = ph_mm, pw_mm

@@ -62,3 +62,16 @@ async def get_asset_original(asset_id: str) -> tuple[bytes, str]:
         r.raise_for_status()
         ct = r.headers.get("content-type", "image/jpeg")
         return r.content, ct
+
+async def update_asset_description(asset_id: str, description: str) -> bool:
+    """Update the description field of an asset in Immich."""
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.put(
+                f"{get_base_url()}/assets/{asset_id}",
+                headers={**get_headers(), "Content-Type": "application/json"},
+                json={"description": description}
+            )
+            return r.status_code in (200, 204)
+    except Exception:
+        return False

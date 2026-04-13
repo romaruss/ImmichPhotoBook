@@ -115,24 +115,119 @@ def _group_into_units(flow: list[dict]) -> list[list[dict]]:
     return units
 
 
-def _pick_page_type(page_types: list[dict], rng: random.Random,
-                    min_slots: int, remaining_units: int) -> dict:
+def _slot_is_portrait(slot: dict) -> bool:
+    """True se lo slot è più alto che largo (verticale)."""
+    return slot.get("h", 0) > slot.get("w", 0)
+
+
+def _photo_is_portrait_from_item(item: dict) -> bool:
+    """Rileva l'orientamento di un item foto dalla sua EXIF."""
+    exif = item.get("exif", {}) or {}
+    w = exif.get("exifImageWidth") or exif.get("imageWidth") or 0
+    h = exif.get("exifImageHeight") or exif.get("imageHeight") or 0
+    if w and h:
+        return h > w
+    return True   # default: portrait
+
+
+def _orientation_match_score(page_type: dict, photo_items: list[dict]) -> int:
     """
-    Choose a page type that has at least `min_slots` slots.
-    Weights toward larger pages when many units remain.
+    Calcola quanti foto-slot pairs hanno orientamento corrispondente.
+    Ritorna un conteggio di match (più alto = meglio).
+    Usato da _pick_page_type per scegliere il template più adatto.
+    """
+    slots = page_type.get("slots") or []
+    # Considera solo gli slot foto (esclude caption, che sono solitamente orizzontali)
+    photo_slots = [s for s in slots]  # tutti gli slot possono essere foto
+    
+    # Conteggio orientamenti nei due pool
+    photo_portraits  = sum(1 for p in photo_items if _photo_is_portrait_from_item(p))
+    photo_landscapes = len(photo_items) - photo_portraits
+    slot_portraits   = sum(1 for s in photo_slots[:len(photo_items)] if _slot_is_portrait(s))
+    slot_landscapes  = len(photo_slots[:len(photo_items)]) - slot_portraits
+    
+    # Match: quante coppie (foto, slot) hanno lo stesso orientamento
+    matched_portrait  = min(photo_portraits,  slot_portraits)
+    matched_landscape = min(photo_landscapes, slot_landscapes)
+    return matched_portrait + matched_landscape
+
+
+def _assign_photos_to_slots(photo_items: list[dict], slots: list[dict]) -> list[dict | None]:
+    """
+    Assegna le foto agli slot massimizzando i match di orientamento:
+      - foto verticali  → slot verticali
+      - foto orizzontali → slot orizzontali
+
+    Ritorna una lista ordinata di item (stesso ordine degli slot).
+    Gli slot in eccesso rispetto alle foto ricevono None.
+    
+    Algoritmo greedy O(n):
+    1. Separa foto e slot per orientamento
+    2. Abbina verticali con verticali, orizzontali con orizzontali
+    3. I residui (disallineamenti inevitabili) vengono assegnati ai restanti
+    """
+    n = min(len(photo_items), len(slots))
+    photos = list(photo_items[:n])
+    target_slots = list(slots[:n])
+
+    # Classifica slot e foto
+    portrait_slot_idx  = [i for i, s in enumerate(target_slots) if _slot_is_portrait(s)]
+    landscape_slot_idx = [i for i, s in enumerate(target_slots) if not _slot_is_portrait(s)]
+    portrait_photos    = [p for p in photos if _photo_is_portrait_from_item(p)]
+    landscape_photos   = [p for p in photos if not _photo_is_portrait_from_item(p)]
+
+    # Abbina per orientamento
+    result: list[dict | None] = [None] * n
+    
+    # Prima: verticali nelle slot verticali
+    for si, pi_photo in zip(portrait_slot_idx, portrait_photos):
+        result[si] = pi_photo
+    
+    # Poi: orizzontali nelle slot orizzontali
+    for si, pi_photo in zip(landscape_slot_idx, landscape_photos):
+        result[si] = pi_photo
+
+    # Residui (foto che non hanno trovato uno slot del loro orientamento)
+    used = set(id(p) for p in result if p is not None)
+    remaining = [p for p in photos if id(p) not in used]
+    empty_slots = [i for i, r in enumerate(result) if r is None]
+    for si, photo in zip(empty_slots, remaining):
+        result[si] = photo
+
+    # Pad con None se slots > photos
+    result += [None] * (len(slots) - n)
+    return result
+
+
+def _pick_page_type(page_types: list[dict], rng: random.Random,
+                    min_slots: int, remaining_units: int,
+                    next_photos: list[dict] | None = None) -> dict:
+    """
+    Sceglie il page type più adatto considerando l'orientamento delle foto.
+    Se next_photos è fornito, preferisce il template con il miglior match
+    di orientamento slot↔foto. Tra i template a pari score, usa il peso
+    per numero di slot.
     """
     suitable = [
         pt for pt in page_types
         if len(pt.get("slots") or [{"x": 0, "y": 0, "w": 100, "h": 100}]) >= min_slots
     ]
     if not suitable:
-        suitable = page_types  # fallback: may have fewer slots than needed
+        suitable = page_types
 
-    # Weight by slot count (more slots = more probable when items remain)
-    weights = [
-        len(pt.get("slots") or [{"x": 0, "y": 0, "w": 100, "h": 100}])
-        for pt in suitable
-    ]
+    if next_photos:
+        # Seleziona il template con il miglior match di orientamento
+        scored = sorted(
+            suitable,
+            key=lambda pt: (
+                -_orientation_match_score(pt, next_photos),          # più match = meglio
+                -len(pt.get("slots") or [{"x":0,"y":0,"w":100,"h":100}])  # parità → più slot
+            )
+        )
+        return scored[0]
+
+    # Fallback: peso per numero di slot (comportamento originale)
+    weights = [len(pt.get("slots") or [{"x": 0, "y": 0, "w": 100, "h": 100}]) for pt in suitable]
     total = sum(weights)
     r = rng.random() * total
     cumulative = 0.0
@@ -143,9 +238,17 @@ def _pick_page_type(page_types: list[dict], rng: random.Random,
     return suitable[-1]
 
 
+
 def generate_layout(flow: list[dict], profile: dict) -> list[dict]:
     """
-    Pack flow items into pages, respecting caption co-location.
+    Pack flow items into pages, respecting caption co-location and
+    matching photo orientation to slot orientation.
+
+    For each page:
+      1. Look at the next N photos to be placed
+      2. Pick the page_type whose slots best match their orientations
+         (portrait photo → portrait slot, landscape → landscape slot)
+      3. Assign photos to slots using orientation-greedy matching
 
     Returns list of page dicts:
       { page_type_id, page_type, items: [{slot, item}] }
@@ -162,39 +265,90 @@ def generate_layout(flow: list[dict], profile: dict) -> list[dict]:
 
     while unit_idx < len(units):
         unit = units[unit_idx]
-        unit_size = len(unit)          # 1 or 2
+        unit_size = len(unit)
         remaining = len(units) - unit_idx
 
-        pt = _pick_page_type(page_types, rng, min_slots=unit_size, remaining_units=remaining)
+        # ── Peek at upcoming photo items for orientation matching ─────────
+        # Collect the photos from the current unit plus the next few single-item units
+        # to give _pick_page_type enough context to choose the best template.
+        peek_photos: list[dict] = [item for item in unit if item.get("type") == "photo"]
+        peek_idx = unit_idx + 1
+        while peek_idx < len(units) and len(peek_photos) < 6:
+            for item in units[peek_idx]:
+                if item.get("type") == "photo":
+                    peek_photos.append(item)
+            peek_idx += 1
+
+        pt = _pick_page_type(page_types, rng,
+                             min_slots=unit_size,
+                             remaining_units=remaining,
+                             next_photos=peek_photos or None)
         slots = pt.get("slots") or default_slot_grid(1)
 
         page_items: list[dict] = []
         slot_i = 0
 
-        # ── Place current unit first ──────────────────────────────────────
+        # ── Place current unit's items into slots ─────────────────────────
+        # For a unit that is (photo, caption), always place photo first in its
+        # slot, then caption in the next — they stay together.
         for item in unit:
             if slot_i < len(slots):
                 page_items.append({"slot": slots[slot_i], "item": item})
                 slot_i += 1
         unit_idx += 1
 
-        # ── Fill remaining slots with single-item units ───────────────────
-        while slot_i < len(slots) and unit_idx < len(units):
-            next_unit = units[unit_idx]
+        # ── Fill remaining slots with upcoming single-item units ──────────
+        # Collect all photos that will fill remaining slots, then assign
+        # them with orientation matching before appending.
+        fill_candidates: list[dict] = []
+        fill_unit_indices: list[int] = []
+
+        tmp_idx = unit_idx
+        tmp_slot = slot_i
+        while tmp_slot < len(slots) and tmp_idx < len(units):
+            next_unit = units[tmp_idx]
             if len(next_unit) == 1:
-                page_items.append({"slot": slots[slot_i], "item": next_unit[0]})
-                slot_i += 1
-                unit_idx += 1
-            elif slot_i + len(next_unit) <= len(slots):
-                # Multi-item unit fits remaining slots exactly
+                fill_candidates.append(next_unit[0])
+                fill_unit_indices.append(tmp_idx)
+                tmp_slot += 1
+                tmp_idx += 1
+            elif tmp_slot + len(next_unit) <= len(slots):
                 for item in next_unit:
-                    if slot_i < len(slots):
-                        page_items.append({"slot": slots[slot_i], "item": item})
-                        slot_i += 1
-                unit_idx += 1
+                    fill_candidates.append(item)
+                    fill_unit_indices.append(tmp_idx)
+                    tmp_slot += 1
+                tmp_idx += 1
             else:
-                # Multi-item unit would need to split — leave slots empty
                 break
+
+        if fill_candidates:
+            remaining_slots = slots[slot_i : slot_i + len(fill_candidates)]
+            # Extract photo items for orientation matching (keep captions in order)
+            photo_fills    = [c for c in fill_candidates if c.get("type") == "photo"]
+            non_photo_fills = [c for c in fill_candidates if c.get("type") != "photo"]
+
+            # Orientation-aware assignment for photos
+            assigned = _assign_photos_to_slots(photo_fills, remaining_slots)
+            # Re-merge non-photo items into their original positions
+            photo_iter = iter(assigned)
+            final_assigned: list[dict | None] = []
+            fill_types = [c.get("type") for c in fill_candidates]
+            photo_ptr = 0
+            non_photo_ptr = 0
+            for ftype in fill_types:
+                if ftype == "photo":
+                    final_assigned.append(assigned[photo_ptr] if photo_ptr < len(assigned) else None)
+                    photo_ptr += 1
+                else:
+                    final_assigned.append(non_photo_fills[non_photo_ptr] if non_photo_ptr < len(non_photo_fills) else None)
+                    non_photo_ptr += 1
+
+            for s, item in zip(remaining_slots, final_assigned):
+                page_items.append({"slot": s, "item": item})
+                slot_i += 1
+
+            # Advance unit_idx past consumed units
+            unit_idx = fill_unit_indices[-1] + 1
 
         # ── Empty remaining slots ─────────────────────────────────────────
         while slot_i < len(slots):

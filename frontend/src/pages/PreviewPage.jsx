@@ -13,6 +13,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
+import { useT } from '../i18n.jsx'
 
 // ── Page geometry ─────────────────────────────────────────────────────────────
 const PAGE_SIZES_PT = {
@@ -157,9 +158,12 @@ function PhotoPickerModal({ assets, usageMap, onSelect, onClose }) {
 
 
 function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart, onNavigate }) {
-  const [filter, setFilter]     = useState('')
-  const [view, setView]         = useState(1)          // 1 | 2 | 3 photos per row
-  const [statusFilter, setStatusFilter] = useState('all') // all | unused | multi
+  const t = useT()
+  const tp = t.preview
+  const [filter, setFilter]         = useState('')
+  const [view, setView]             = useState(1)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [previewAsset, setPreviewAsset] = useState(null)  // foto ingrandita
 
   const filtered = assets.filter(a => {
     const uses = usageMap[a.id] || 0
@@ -175,21 +179,83 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
 
   const borderColor = (id) => {
     const u = usageMap[id] || 0
-    if (u === 0)  return '#e05050'  // rosso = non usata
-    if (u > 1)    return '#e89a3a'  // arancio = duplicata
-    return '#4ac585'                // verde = usata 1 volta
+    if (u === 0)  return '#e05050'
+    if (u > 1)    return '#e89a3a'
+    return '#4ac585'
   }
 
   const altText = (asset) => {
     const u = usageMap[asset.id] || 0
     const pages = usagePages[asset.id] || []
     const name  = asset.originalFileName || asset.id
-    if (u === 0)  return `${name}\nNon usata`
-    if (pages.length) return `${name}\nPagina ${pages.map(p=>p+1).join(', ')}`
-    return `${name}\nUsata ${u} volta/e`
+    return tp.panelAlt(name, u, pages)
+  }
+
+  // Click su foto: se non usata → preview ingrandita; se usata → naviga alla pagina
+  const handlePhotoClick = (asset, firstPage) => {
+    const uses = usageMap[asset.id] || 0
+    if (uses === 0) {
+      setPreviewAsset(asset)
+    } else if (firstPage !== undefined) {
+      onNavigate(firstPage)
+    }
   }
 
   return (
+    <>
+    {/* Modal anteprima foto non usata */}
+    {previewAsset && createPortal(
+      <>
+        <div
+          onClick={() => setPreviewAsset(null)}
+          style={{
+            position:'fixed', inset:0, zIndex:9990,
+            background:'rgba(0,0,0,0.82)',
+            display:'flex', alignItems:'center', justifyContent:'center',
+          }}>
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              position:'relative', maxWidth:'90vw', maxHeight:'90vh',
+              display:'flex', flexDirection:'column', alignItems:'center', gap:12,
+            }}>
+            {/* X button */}
+            <button
+              onClick={() => setPreviewAsset(null)}
+              style={{
+                position:'absolute', top:-14, right:-14, zIndex:1,
+                width:32, height:32, borderRadius:'50%',
+                background:'var(--bg2)', border:'1px solid var(--border)',
+                color:'var(--text)', fontSize:18, cursor:'pointer',
+                display:'flex', alignItems:'center', justifyContent:'center',
+                lineHeight:1,
+              }}>✕</button>
+            {/* Immagine */}
+            <img
+              src={`/api/thumb/${previewAsset.id}?size=preview`}
+              alt={previewAsset.originalFileName || previewAsset.id}
+              style={{
+                maxWidth:'85vw', maxHeight:'80vh',
+                objectFit:'contain',
+                borderRadius:6,
+                boxShadow:'0 8px 40px rgba(0,0,0,0.8)',
+                border:'2px solid #e05050',
+              }}
+            />
+            {/* Nome file */}
+            <p style={{
+              fontSize:12, color:'rgba(255,255,255,0.7)',
+              fontFamily:'var(--font-mono)', textAlign:'center',
+              maxWidth:'80vw', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+            }}>
+              {previewAsset.originalFileName || previewAsset.id}
+              <span style={{color:'#e05050', marginLeft:8}}>● non usata</span>
+            </p>
+          </div>
+        </div>
+      </>,
+      document.body
+    )}
     <div style={{
       width: open ? 200 : 30,
       flexShrink: 0, transition: 'width 0.22s ease',
@@ -221,10 +287,10 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
 
             {/* Status filter */}
             <div style={{display:'flex',gap:3,marginBottom:6}}>
-              {[['all','Tutte'],['unused','○'],['multi','2×']].map(([k,l])=>(
+              {[['all',tp.panelAll],['unused',tp.panelUnused],['multi',tp.panelMulti]].map(([k,l])=>(
                 <button key={k}
                   onClick={()=>setStatusFilter(k)}
-                  title={k==='all'?'Tutte':k==='unused'?'Non usate':'Usate più volte'}
+                  title={k==='all'?tp.panelAll:k==='unused'?'Non usate':'Usate più volte'}
                   style={{
                     flex:1, fontSize:10, padding:'3px 0',
                     border:`1px solid ${statusFilter===k?'var(--gold)':'var(--border)'}`,
@@ -308,7 +374,7 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
                           {(asset.originalFileName||asset.id).replace(/\.[^.]+$/,'')}
                         </p>
                         <p style={{fontSize:8,color:'var(--text3)',marginTop:1}}>
-                          {uses===0?'non usata':pages.length?`pag. ${pages.map(p=>p+1).join(', ')}`:`${uses}×`}
+                          {uses===0?tp.panelNotUsedLabel:pages.length?tp.panelPageHint(pages):`${uses}×`}
                         </p>
                       </div>
                     </div>
@@ -332,12 +398,12 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
                     <div key={asset.id}
                       draggable
                       onDragStart={e=>{e.dataTransfer.setData('asset_id',asset.id);onDragStart(asset)}}
-                      onClick={()=>firstPage!==undefined&&onNavigate(firstPage)}
+                      onClick={()=>handlePhotoClick(asset, firstPage)}
                       title={alt}
                       style={{
                         /* Use padding-top trick for reliable aspect ratio in grid */
                         position:'relative', width:'100%', paddingTop:'100%',
-                        cursor:firstPage!==undefined?'pointer':'grab',
+                        cursor:(usageMap[asset.id]||0)===0?'zoom-in':firstPage!==undefined?'pointer':'grab',
                         borderRadius:4, overflow:'hidden',
                         border:`2px solid ${bc}`,
                         opacity:uses===0?0.6:1,
@@ -372,7 +438,7 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
             )}
             {filtered.length===0&&(
               <p style={{textAlign:'center',color:'var(--text3)',fontSize:10,padding:'20px 0'}}>
-                {filter||statusFilter!=='all'?'Nessun risultato':'Nessuna foto'}
+                {filter||statusFilter!=='all'?tp.panelNoResults:tp.panelNoPhotos}
               </p>
             )}
           </div>
@@ -384,6 +450,7 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
         </div>
       )}
     </div>
+    </>
   )
 }
 
@@ -392,6 +459,7 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
 // Trascinare un handle sposta quel bordo e, se c'è uno slot adiacente, lo ridimensiona.
 // Se non c'è adiacente, il bordo viene spostato liberamente (entro i limiti della pagina).
 function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems }) {
+  const t = useT(); const tp = t.preview
   const dragRef = useRef(null)
   const margin  = (profile?.margin_mm||5)*2.835
   const uw = pw - 2*margin
@@ -534,7 +602,7 @@ function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems }) {
           return (
             <div key={`${h.slotIdx}-${h.side}`}
               onMouseDown={e=>startDrag(e,h)}
-              title={`↕ Ridimensiona slot ${h.slotIdx+1} — bordo ${h.side==='top'?'superiore':'inferiore'}`}
+              {...{title: tp.resizeHintH(h.slotIdx+1, h.side)}}
               style={{
                 position:'absolute', left:x1, top:yPx-GRAB/2,
                 width:len, height:GRAB, cursor:'row-resize', zIndex:40,
@@ -561,7 +629,7 @@ function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems }) {
           return (
             <div key={`${h.slotIdx}-${h.side}`}
               onMouseDown={e=>startDrag(e,h)}
-              title={`↔ Ridimensiona slot ${h.slotIdx+1} — bordo ${h.side==='left'?'sinistro':'destro'}`}
+              {...{title: tp.resizeHintV(h.slotIdx+1, h.side)}}
               style={{
                 position:'absolute', top:y1, left:xPx-GRAB/2,
                 height:len, width:GRAB, cursor:'col-resize', zIndex:40,
@@ -592,6 +660,7 @@ function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems }) {
 function PhotoSlot({ item, slotW, slotH, transform, photoAR,
                      isEditMode, onEnterEdit, onExitEdit,
                      onTransformChange, mismatch }) {
+  const t = useT(); const tp = t.preview
   const panDragRef = useRef(null)
   const containerRef = useRef(null)
 
@@ -683,7 +752,7 @@ function PhotoSlot({ item, slotW, slotH, transform, photoAR,
           <div style={{display:'flex',gap:3,alignItems:'center',
             background:'rgba(0,0,0,0.72)',borderRadius:6,padding:'4px 6px'}}>
             <button onMouseDown={e=>e.stopPropagation()} onClick={()=>adjustZoom(-0.15)}
-              title="Riduci zoom"
+              {...{title:tp.zoomOut}}
               style={{background:'var(--bg3)',border:'1px solid var(--border)',color:'var(--text)',
                 width:24,height:24,borderRadius:4,cursor:'pointer',fontSize:15,lineHeight:1,
                 display:'flex',alignItems:'center',justifyContent:'center'}}>−</button>
@@ -691,7 +760,7 @@ function PhotoSlot({ item, slotW, slotH, transform, photoAR,
               {Math.round((transform?.zoom||1)*100)}%
             </span>
             <button onMouseDown={e=>e.stopPropagation()} onClick={()=>adjustZoom(0.15)}
-              title="Aumenta zoom"
+              {...{title:tp.zoomIn}}
               style={{background:'var(--bg3)',border:'1px solid var(--border)',color:'var(--text)',
                 width:24,height:24,borderRadius:4,cursor:'pointer',fontSize:15,lineHeight:1,
                 display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>
@@ -699,13 +768,13 @@ function PhotoSlot({ item, slotW, slotH, transform, photoAR,
           <div style={{display:'flex',gap:3}}>
             <button onMouseDown={e=>e.stopPropagation()}
               onClick={()=>onTransformChange({x:50,y:50,zoom:1})}
-              title="Ripristina posizione originale"
+              {...{title:tp.resetZoom}}
               style={{background:'rgba(0,0,0,0.72)',border:'1px solid rgba(255,255,255,0.18)',
                 color:'#ccc',fontSize:10,padding:'3px 8px',borderRadius:4,cursor:'pointer'}}>
               ↺
             </button>
             <button onMouseDown={e=>e.stopPropagation()} onClick={onExitEdit}
-              title="Conferma riposizionamento"
+              {...{title:tp.doneZoom}}
               style={{background:'var(--gold)',border:'none',color:'#0a0a0c',
                 fontSize:10,padding:'3px 8px',borderRadius:4,cursor:'pointer',fontWeight:700}}>
               ✓
@@ -721,9 +790,10 @@ function PhotoSlot({ item, slotW, slotH, transform, photoAR,
 function EditablePage({ page, pageIdx, profile, allPageTypes,
                         photoAspects, photoTransforms, onTransformChange,
                         onUpdatePage, onOpenPicker, onAddCaption,
-                        onDrop }) {
+                        onDrop, maxW=570 }) {
+  const t = useT(); const tp = t.preview
   const [pw,ph]=getPageDims(profile)
-  const MAX_W=570
+  const MAX_W=maxW
   const scale=Math.min(MAX_W/pw, 720/ph)
   const W=pw*scale, H=ph*scale
 
@@ -780,8 +850,22 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
   const removeItem=(slotIdx)=>
     onUpdatePage({...page,items:page.items.map((id,i)=>i===slotIdx?{...id,item:null}:id)})
 
-  const updateCaption=(slotIdx,text)=>
-    onUpdatePage({...page,items:page.items.map((id,i)=>i===slotIdx?{...id,item:{...id.item,text}}:id)})
+  const updateCaption=(slotIdx, text, style)=>
+    onUpdatePage({...page,items:page.items.map((id,i)=>i===slotIdx
+      ? {...id,item:{...id.item, ...(text!==undefined?{text}:{}), ...(style?{caption_style:style}:{})}}
+      : id)})
+
+  // Sync caption text back to Immich as asset description
+  const syncCaptionToImmich = async (slotIdx) => {
+    const id = page.items[slotIdx]
+    if (!id?.item?.for_asset_id || !id.item.text) return
+    try {
+      await axios.post(`/api/assets/${id.item.for_asset_id}/description`, {
+        asset_id: id.item.for_asset_id,
+        description: id.item.text,
+      })
+    } catch(e) { console.warn('Immich sync failed', e) }
+  }
 
   const changePageType=(ptId)=>{
     const pt=allPageTypes.find(p=>p.id===ptId);if(!pt) return
@@ -809,6 +893,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
       page_type:{id:'custom',label:'Custom',slots:ni.map(i=>i.slot)}})
   }
 
+
   return (
     <div>
       {/* Page type switcher */}
@@ -820,7 +905,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
               style={{fontSize:11}} onClick={()=>changePageType(pt.id)}>{pt.label}</button>
           ))}
           <button className="btn btn-sm" style={{fontSize:11,marginLeft:'auto'}}
-            title="Divide lo slot più grande" onClick={addSlot}>⊞ Slot</button>
+            title={tp.addSlot} onClick={addSlot}>{tp.addSlot}</button>
         </div>
       )}
 
@@ -842,7 +927,6 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
           const isDragTgt=dragOverIdx===slotIdx
           const isCaptionEdit=editCaptionIdx===slotIdx
           const canDrag=!!item&&!isPhotoEdit&&!isCaptionEdit
-
           const outlineColor=isPhotoEdit?'#6a8fd8':mismatch?'#e05050':isDragTgt?'var(--gold)':'transparent'
           const outlineStyle=isDragTgt?'2px dashed':'3px solid'
 
@@ -932,26 +1016,137 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                 </div>
               )}
 
+
+
               {/* Caption */}
-              {item?.type==='caption'&&(
-                isCaptionEdit?(
-                  <div style={{width:'100%',height:'100%',background:'#111116',padding:Math.max(6,r.w*0.05)}}>
+              {item?.type==='caption'&&(()=>{
+                // Merge profile default style with per-caption overrides
+                const profileCs = profile?.caption_style || {}
+                const cs = { ...profileCs, ...(item.caption_style||{}) }
+                const font     = cs.font     || 'Georgia, serif'
+                const size     = Math.max(8, Math.min(cs.size||13, Math.max(11, r.w*0.05)))
+                const color    = cs.color    || '#e8e6e0'
+                const bg       = cs.bg       || '#111116'
+                const align    = cs.align    || 'center'
+                const valign   = cs.valign   || 'center'
+                const italic   = cs.italic   !== false
+                const bold     = cs.bold     || false
+
+                const setCs = (key, val) => updateCaption(slotIdx, undefined, {...(item.caption_style||{}), [key]: val})
+
+                if (isCaptionEdit) return (
+                  <div style={{width:'100%',height:'100%',background:bg,
+                    display:'flex',flexDirection:'column',overflow:'hidden'}}>
+
+                    {/* WYSIWYG toolbar
+                        IMPORTANT: ogni controllo ha onMouseDown={e=>e.preventDefault()}
+                        per impedire che il textarea perda il focus prima del click */}
+                    <div
+                      onMouseDown={e=>e.preventDefault()}
+                      style={{display:'flex',gap:3,padding:'3px 5px',flexShrink:0,flexWrap:'wrap',
+                        background:'rgba(0,0,0,0.35)',borderBottom:'1px solid rgba(255,255,255,0.08)'}}>
+
+                      {/* Font size */}
+                      <input type="number" min={8} max={72} step={1} value={cs.size||13}
+                        onMouseDown={e=>e.stopPropagation()}
+                        onChange={e=>setCs('size', +e.target.value)}
+                        title="Dimensione"
+                        style={{width:38,height:22,background:'rgba(255,255,255,0.08)',border:'1px solid rgba(255,255,255,0.15)',
+                          borderRadius:3,color:'#ddd',fontSize:10,textAlign:'center',padding:'0 2px'}}/>
+
+                      {/* Bold / Italic */}
+                      {[['B','bold',{fontWeight:'bold'}],['I','italic',{fontStyle:'italic'}]].map(([lbl,key,sty])=>(
+                        <button key={key}
+                          onMouseDown={e=>{ e.preventDefault(); setCs(key, !cs[key]) }}
+                          style={{width:22,height:22,border:'1px solid rgba(255,255,255,0.15)',borderRadius:3,
+                            cursor:'pointer',fontSize:11,...sty,
+                            background:cs[key]?'rgba(212,170,90,0.35)':'rgba(255,255,255,0.08)',
+                            color:cs[key]?'#f0c040':'#ccc'}}>{lbl}</button>
+                      ))}
+
+                      {/* Text align */}
+                      {[['←','left'],['↔','center'],['→','right']].map(([icon,v])=>(
+                        <button key={v}
+                          onMouseDown={e=>{ e.preventDefault(); setCs('align',v) }}
+                          style={{width:22,height:22,border:'1px solid rgba(255,255,255,0.15)',borderRadius:3,
+                            cursor:'pointer',fontSize:12,
+                            background:align===v?'rgba(212,170,90,0.35)':'rgba(255,255,255,0.08)',
+                            color:align===v?'#f0c040':'#ccc'}}>{icon}</button>
+                      ))}
+
+                      {/* Vertical align */}
+                      {[['↑','flex-start'],['↕','center'],['↓','flex-end']].map(([icon,v])=>(
+                        <button key={v}
+                          onMouseDown={e=>{ e.preventDefault(); setCs('valign',v) }}
+                          style={{width:22,height:22,border:'1px solid rgba(255,255,255,0.15)',borderRadius:3,
+                            cursor:'pointer',fontSize:12,
+                            background:valign===v?'rgba(212,170,90,0.35)':'rgba(255,255,255,0.08)',
+                            color:valign===v?'#f0c040':'#ccc'}}>{icon}</button>
+                      ))}
+
+                      {/* Text color */}
+                      <div title="Colore testo" style={{position:'relative',display:'inline-block'}}>
+                        <input type="color" value={color}
+                          onMouseDown={e=>e.stopPropagation()}
+                          onChange={e=>setCs('color',e.target.value)}
+                          style={{width:22,height:22,padding:1,border:'1px solid rgba(255,255,255,0.15)',
+                            borderRadius:3,cursor:'pointer',background:'transparent'}}/>
+                      </div>
+
+                      {/* Bg color */}
+                      <div title="Colore sfondo" style={{position:'relative',display:'inline-block'}}>
+                        <input type="color" value={bg==='transparent'?'#000000':bg}
+                          onMouseDown={e=>e.stopPropagation()}
+                          onChange={e=>setCs('bg',e.target.value)}
+                          style={{width:22,height:22,padding:1,border:'1px solid rgba(255,255,255,0.15)',
+                            borderRadius:3,cursor:'pointer',background:'transparent'}}/>
+                      </div>
+
+                      {/* Sync to Immich */}
+                      {item.for_asset_id&&(
+                        <button
+                          onMouseDown={e=>{ e.preventDefault(); syncCaptionToImmich(slotIdx) }}
+                          title="Salva come descrizione in Immich"
+                          style={{marginLeft:'auto',height:22,padding:'0 6px',border:'1px solid rgba(255,255,255,0.15)',
+                            borderRadius:3,cursor:'pointer',fontSize:9,
+                            background:'rgba(212,170,90,0.2)',color:'#f0c040',whiteSpace:'nowrap'}}>
+                          ↑ Immich
+                        </button>
+                      )}
+
+                      {/* Done — unico che deve chiudere l'editor */}
+                      <button
+                        onMouseDown={e=>{ e.preventDefault(); syncCaptionToImmich(slotIdx); setEditCaptionIdx(null) }}
+                        title="Chiudi editor"
+                        style={{height:22,padding:'0 6px',border:'1px solid rgba(255,255,255,0.15)',
+                          borderRadius:3,cursor:'pointer',fontSize:9,
+                          background:'rgba(255,255,255,0.08)',color:'#ccc'}}>✓</button>
+                    </div>
+
                     <textarea autoFocus value={item.text||''}
-                      onChange={e=>updateCaption(slotIdx,e.target.value)}
-                      onBlur={()=>setEditCaptionIdx(null)}
-                      onKeyDown={e=>e.key==='Escape'&&setEditCaptionIdx(null)}
-                      style={{width:'100%',height:'100%',background:'transparent',border:'none',
-                        outline:'none',color:'#e8e6e0',fontStyle:'italic',
-                        fontSize:Math.max(11,r.w*0.04),resize:'none',lineHeight:1.5,fontFamily:'Georgia,serif'}}/>
+                      onChange={e=>updateCaption(slotIdx, e.target.value)}
+                      onKeyDown={e=>{
+                        if(e.key==='Escape'){ syncCaptionToImmich(slotIdx); setEditCaptionIdx(null) }
+                      }}
+                      style={{flex:1,background:'transparent',border:'none',
+                        outline:'none',color,fontFamily:font,fontStyle:italic?'italic':'normal',
+                        fontWeight:bold?'bold':'normal',fontSize:size,
+                        resize:'none',lineHeight:1.55,padding:Math.max(6,r.w*0.04),
+                        textAlign:align}}/>
                   </div>
-                ):(
-                  <div style={{width:'100%',height:'100%',background:'#111116',
-                    display:'flex',alignItems:'center',justifyContent:'center',padding:Math.max(8,r.w*0.05)}}>
-                    <span style={{color:'#e8e6e0',fontStyle:'italic',textAlign:'center',
-                      fontSize:Math.max(10,Math.min(15,r.w*0.05)),lineHeight:1.5,
+                )
+
+                return (
+                  <div style={{width:'100%',height:'100%',background:bg,
+                    display:'flex',alignItems:valign,justifyContent:align==='left'?'flex-start':align==='right'?'flex-end':'center',
+                    padding:Math.max(8,r.w*0.05)}}>
+                    <span style={{color,fontFamily:font,fontStyle:italic?'italic':'normal',
+                      fontWeight:bold?'bold':'normal',fontSize:size,
+                      textAlign:align,lineHeight:1.55,
                       overflow:'hidden',display:'-webkit-box',
-                      WebkitLineClamp:Math.max(2,Math.floor(r.h/22)),WebkitBoxOrient:'vertical'}}>
-                      {item.text||<span style={{opacity:0.35}}>clicca per scrivere…</span>}
+                      WebkitLineClamp:Math.max(2,Math.floor(r.h/((size||13)*1.6))),
+                      WebkitBoxOrient:'vertical'}}>
+                      {item.text||<span style={{opacity:0.32}}>clicca per scrivere…</span>}
                     </span>
                     <div className="slot-hover-overlay">
                       <button className="slot-btn" style={{fontSize:10}}
@@ -961,7 +1156,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                     </div>
                   </div>
                 )
-              )}
+              })()}
             </div>
           )
         })}
@@ -981,6 +1176,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
 
 // ── Export panel ──────────────────────────────────────────────────────────────
 function ExportPanel({ layout, onExport, exporting }) {
+  const t = useT(); const tp = t.preview
   const [open,setOpen]=useState(false)
   const p=layout?.profile||{}
   return (
@@ -1024,6 +1220,7 @@ function ExportPanel({ layout, onExport, exporting }) {
 // ── Project save / load modal ────────────────────────────────────────────────
 function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onLoad }) {
   // mode: 'save' | 'load'
+  const t = useT(); const tp = t.preview
   const [projects, setProjects]   = useState([])
   const [loading, setLoading]     = useState(false)
   const [projectName, setProjectName] = useState(
@@ -1064,16 +1261,16 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
       let res
       if (savedId) {
         res = await axios.put(`/api/projects/${savedId}`, payload)
-        setToast({ type:'success', msg:'Progetto aggiornato ✓' })
+        setToast({ type:'success', msg:tp.projectSavedOk })
       } else {
         res = await axios.post('/api/projects', payload)
         sessionStorage.setItem('photobook_project_id', res.data.id)
         setSavedId(res.data.id)
-        setToast({ type:'success', msg:'Progetto salvato ✓' })
+        setToast({ type:'success', msg:tp.projectNewSavedOk })
       }
       setTimeout(onClose, 1200)
     } catch {
-      setToast({ type:'error', msg:'Errore nel salvataggio' })
+      setToast({ type:'error', msg:tp.projectSaveError })
     } finally {
       setSaving(false)
     }
@@ -1098,7 +1295,7 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
       onLoad(r.data)   // parent aggiorna stato
       onClose()
     } catch {
-      setToast({ type:'error', msg:'Errore nel caricamento' })
+      setToast({ type:'error', msg:tp.projectLoadError })
     }
   }
 
@@ -1173,7 +1370,7 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
                   onClick={savedId ? handleSaveNew : handleSave}
                   disabled={saving || !projectName.trim()}>
                   {saving ? <><span className="spinner" style={{width:13,height:13}}/> Salvataggio…</>
-                    : savedId ? '+ Salva come nuovo' : '💾 Salva'}
+                    : savedId ? tp.projectSaveNewBtn : '💾 Salva'}
                 </button>
               </div>
 
@@ -1228,6 +1425,7 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
 }
 
 function ProjectRow({ project, fmt, onLoad, onDelete }) {
+  const t = useT(); const tp = t.preview
   return (
     <div
       onClick={() => onLoad(project.id)}
@@ -1269,11 +1467,13 @@ function ProjectRow({ project, fmt, onLoad, onDelete }) {
 // ── Recalculate menu — rendered via Portal to escape sidebar overflow ─────────────
 // anchorRef: ref del bottone trigger, usato per calcolare la posizione sullo schermo
 function RecalcMenu({ anchorRef, currentPage, totalPages, busy, onAction, onClose }) {
+  const t = useT(); const tp = t.preview
   const fromIdx = Math.max(0, currentPage)
   const atTitle = currentPage === -1
   const isFirst  = fromIdx === 0
 
   const [pos, setPos] = useState(null)
+  const SECTIONS = tp.recalcSections(fromIdx, totalPages, atTitle, isFirst)
 
   useEffect(() => {
     if (!anchorRef?.current) return
@@ -1286,70 +1486,6 @@ function RecalcMenu({ anchorRef, currentPage, totalPages, busy, onAction, onClos
     return () => window.removeEventListener('resize', update)
   }, [anchorRef])
 
-  const SECTIONS = [
-    {
-      title: 'RICALCOLO PARZIALE',
-      items: [
-        {
-          id: 'from_here', icon: '📍',
-          label: 'Da questa pagina in avanti',
-          highlight: true,
-          desc: isFirst
-            ? "Ricalcola l'intero album (sei alla prima pagina)"
-            : `Blocca le pagine 1–${fromIdx} già revisionate · ricalcola da pag. ${fromIdx + 1} alla fine`,
-        },
-        {
-          id: 'this_page', icon: '📄',
-          label: 'Solo questa pagina',
-          disabled: atTitle,
-          desc: atTitle
-            ? 'Non applicabile alla copertina'
-            : 'Redistribuisce le foto di questa pagina con un layout automatico diverso',
-        },
-      ],
-    },
-    {
-      title: 'OTTIMIZZAZIONI  (da questa pagina in poi)',
-      items: [
-        {
-          id: 'compress', icon: '🗜️',
-          label: 'Comprimi pagine vuote',
-          desc: 'Raggruppa le foto sparse riducendo le pagine con slot vuoti · le pagine precedenti restano intatte',
-        },
-        {
-          id: 'orientation', icon: '🎯',
-          label: 'Ottimizza orientamento',
-          desc: 'Scambia le foto dentro ogni pagina per far corrispondere verticale↔verticale e orizzontale↔orizzontale · istantaneo',
-        },
-        {
-          id: 'reorder_date', icon: '📅',
-          label: 'Riordina per data',
-          desc: 'Sposta le foto nei loro slot in ordine cronologico mantenendo il layout invariato · istantaneo',
-        },
-      ],
-    },
-    {
-      title: 'AGGIUNTE',
-      items: [
-        {
-          id: 'add_unused', icon: '➕',
-          label: 'Inserisci foto non ancora usate',
-          desc: "Genera nuove pagine in fondo all'album con le foto Immich non ancora nel layout",
-        },
-      ],
-    },
-    {
-      title: 'RICALCOLO COMPLETO',
-      items: [
-        {
-          id: 'full', icon: '🔄',
-          label: 'Ricomincia tutto da zero',
-          danger: true,
-          desc: '⚠ Tutte le modifiche manuali andranno perse · ricalcola da capo',
-        },
-      ],
-    },
-  ]
 
   if (!pos) return null
 
@@ -1381,7 +1517,7 @@ function RecalcMenu({ anchorRef, currentPage, totalPages, busy, onAction, onClos
           </span>
           <div style={{display:'flex',alignItems:'center',gap:10}}>
             <span style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--font-mono)'}}>
-              {atTitle ? 'copertina' : `pag. ${fromIdx + 1} / ${totalPages}`}
+              {atTitle ? tp.recalcCover : `pag. ${fromIdx + 1} / ${totalPages}`}
             </span>
             <button onClick={onClose}
               style={{background:'none',border:'none',color:'var(--text3)',
@@ -1440,6 +1576,7 @@ function RecalcMenu({ anchorRef, currentPage, totalPages, busy, onAction, onClos
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function PreviewPage() {
+  const t = useT(); const tp = t.preview
   const navigate=useNavigate()
   const [layout,setLayout]=useState(null)
   const [currentPage,setCurrentPage]=useState(-1)
@@ -1457,6 +1594,8 @@ export default function PreviewPage() {
   const recalcBtnRef = useRef(null)
   const [panelOpen,setPanelOpen]=useState(true)
   const [draggedAsset,setDraggedAsset]=useState(null)
+  const [spreadView,setSpreadView]=useState(false)  // false=single, true=2-page spread
+  const [sidebarDrag,setSidebarDrag]=useState(null)  // {idx} being dragged in sidebar
 
   useEffect(() => {
     const stored = sessionStorage.getItem('photobook_layout')
@@ -1521,6 +1660,48 @@ export default function PreviewPage() {
     setLayout(prev=>{const pages=[...prev.pages];pages[idx]=newPage;return persist({...prev,pages})})
     setHasChanges(true)
   },[])
+
+  // ── Page management ──────────────────────────────────────────────────────────
+  const addPage = (afterIdx) => {
+    // Add a blank page with the first available page type (or single slot)
+    const profile = layout?.profile || {}
+    const pts = profile.page_types || []
+    const defaultPT = pts[0] || {id:'blank',label:'Vuota',slots:[{x:0,y:0,w:100,h:100}]}
+    const newPage = {
+      page_type_id: defaultPT.id,
+      page_type: defaultPT,
+      items: defaultPT.slots.map(slot=>({slot,item:null}))
+    }
+    setLayout(prev=>{
+      const pages=[...prev.pages]
+      pages.splice(afterIdx+1,0,newPage)
+      return persist({...prev,pages})
+    })
+    setCurrentPage(afterIdx+1)
+    setHasChanges(true)
+  }
+
+  const removePage = (idx) => {
+    if (!confirm('Eliminare questa pagina?')) return
+    setLayout(prev=>{
+      const pages=prev.pages.filter((_,i)=>i!==idx)
+      return persist({...prev,pages})
+    })
+    setCurrentPage(p=>Math.max(-1,Math.min(p,layout.pages.length-2)))
+    setHasChanges(true)
+  }
+
+  const movePage = (fromIdx, toIdx) => {
+    if (fromIdx===toIdx) return
+    setLayout(prev=>{
+      const pages=[...prev.pages]
+      const [moved]=pages.splice(fromIdx,1)
+      pages.splice(toIdx,0,moved)
+      return persist({...prev,pages})
+    })
+    setCurrentPage(toIdx)
+    setHasChanges(true)
+  }
 
   const onTransformChange=useCallback((panKey,t)=>{
     setPhotoTransforms(prev=>({...prev,[panKey]:t}))
@@ -1619,8 +1800,8 @@ export default function PreviewPage() {
         return persist({...prev,pages:[...locked,...r.data.pages]})
       })
       setHasChanges(false)
-      showToast(`✓ Ricalcolato da pagina ${fromIdx+1} in avanti`,'success')
-    }catch{showToast('Errore nel ricalcolo','error')}
+      showToast(tp.recalcToasts.fromHere(fromIdx+1),'success')
+    }catch{showToast(tp.recalcToasts.recalcError,'error')}
     finally{setRecalculating(false)}
   }
 
@@ -1638,21 +1819,21 @@ export default function PreviewPage() {
         pages.splice(currentPage,1,...r.data.pages)
         return persist({...prev,pages})
       })
-      showToast('✓ Pagina ricalcolata','success')
+      showToast(tp.recalcToasts.thisPage,'success')
     }catch{showToast('Errore nel ricalcolo','error')}
     finally{setRecalculating(false)}
   }
 
   // ── 3. Tutto l'album da zero ─────────────────────────────────────────────
   const recalcAll=async()=>{
-    if(!window.confirm('Sei sicuro? Tutte le modifiche manuali andranno perse.')) return
+    if(!window.confirm(tp.recalcConfirmAll)) return
     setRecalculating(true)
     try{
       const photoItems=collectPhotos(layout.pages,0)
       const r=await axios.post('/api/layout/recalculate',{photo_items:photoItems,profile_id:layout.profile.id})
       setLayout(prev=>persist({...prev,pages:r.data.pages}))
       setHasChanges(false);setCurrentPage(0)
-      showToast('✓ Album ricalcolato da zero','success')
+      showToast(tp.recalcToasts.all,'success')
     }catch{showToast('Errore nel ricalcolo','error')}
     finally{setRecalculating(false)}
   }
@@ -1663,13 +1844,13 @@ export default function PreviewPage() {
     setRecalculating(true)
     try{
       const photoItems=collectPhotos(layout.pages,fromIdx)
-      if(!photoItems.length){showToast('Nessuna foto da riorganizzare','error');return}
+      if(!photoItems.length){showToast(tp.recalcToasts.noPhotos,'error');return}
       const r=await axios.post('/api/layout/recalculate',{photo_items:photoItems,profile_id:layout.profile.id})
       setLayout(prev=>{
         const locked=prev.pages.slice(0,fromIdx)
         return persist({...prev,pages:[...locked,...r.data.pages]})
       })
-      showToast('✓ Pagine compresse','success')
+      showToast(tp.recalcToasts.compress,'success')
     }catch{showToast('Errore','error')}
     finally{setRecalculating(false)}
   }
@@ -1709,7 +1890,7 @@ export default function PreviewPage() {
     slots.forEach(({pi,si},i)=>{newPages[pi].items[si]={...newPages[pi].items[si],item:sorted[i].item}})
     setLayout(prev=>persist({...prev,pages:newPages}))
     setHasChanges(true)
-    showToast('✓ Foto riordinate per data','success')
+    showToast(tp.recalcToasts.reorderDate,'success')
   }
 
   // ── 7. Aggiungi foto non usate ────────────────────────────────────────────
@@ -1717,7 +1898,7 @@ export default function PreviewPage() {
     const usedIds=new Set()
     layout.pages.forEach(pg=>pg.items.forEach(id=>{if(id.item?.type==='photo') usedIds.add(id.item.asset_id)}))
     const unused=albumAssets.filter(a=>!usedIds.has(a.id))
-    if(!unused.length){showToast('✓ Tutte le foto sono già nel layout','success');return}
+    if(!unused.length){showToast(tp.recalcToasts.allUsed,'success');return}
     setRecalculating(true)
     try{
       const photoItems=unused.map(asset=>{
@@ -1731,7 +1912,7 @@ export default function PreviewPage() {
       const insertAt=layout.pages.length
       setLayout(prev=>persist({...prev,pages:[...prev.pages,...r.data.pages]}))
       setCurrentPage(insertAt)
-      showToast(`✓ Aggiunte ${unused.length} foto in ${r.data.pages.length} nuove pagine`,'success')
+      showToast(tp.recalcToasts.addedUnused(unused.length, r.data.pages.length),'success')
     }catch{showToast('Errore','error')}
     finally{setRecalculating(false)}
   }
@@ -1766,8 +1947,8 @@ export default function PreviewPage() {
       const a=document.createElement('a');a.href=url
       a.download=`${layout.album.albumName||'fotolibro'}${format==='svg'?'_svg.zip':'.pdf'}`
       a.click(); URL.revokeObjectURL(url)
-      showToast(format==='svg'?'✓ ZIP SVG scaricato!':'✓ PDF scaricato!','success')
-    }catch{showToast('✗ Errore export','error')}
+      showToast(format==='svg'?tp.svgDownloaded:tp.pdfDownloaded,'success')
+    }catch{showToast(tp.exportError,'error')}
     finally{setExporting(false)}
   }
 
@@ -1842,6 +2023,7 @@ export default function PreviewPage() {
           </div>
         </div>
         <div style={{flex:1,overflowY:'auto',padding:'8px 8px 0'}}>
+          {/* Cover thumb */}
           <div className={`page-thumb-item${currentPage===-1?' active':''}`} onClick={()=>setCurrentPage(-1)}>
             <span className="page-num">T</span>
             <div style={{width:28,height:40,background:'#0f0f14',borderRadius:2,overflow:'hidden',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -1849,8 +2031,28 @@ export default function PreviewPage() {
             </div>
             <span className="text-xs text-muted">Copertina</span>
           </div>
+
+          {/* Page thumbs — draggable for reorder */}
           {pages.map((page,idx)=>(
-            <div key={idx} className={`page-thumb-item${currentPage===idx?' active':''}`} onClick={()=>setCurrentPage(idx)}>
+            <div key={idx}
+              draggable
+              onDragStart={e=>{e.dataTransfer.setData('page-idx',String(idx));setSidebarDrag(idx)}}
+              onDragEnd={()=>setSidebarDrag(null)}
+              onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='move'}}
+              onDrop={e=>{
+                e.preventDefault()
+                const fromIdx=parseInt(e.dataTransfer.getData('page-idx'),10)
+                if(!isNaN(fromIdx)&&fromIdx!==idx) movePage(fromIdx,idx)
+                setSidebarDrag(null)
+              }}
+              className={`page-thumb-item${currentPage===idx?' active':''}`}
+              style={{
+                opacity: sidebarDrag===idx ? 0.45 : 1,
+                borderLeft: sidebarDrag!==null&&sidebarDrag!==idx ? '2px solid transparent' : undefined,
+                outline: sidebarDrag!==null&&sidebarDrag!==idx ? undefined : undefined,
+                cursor:'grab',
+              }}
+              onClick={()=>setCurrentPage(idx)}>
               <span className="page-num">{idx+1}</span>
               <MiniPage page={page} profile={profile} scale={0.052}/>
               <div style={{flex:1,minWidth:0}}>
@@ -1861,22 +2063,84 @@ export default function PreviewPage() {
                   {page.items.filter(i=>i.item?.type==='photo').length}📷 {page.items.filter(i=>i.item?.type==='caption').length}💬 {page.items.filter(i=>!i.item).length}○
                 </p>
               </div>
+              {/* Per-page actions */}
+              <div style={{display:'flex',flexDirection:'column',gap:2,flexShrink:0}}>
+                <button
+                  title="Aggiungi pagina vuota dopo"
+                  onClick={e=>{e.stopPropagation();addPage(idx)}}
+                  style={{width:16,height:16,background:'none',border:'1px solid var(--border)',
+                    borderRadius:3,cursor:'pointer',fontSize:10,color:'var(--text3)',lineHeight:1,
+                    display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>
+                {pages.length>1&&(
+                  <button
+                    title="Elimina pagina"
+                    onClick={e=>{e.stopPropagation();removePage(idx)}}
+                    style={{width:16,height:16,background:'none',border:'1px solid var(--border)',
+                      borderRadius:3,cursor:'pointer',fontSize:10,color:'#e05050',lineHeight:1,
+                      display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
+                )}
+              </div>
             </div>
           ))}
+
+          {/* Add page at end */}
+          <div
+            style={{margin:'6px 0 12px',padding:'6px 8px',borderRadius:6,border:'1px dashed var(--border)',
+              cursor:'pointer',display:'flex',alignItems:'center',gap:6,
+              color:'var(--text3)',fontSize:11,
+            }}
+            onClick={()=>addPage(pages.length-1)}
+            onMouseEnter={e=>e.currentTarget.style.borderColor='var(--gold)'}
+            onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}>
+            <span style={{fontSize:14}}>+</span>
+            <span>Aggiungi pagina in fondo</span>
+          </div>
         </div>
         <ExportPanel layout={layout} onExport={exportBook} exporting={exporting}/>
       </div>
 
       {/* ── Main canvas ── */}
       <div className="preview-main" style={{flex:1}}>
-        <div className="flex items-center justify-between" style={{width:'100%',maxWidth:680,marginBottom:16,flexShrink:0}}>
+        {/* Top bar: prev/next + spread toggle + add page */}
+        <div className="flex items-center justify-between" style={{width:'100%',maxWidth:900,marginBottom:12,flexShrink:0,gap:8}}>
           <button className="btn btn-ghost" style={{fontSize:12}}
-            onClick={()=>setCurrentPage(p=>Math.max(-1,p-1))} disabled={currentPage<=-1}>← Prec.</button>
-          <span className="text-sm font-mono text-muted">
-            {currentPage===-1?'Copertina':`Pagina ${currentPage+1} / ${pages.length}`}
-          </span>
+            onClick={()=>setCurrentPage(p=>Math.max(-1,p-1))} disabled={currentPage<=-1}>{tp.prevBtn}</button>
+
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <span className="text-sm font-mono text-muted">
+              {currentPage===-1?tp.coverPage:tp.pageOf(currentPage+1, pages.length)}
+            </span>
+            {/* Spread / Single toggle */}
+            <div style={{display:'flex',gap:2,background:'var(--bg3)',borderRadius:6,padding:2,border:'1px solid var(--border)'}}>
+              <button
+                onClick={()=>setSpreadView(false)}
+                title="Pagina singola"
+                style={{padding:'3px 8px',borderRadius:4,border:'none',cursor:'pointer',fontSize:11,
+                  background:!spreadView?'var(--bg)':'transparent',
+                  color:!spreadView?'var(--text)':'var(--text3)'}}>□</button>
+              <button
+                onClick={()=>setSpreadView(true)}
+                title="Doppia pagina (spread)"
+                style={{padding:'3px 8px',borderRadius:4,border:'none',cursor:'pointer',fontSize:11,
+                  background:spreadView?'var(--bg)':'transparent',
+                  color:spreadView?'var(--text)':'var(--text3)'}}>□□</button>
+            </div>
+            {/* Add page */}
+            {currentPage >= 0 && (
+              <button className="btn btn-sm" style={{fontSize:11}}
+                title="Aggiungi pagina vuota dopo questa"
+                onClick={()=>addPage(currentPage)}>+ Pagina</button>
+            )}
+            {/* Remove current page */}
+            {currentPage >= 0 && pages.length > 1 && (
+              <button className="btn btn-sm btn-danger" style={{fontSize:11}}
+                title="Elimina questa pagina"
+                onClick={()=>removePage(currentPage)}>× Elimina</button>
+            )}
+          </div>
+
           <button className="btn btn-ghost" style={{fontSize:12}}
-            onClick={()=>setCurrentPage(p=>Math.min(pages.length-1,p+1))} disabled={currentPage>=pages.length-1}>Succ. →</button>
+            onClick={()=>setCurrentPage(p=>Math.min(pages.length-1,p+1))} disabled={currentPage>=pages.length-1}>{tp.nextBtn}</button>
         </div>
 
         {currentPage===-1?(
@@ -1894,6 +2158,64 @@ export default function PreviewPage() {
             </div>
             <p className="text-xs text-muted mt-3">La copertina viene generata automaticamente con mappa GPS</p>
           </div>
+        ) : spreadView ? (
+          /* ── Spread view: 2 pages side by side ── */
+          (() => {
+            // Even page on left (0-indexed: even idx = right-hand page in book terms,
+            // but user wants pairs: 0+1, 2+3 etc. — floor to even pair)
+            const leftIdx  = currentPage % 2 === 0 ? currentPage - 1 : currentPage
+            const rightIdx = leftIdx + 1
+            const leftPage  = leftIdx >= 0 ? pages[leftIdx]  : null
+            const rightPage = rightIdx < pages.length ? pages[rightIdx] : null
+            return (
+              <div style={{display:'flex',gap:8,alignItems:'flex-start',justifyContent:'center'}}>
+                {/* Left page */}
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center'}}>
+                  {leftPage ? (
+                    <EditablePage
+                      page={leftPage} pageIdx={leftIdx}
+                      profile={profile} allPageTypes={allPageTypes}
+                      photoAspects={photoAspects} photoTransforms={photoTransforms}
+                      onTransformChange={onTransformChange}
+                      onUpdatePage={p=>updatePage(leftIdx,p)}
+                      onOpenPicker={openPicker} onAddCaption={addCaption}
+                      onDrop={handleDropFromPanel}
+                      maxW={360}/>
+                  ) : (
+                    <div style={{width:250,height:354,background:'rgba(0,0,0,0.08)',borderRadius:2,
+                      display:'flex',alignItems:'center',justifyContent:'center'}}>
+                      <span style={{fontSize:11,color:'var(--text3)'}}>copertina/inizio</span>
+                    </div>
+                  )}
+                  {leftPage && (
+                    <p className="text-xs text-muted mt-1">Pagina {leftIdx+1}</p>
+                  )}
+                </div>
+                {/* Right page */}
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center'}}>
+                  {rightPage ? (
+                    <EditablePage
+                      page={rightPage} pageIdx={rightIdx}
+                      profile={profile} allPageTypes={allPageTypes}
+                      photoAspects={photoAspects} photoTransforms={photoTransforms}
+                      onTransformChange={onTransformChange}
+                      onUpdatePage={p=>updatePage(rightIdx,p)}
+                      onOpenPicker={openPicker} onAddCaption={addCaption}
+                      onDrop={handleDropFromPanel}
+                      maxW={360}/>
+                  ) : (
+                    <div style={{width:250,height:354,background:'rgba(0,0,0,0.08)',borderRadius:2,
+                      display:'flex',alignItems:'center',justifyContent:'center'}}>
+                      <span style={{fontSize:11,color:'var(--text3)'}}>fine album</span>
+                    </div>
+                  )}
+                  {rightPage && (
+                    <p className="text-xs text-muted mt-1">Pagina {rightIdx+1}</p>
+                  )}
+                </div>
+              </div>
+            )
+          })()
         ):(
           <EditablePage
             page={pages[currentPage]}

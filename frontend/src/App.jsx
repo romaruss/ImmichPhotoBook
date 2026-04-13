@@ -1,26 +1,30 @@
 import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import axios from 'axios'
+import { useT } from './i18n.jsx'
 import ConfigPage from './pages/ConfigPage'
 import ProfilesPage from './pages/ProfilesPage'
 import AlbumsPage from './pages/AlbumsPage'
 import PreviewPage from './pages/PreviewPage'
 
-const NAV = [
-  { path: '/config',   label: 'Configurazione', icon: '⚙️' },
-  { path: '/profiles', label: 'Profili di stampa', icon: '📐' },
-  { path: '/albums',   label: 'Album & Layout', icon: '🖼️' },
-  { path: '/preview',  label: 'Anteprima & Export', icon: '📖' },
-]
-
 function Shell() {
+  const t = useT()
   const navigate = useNavigate()
   const location = useLocation()
   const [connected, setConnected] = useState(null)
 
   useEffect(() => {
-    axios.get('/api/config/test').then(r => setConnected(r.data.connected)).catch(() => setConnected(false))
+    axios.get('/api/config/test')
+      .then(r => setConnected(r.data.connected))
+      .catch(() => setConnected(false))
   }, [])
+
+  const NAV = [
+    { path: '/config',   label: t.nav.config,   icon: '⚙️' },
+    { path: '/profiles', label: t.nav.profiles,  icon: '📐' },
+    { path: '/albums',   label: t.nav.albums,    icon: '🖼️' },
+    { path: '/preview',  label: t.nav.preview,   icon: '📖' },
+  ]
 
   const currentPath = '/' + location.pathname.split('/')[1]
 
@@ -28,16 +32,14 @@ function Shell() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <h1>Photo<span>Book</span><br/>Studio</h1>
-          <p>Print Designer</p>
+          <h1>{t.app.title}<span>{t.app.subtitle}</span><br/>{t.app.subtitle2 || ''}</h1>
+          <p>{t.app.tagline}</p>
         </div>
         <nav className="sidebar-nav">
           {NAV.map(item => (
-            <div
-              key={item.path}
+            <div key={item.path}
               className={`nav-item${currentPath === item.path ? ' active' : ''}`}
-              onClick={() => navigate(item.path)}
-            >
+              onClick={() => navigate(item.path)}>
               <span className="icon">{item.icon}</span>
               {item.label}
             </div>
@@ -45,17 +47,21 @@ function Shell() {
         </nav>
         <div className="sidebar-bottom">
           <span className={`conn-dot${connected === true ? ' ok' : connected === false ? ' err' : ''}`}/>
-          {connected === true ? 'Immich connesso' : connected === false ? 'Non connesso' : 'Verifica…'}
+          {connected === true
+            ? t.connection.connected
+            : connected === false
+            ? t.connection.disconnected
+            : t.connection.checking}
         </div>
       </aside>
       <main className="main-content">
         <Routes>
-          <Route path="/" element={<ConfigPage />} />
-          <Route path="/config" element={<ConfigPage />} />
+          <Route path="/"         element={<ConfigPage />} />
+          <Route path="/config"   element={<ConfigPage />} />
           <Route path="/profiles" element={<ProfilesPage />} />
           <Route path="/profiles/:pid" element={<ProfilesPage />} />
-          <Route path="/albums" element={<AlbumsPage />} />
-          <Route path="/preview" element={<PreviewPage />} />
+          <Route path="/albums"   element={<AlbumsPage />} />
+          <Route path="/preview"  element={<PreviewPage />} />
         </Routes>
       </main>
     </div>

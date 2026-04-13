@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
+import { useT, useLang, LOCALES } from '../i18n.jsx'
 
 export default function ConfigPage() {
-  const [cfg, setCfg] = useState({ immich_url: '', api_key: '' })
-  const [saving, setSaving] = useState(false)
+  const t = useT()
+  const { lang, setLang } = useLang()
+  const [cfg, setCfg]     = useState({ immich_url: '', api_key: '' })
+  const [saving, setSaving]   = useState(false)
   const [testing, setTesting] = useState(false)
-  const [status, setStatus] = useState(null)
+  const [status, setStatus]   = useState(null)
 
   useEffect(() => {
     axios.get('/api/config').then(r => setCfg(r.data))
@@ -15,9 +18,9 @@ export default function ConfigPage() {
     setSaving(true)
     try {
       await axios.post('/api/config', cfg)
-      setStatus({ type: 'success', msg: 'Configurazione salvata' })
+      setStatus({ type: 'success', msg: t.config.saved })
     } catch {
-      setStatus({ type: 'error', msg: 'Errore nel salvataggio' })
+      setStatus({ type: 'error', msg: t.config.saveError })
     } finally {
       setSaving(false)
       setTimeout(() => setStatus(null), 3000)
@@ -29,9 +32,12 @@ export default function ConfigPage() {
     try {
       await axios.post('/api/config', cfg)
       const r = await axios.get('/api/config/test')
-      setStatus({ type: r.data.connected ? 'success' : 'error', msg: r.data.connected ? '✓ Connessione a Immich riuscita!' : '✗ Impossibile connettersi a Immich. Controlla URL e API key.' })
+      setStatus({
+        type: r.data.connected ? 'success' : 'error',
+        msg:  r.data.connected ? t.config.testOk : t.config.testFail,
+      })
     } catch {
-      setStatus({ type: 'error', msg: 'Errore durante il test' })
+      setStatus({ type: 'error', msg: t.config.testError })
     } finally {
       setTesting(false)
       setTimeout(() => setStatus(null), 5000)
@@ -41,70 +47,70 @@ export default function ConfigPage() {
   return (
     <>
       <div className="page-header">
-        <h2>Configurazione</h2>
-        <p>Connetti PhotoBook Studio al tuo server Immich</p>
+        <h2>{t.config.title}</h2>
+        <p>{t.config.subtitle}</p>
       </div>
       <div className="page-body" style={{ maxWidth: 640 }}>
+
         <div className="card">
-          <div className="card-title">Connessione Immich</div>
+          <div className="card-title">{t.config.langTitle}</div>
+          <div className="flex gap-2">
+            {Object.entries(LOCALES).map(([code, { label }]) => (
+              <button key={code}
+                className={`btn${lang === code ? ' btn-primary' : ''}`}
+                onClick={() => setLang(code)}
+                style={{ minWidth: 110 }}>
+                {code === 'it' ? '🇮🇹' : '🇬🇧'} {label}
+              </button>
+            ))}
+          </div>
+        </div>
 
+        <div className="card">
+          <div className="card-title">{t.config.cardTitle}</div>
           <div className="form-group">
-            <label className="form-label">URL del server Immich</label>
-            <input
-              className="form-input"
-              placeholder="http://immich:2283 oppure http://192.168.1.100:2283"
+            <label className="form-label">{t.config.urlLabel}</label>
+            <input className="form-input"
+              placeholder={t.config.urlPlaceholder}
               value={cfg.immich_url}
-              onChange={e => setCfg(p => ({ ...p, immich_url: e.target.value }))}
-            />
-            <p className="text-xs text-muted mt-1">
-              Inserisci l'URL interno del tuo server Immich (senza /api finale)
-            </p>
+              onChange={e => setCfg(p => ({ ...p, immich_url: e.target.value }))}/>
+            <p className="text-xs text-muted mt-1">{t.config.urlHint}</p>
           </div>
-
           <div className="form-group">
-            <label className="form-label">API Key</label>
-            <input
-              className="form-input"
-              type="password"
-              placeholder="La tua API key di Immich"
+            <label className="form-label">{t.config.apiKeyLabel}</label>
+            <input className="form-input" type="password"
+              placeholder={t.config.apiKeyPlaceholder}
               value={cfg.api_key}
-              onChange={e => setCfg(p => ({ ...p, api_key: e.target.value }))}
-            />
-            <p className="text-xs text-muted mt-1">
-              Generala in Immich → Account Settings → API Keys
-            </p>
+              onChange={e => setCfg(p => ({ ...p, api_key: e.target.value }))}/>
+            <p className="text-xs text-muted mt-1">{t.config.apiKeyHint}</p>
           </div>
-
           {status && (
-            <div className={`toast ${status.type}`} style={{ position: 'relative', bottom: 'auto', right: 'auto', marginBottom: 16 }}>
+            <div className={`toast ${status.type}`}
+              style={{ position:'relative', bottom:'auto', right:'auto', marginBottom:16 }}>
               {status.msg}
             </div>
           )}
-
           <div className="flex gap-2">
             <button className="btn btn-primary" onClick={save} disabled={saving}>
-              {saving ? <span className="spinner"/> : '💾'} Salva
+              {saving ? <span className="spinner"/> : '💾'} {t.config.save}
             </button>
             <button className="btn" onClick={test} disabled={testing}>
-              {testing ? <span className="spinner"/> : '🔗'} Testa connessione
+              {testing ? <span className="spinner"/> : '🔗'} {t.config.test}
             </button>
           </div>
         </div>
 
         <div className="card">
-          <div className="card-title">Guida rapida</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {[
-              ['1', 'Configura', 'Inserisci l\'URL di Immich e la tua API key, poi testa la connessione'],
-              ['2', 'Profili di stampa', 'Crea un profilo con le dimensioni del foglio, margini, abbondanza e layout delle pagine'],
-              ['3', 'Seleziona album', 'Scegli uno o più album da Immich e il profilo da usare, poi genera il layout'],
-              ['4', 'Anteprima', 'Rivedi e modifica la disposizione delle foto pagina per pagina'],
-              ['5', 'Esporta', 'Genera il PDF pronto per la stamperia'],
-            ].map(([n, title, desc]) => (
+          <div className="card-title">{t.config.guideTitle}</div>
+          <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+            {t.config.guideSteps.map(([n, title, desc]) => (
               <div key={n} className="flex gap-3 items-center">
-                <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--gold-dim)', border: '1px solid rgba(212,170,90,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--gold)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>{n}</div>
+                <div style={{ width:28, height:28, borderRadius:'50%', background:'var(--gold-dim)',
+                  border:'1px solid rgba(212,170,90,0.3)', display:'flex', alignItems:'center',
+                  justifyContent:'center', fontSize:12, color:'var(--gold)',
+                  fontFamily:'var(--font-mono)', flexShrink:0 }}>{n}</div>
                 <div>
-                  <strong style={{ fontSize: 13 }}>{title}</strong>
+                  <strong style={{ fontSize:13 }}>{title}</strong>
                   <p className="text-xs text-muted">{desc}</p>
                 </div>
               </div>
