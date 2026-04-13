@@ -189,6 +189,7 @@ Click **Test connection** to verify. The sidebar shows the connection status at 
 
 ---
 
+<<<<<<< HEAD
 ## 📋 Usage
 
 ```
@@ -206,6 +207,18 @@ Click **Test connection** to verify. The sidebar shows the connection status at 
          ↓
 5. Export         →  PDF (print shop ready) or SVG ZIP (editable)
 ```
+=======
+## Generate Map
+register to https://client.stadiamaps.com and get an api key
+add .env file with key 
+STADIA_MAPS_API_KEY=XXXX
+
+---
+
+## Export formats
+PDF: Standard print-ready PDF with crop marks.
+SVG ZIP: Editable layers (background, photos, captions, cropmarks, guides).
+>>>>>>> 4571901e3d6b3eaab6990a2e288b1434646fda98
 
 ---
 
