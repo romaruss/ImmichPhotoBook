@@ -106,10 +106,14 @@ async def delete_custom_size(sid: str):
 
 class Profile(BaseModel):
     name: str
-    page_size: str = "20x30"      # can be "A4", "20x30", or custom size ID
+    page_size: str = "20x30"
     orientation: str = "portrait"
     duplex: bool = False
     margin_mm: float = 5.0
+    margin_top: float | None = None     # if None, falls back to margin_mm
+    margin_right: float | None = None
+    margin_bottom: float | None = None
+    margin_left: float | None = None
     bleed: bool = False
     bleed_mm: float = 3.0
     gap_mm: float = 3.0
@@ -124,6 +128,7 @@ class Profile(BaseModel):
         "italic": True,
         "bold": False,
     }
+    cover_style: dict | None = None
 
 @app.post("/api/profiles/{pid}/duplicate")
 async def duplicate_profile(pid: str):
@@ -242,6 +247,84 @@ async def sync_caption_description(asset_id: str, body: CaptionSyncRequest):
     if not ok:
         raise HTTPException(500, "Failed to update description in Immich")
     return {"ok": True}
+
+# ─── NEW UNIFIED LAYOUT GENERATOR ────────────────────────────────────────────
+
+from album_generator import generate_album, DEFAULT_CONFIG
+import tempfile, os as _os
+
+# In-memory store for last generation log (keyed by session, simplified to one global)
+_last_log: dict[str, str] = {}
+
+class GenerateRequest(BaseModel):
+    album_id: str
+    profile_id: str
+    config: dict = {}
+
+@app.post("/api/layout/generate")
+async def generate_layout_new(req: GenerateRequest):
+    """
+    Unified layout generator — replaces /api/layout and /api/layout/smart.
+    Uses the profile's page_types and the config options passed by the client.
+    """
+    try:
+        album = await ic.get_album_detail(req.album_id)
+    except Exception as e:
+        raise HTTPException(502, f"Immich error: {e}")
+
+    path = PROFILES_DIR / f"{req.profile_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "Profile not found")
+    profile = json.loads(path.read_text())
+    profile["id"] = req.profile_id
+
+    assets = sorted(
+        [a for a in album.get("assets", []) if a.get("type","IMAGE").upper() != "VIDEO"],
+        key=lambda a: a.get("localDateTime", "")
+    )
+
+    cfg = req.config or {}
+
+    # Enrich assets with people/faces + checksum when needed
+    # (album endpoint returns limited fields; full asset API has people, checksum, thumbhash)
+    needs_faces = cfg.get("face_crop", True)
+    needs_dedup = cfg.get("remove_duplicates", False)
+    if needs_faces or needs_dedup:
+        enrich_fields = []
+        if needs_faces:
+            enrich_fields.extend(["people", "faces"])
+        if needs_dedup:
+            enrich_fields.extend(["checksum", "thumbhash"])
+        assets = await ic.enrich_assets(assets, fields=enrich_fields)
+
+    pages, transforms, log_text = generate_album(assets, profile, cfg)
+    locations = extract_gps_locations(assets)
+
+    # Store log for download
+    _last_log["latest"] = log_text
+
+    return {
+        "album": {
+            "id":          album["id"],
+            "albumName":   album.get("albumName", ""),
+            "description": album.get("description", ""),
+            "assetCount":  len(assets),
+        },
+        "profile":          profile,
+        "pages":            pages,
+        "locations":        locations,
+        "photo_transforms": transforms,
+    }
+
+@app.get("/api/layout/generate/log")
+async def download_generation_log():
+    """Download the log from the last album generation."""
+    log = _last_log.get("latest", "Nessun log disponibile. Genera un album prima.")
+    return Response(
+        content=log.encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="album_generation_log.txt"'},
+    )
 
 # ─── LAYOUT GENERATION ───────────────────────────────────────────────────────
 
@@ -395,94 +478,190 @@ class ExportRequest(BaseModel):
     profile_id: str
     pages: list[dict]
     locations: list[dict] = []
-    photo_transforms: dict = {}   # pan/zoom per slot
+    photo_transforms: dict = {}
     format: str = "pdf"           # "pdf" | "svg"
+    quality: str = "hires"        # "hires" | "preview"
 
-async def _fetch_photos(asset_ids: set) -> dict:
-    photo_cache = {}
-    async def fetch_one(aid):
+# ── Export progress tracking (in-memory, single-session) ─────────────────────
+_export_progress: dict[str, Any] = {"pct": 0, "step": "", "done": False, "error": ""}
+
+@app.get("/api/export/progress")
+async def export_progress():
+    return _export_progress
+
+def _set_progress(pct: int, step: str):
+    _export_progress.update({"pct": pct, "step": step, "done": False, "error": ""})
+
+async def _fetch_photos(asset_ids: set, hires: bool = False) -> dict:
+    """
+    Fetch photos for export.
+    hires=True  → original file from Immich (print quality)
+    hires=False → thumbnail JPEG (fast preview)
+    Batched to avoid overwhelming Immich.
+    """
+    photo_cache: dict[str, bytes] = {}
+    ids    = list(asset_ids)
+    BATCH  = 5 if hires else 10
+    total  = len(ids)
+
+    async def fetch_one(aid: str):
         try:
-            data = await ic.get_asset_thumbnail(aid, "preview")
+            if hires:
+                data, _ = await ic.get_asset_original(aid)
+            else:
+                data = await ic.get_asset_thumbnail(aid, "thumbnail")
             photo_cache[aid] = data
         except Exception:
             try:
-                data = await ic.get_asset_thumbnail(aid, "thumbnail")
+                data = await ic.get_asset_thumbnail(aid, "preview")
                 photo_cache[aid] = data
-            except Exception as e:
-                logger.warning(f"Could not fetch {aid}: {e}")
-    await asyncio.gather(*[fetch_one(aid) for aid in asset_ids])
+            except Exception:
+                try:
+                    data = await ic.get_asset_thumbnail(aid, "thumbnail")
+                    photo_cache[aid] = data
+                except Exception as e:
+                    logger.warning(f"Could not fetch photo {aid}: {e}")
+
+    mode = "originali (hi-res)" if hires else "thumbnail (anteprima)"
+    logger.info(f"Fetching {total} photos [{mode}]")
+    for i in range(0, total, BATCH):
+        batch = ids[i:i + BATCH]
+        await asyncio.gather(*[fetch_one(aid) for aid in batch])
+        done_so_far = min(i + BATCH, total)
+        pct = 10 + int(done_so_far / total * 60)   # 10% → 70%
+        _set_progress(pct, f"Scaricamento foto {done_so_far}/{total}")
+        logger.info(f"  Fetch: {done_so_far}/{total}")
+
+    logger.info(f"Fetch done: {len(photo_cache)}/{total}")
     return photo_cache
 
 @app.post("/api/export")
 async def export_book(req: ExportRequest):
+    _export_progress.update({"pct": 0, "step": "Avvio…", "done": False, "error": ""})
     try:
-        album = await ic.get_album_detail(req.album_id)
-    except Exception as e:
-        raise HTTPException(502, f"Immich error: {e}")
-
-    path = PROFILES_DIR / f"{req.profile_id}.json"
-    if not path.exists():
-        raise HTTPException(404, "Profile not found")
-    profile = json.loads(path.read_text())
-
-    # Collect asset IDs
-    asset_ids = set()
-    for page in req.pages:
-        for item_data in page.get("items", []):
-            item = item_data.get("item")
-            if item and item.get("type") == "photo":
-                asset_ids.add(item["asset_id"])
-
-    photo_cache = await _fetch_photos(asset_ids)
-
-    map_image = None
-    if req.locations:
-        map_image = generate_map_image(req.locations, 800, 400)
-
-    album_info = {
-        "albumName": album.get("albumName", ""),
-        "description": album.get("description", ""),
-        "assets": album.get("assets", []),
-    }
-    album_slug = (album.get("albumName") or "fotolibro").replace(" ", "_")
-
-    if req.format == "svg":
+        _set_progress(2, "Caricamento album da Immich…")
         try:
-            zip_bytes = generate_svg_zip(
-                album=album_info,
-                pages=req.pages,
-                profile=profile,
-                photo_cache=photo_cache,
-                pan_offsets=req.photo_transforms,
-                map_image=map_image,
-            )
+            album = await ic.get_album_detail(req.album_id)
         except Exception as e:
-            logger.exception("SVG export failed")
-            raise HTTPException(500, f"SVG error: {e}")
+            raise HTTPException(502, f"Immich error: {e}")
+
+        path = PROFILES_DIR / f"{req.profile_id}.json"
+        if not path.exists():
+            raise HTTPException(404, "Profile not found")
+        profile = json.loads(path.read_text())
+
+        # Collect asset IDs from all pages
+        asset_ids = set()
+        for page in req.pages:
+            for item_data in page.get("items", []):
+                item = item_data.get("item")
+                if item and item.get("type") == "photo":
+                    asset_ids.add(item["asset_id"])
+
+        _set_progress(8, f"Download {len(asset_ids)} foto…")
+        hires = (req.quality != "preview")
+        photo_cache = await _fetch_photos(asset_ids, hires=hires)
+
+        _set_progress(72, "Generazione mappa GPS…")
+        map_image = None
+        if req.locations:
+            map_image = generate_map_image(req.locations, 800, 400)
+
+        album_info = {
+            "albumName":   album.get("albumName", ""),
+            "description": album.get("description", ""),
+            "assets":      album.get("assets", []),
+        }
+        album_slug = (album.get("albumName") or "fotolibro").replace(" ", "_")
+
+        if req.format == "svg":
+            _set_progress(75, "Composizione SVG…")
+            try:
+                zip_bytes = generate_svg_zip(
+                    album=album_info, pages=req.pages, profile=profile,
+                    photo_cache=photo_cache, pan_offsets=req.photo_transforms,
+                    map_image=map_image,
+                )
+            except Exception as e:
+                logger.exception("SVG export failed")
+                _export_progress.update({"pct": 0, "done": True, "error": str(e)})
+                raise HTTPException(500, f"SVG error: {e}")
+            _export_progress.update({"pct": 100, "step": "Completato", "done": True, "error": ""})
+            return Response(
+                zip_bytes, media_type="application/zip",
+                headers={"Content-Disposition": f'attachment; filename="{album_slug}_svg.zip"'}
+            )
+
+        # PDF
+        _set_progress(75, "Composizione PDF…")
+        try:
+            pdf_bytes = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: generate_pdf(
+                        album=album_info, pages=req.pages, profile=profile,
+                        photo_cache=photo_cache, map_image=map_image,
+                    )
+                ),
+                timeout=300,
+            )
+        except asyncio.TimeoutError:
+            logger.error("PDF timeout")
+            _export_progress.update({"pct": 0, "done": True, "error": "timeout"})
+            raise HTTPException(500, "PDF generation timed out")
+        except Exception as e:
+            logger.exception("PDF generation failed")
+            _export_progress.update({"pct": 0, "done": True, "error": str(e)})
+            raise HTTPException(500, f"PDF error: {e}")
+
+        _export_progress.update({"pct": 100, "step": "Completato", "done": True, "error": ""})
         return Response(
-            zip_bytes,
-            media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="{album_slug}_svg.zip"'}
+            pdf_bytes, media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{album_slug}.pdf"'}
         )
 
-    # Default: PDF
-    try:
-        pdf_bytes = generate_pdf(
-            album=album_info,
-            pages=req.pages,
-            profile=profile,
-            photo_cache=photo_cache,
-            map_image=map_image,
-        )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.exception("PDF generation failed")
-        raise HTTPException(500, f"PDF error: {e}")
+        _export_progress.update({"pct": 0, "done": True, "error": str(e)})
+        raise
+    """
+    Fetch photos for export. hires=True fetches the original file (for PDF/SVG print quality).
+    Falls back to 'preview' then 'thumbnail' on error.
+    Batched in groups of 5 (originals are large).
+    """
+    photo_cache: dict[str, bytes] = {}
+    ids = list(asset_ids)
+    BATCH = 5 if hires else 10
 
-    return Response(
-        pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{album_slug}.pdf"'}
-    )
+    async def fetch_one(aid: str):
+        try:
+            if hires:
+                data, _ = await ic.get_asset_original(aid)
+            else:
+                data = await ic.get_asset_thumbnail(aid, "thumbnail")
+            photo_cache[aid] = data
+        except Exception:
+            try:
+                data = await ic.get_asset_thumbnail(aid, "preview")
+                photo_cache[aid] = data
+            except Exception:
+                try:
+                    data = await ic.get_asset_thumbnail(aid, "thumbnail")
+                    photo_cache[aid] = data
+                except Exception as e:
+                    logger.warning(f"Could not fetch photo {aid}: {e}")
+
+    total = len(ids)
+    mode  = "original (hi-res)" if hires else "thumbnail"
+    logger.info(f"Fetching {total} photos for export [{mode}] — batches of {BATCH}")
+    for i in range(0, total, BATCH):
+        batch = ids[i:i + BATCH]
+        await asyncio.gather(*[fetch_one(aid) for aid in batch])
+        logger.info(f"  Photo fetch: {min(i+BATCH, total)}/{total}")
+
+    logger.info(f"Fetch complete: {len(photo_cache)}/{total} retrieved")
+    return photo_cache
 
 @app.get("/api/page-sizes")
 async def page_sizes():
@@ -580,3 +759,68 @@ else:
     @app.get("/")
     async def root():
         return {"status": "API running", "message": "Frontend not built. Run: cd frontend && npm run build"}
+
+# ─── DEBUG: Immich raw asset data ────────────────────────────────────────────
+
+@app.get("/api/debug/asset/{asset_id}")
+async def debug_asset(asset_id: str):
+    """Returns raw Immich data for a single asset — for debugging face/checksum fields."""
+    try:
+        async with __import__('httpx').AsyncClient(timeout=15) as client:
+            r = await client.get(
+                f"{ic.get_base_url()}/assets/{asset_id}",
+                headers=ic.get_headers()
+            )
+            r.raise_for_status()
+            data = r.json()
+        # Return only the fields relevant to faces/dedup
+        relevant = {
+            "id":                data.get("id"),
+            "originalFileName":  data.get("originalFileName"),
+            "localDateTime":     data.get("localDateTime"),
+            "checksum":          data.get("checksum"),
+            "thumbhash":         data.get("thumbhash"),
+            "isFavorite":        data.get("isFavorite"),
+            "exifInfo_keys":     list((data.get("exifInfo") or {}).keys()),
+            "people":            data.get("people"),
+            "faces":             data.get("faces"),
+            "hasMetadata":       "people" in data or "faces" in data,
+            "_all_keys":         list(data.keys()),
+        }
+        return relevant
+    except Exception as e:
+        raise HTTPException(502, f"Immich error: {e}")
+
+@app.get("/api/debug/album/{album_id}/sample")
+async def debug_album_sample(album_id: str, n: int = 3):
+    """Returns raw Immich data for the first N assets of an album — for debugging."""
+    try:
+        album = await ic.get_album_detail(album_id)
+    except Exception as e:
+        raise HTTPException(502, f"Immich error: {e}")
+
+    assets = (album.get("assets") or [])[:n]
+    results = []
+    async with __import__('httpx').AsyncClient(timeout=30) as client:
+        for a in assets:
+            try:
+                r = await client.get(
+                    f"{ic.get_base_url()}/assets/{a['id']}",
+                    headers=ic.get_headers()
+                )
+                data = r.json() if r.status_code == 200 else {}
+                results.append({
+                    "from_album": {k: a.get(k) for k in ["id","originalFileName","localDateTime","checksum","thumbhash","isFavorite","people","faces"]},
+                    "from_asset_api": {
+                        "id":               data.get("id"),
+                        "checksum":         data.get("checksum"),
+                        "thumbhash":        data.get("thumbhash"),
+                        "isFavorite":       data.get("isFavorite"),
+                        "people":           data.get("people"),
+                        "faces":            data.get("faces"),
+                        "_all_keys":        list(data.keys()),
+                    }
+                })
+            except Exception as e:
+                results.append({"id": a.get("id"), "error": str(e)})
+    return {"album_id": album_id, "n_total": len(album.get("assets",[])), "samples": results}

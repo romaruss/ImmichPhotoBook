@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { useT } from '../i18n.jsx'
 import PageTypeEditor from '../components/PageTypeEditor'
+import CoverStyleEditor, { DEFAULT_COVER } from '../components/CoverEditor'
 
 // Standard page sizes with mm dimensions
 const STANDARD_SIZES = [
@@ -17,8 +18,10 @@ const STANDARD_SIZES = [
 
 const DEFAULT_PROFILE = {
   name:'', page_size:'20x30', orientation:'portrait', duplex:false,
-  margin_mm:5, bleed:false, bleed_mm:3, gap_mm:3, page_types:[],
+  margin_mm:5, margin_top:5, margin_right:5, margin_bottom:5, margin_left:5,
+  bleed:false, bleed_mm:3, gap_mm:3, page_types:[],
   caption_style:{ font:'Georgia, serif', size:13, color:'#e8e6e0', align:'center', valign:'center', bg:'#111116', italic:true, bold:false },
+  cover_style: { ...DEFAULT_COVER },
 }
 
 // ── Custom size manager panel ─────────────────────────────────────────────────
@@ -85,6 +88,30 @@ function CustomSizeManager({ customSizes, onAdd, onDelete }) {
 }
 
 // ── Main ProfilesPage ─────────────────────────────────────────────────────────
+
+// ── Margin input: uncontrolled locally to avoid focus loss ────────────────────
+function MarginInput({ side, label, formValue, onCommit }) {
+  const [txt, setTxt] = useState(String(formValue ?? 5))
+  // Sync when parent resets form (e.g. loading different profile)
+  useEffect(() => { setTxt(String(formValue ?? 5)) }, [formValue])
+  const commit = (raw) => {
+    const v = parseFloat(raw)
+    onCommit(side, isNaN(v) ? 0 : v)
+  }
+  return (
+    <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:3}}>
+      <label style={{fontSize:10,color:'var(--text3)',fontFamily:'var(--font-mono)'}}>{label}</label>
+      <input type="number" className="form-input" min={0} max={50} step={0.5}
+        value={txt}
+        onChange={e => setTxt(e.target.value)}
+        onBlur={e => { commit(e.target.value); }}
+        onKeyDown={e => { if(e.key==='Enter') { commit(e.target.value); e.target.blur() } }}
+        style={{width:64,textAlign:'center'}}/>
+      <span style={{fontSize:9,color:'var(--text3)'}}>mm</span>
+    </div>
+  )
+}
+
 export default function ProfilesPage() {
   const t = useT()
   const p = t.profiles
@@ -95,6 +122,7 @@ export default function ProfilesPage() {
   const [saving, setSaving]           = useState(false)
   const [toast, setToast]             = useState(null)
   const [showCustomSizeMgr, setShowCustomSizeMgr] = useState(false)
+  const [marginLocked, setMarginLocked] = useState(true)
 
   useEffect(() => {
     loadProfiles()
@@ -133,7 +161,7 @@ export default function ProfilesPage() {
 
   const startEdit = async (profile) => {
     const r = await axios.get(`/api/profiles/${profile.id}`)
-    setForm(r.data)
+    setForm({ ...DEFAULT_PROFILE, ...r.data })  // merge so new fields have defaults
     setEditing(r.data)
   }
 
@@ -279,17 +307,65 @@ export default function ProfilesPage() {
           {/* Margins */}
           <div className="card">
             <div className="card-title">{p.marginsCard}</div>
-            <div className="form-row-3">
-              <div className="form-group">
-                <label className="form-label">{p.marginLabel}</label>
-                <input type="number" className="form-input" min={0} max={50} step={0.5}
-                  value={form.margin_mm} onChange={e=>set('margin_mm',parseFloat(e.target.value))}/>
-                <p className="text-xs text-muted mt-1">{p.marginHint}</p>
-              </div>
+            {/* Independent margins with lock — uses MarginInput to avoid focus loss */}
+            {(()=>{
+              const handleMargin = (side, v) => {
+                if (marginLocked) {
+                  set('margin_top', v); set('margin_right', v)
+                  set('margin_bottom', v); set('margin_left', v)
+                  set('margin_mm', v)
+                } else {
+                  set(side, v)
+                  const sides = ['margin_top','margin_right','margin_bottom','margin_left']
+                  const vals = sides.map(s => s===side ? v : (form[s]??form.margin_mm??5))
+                  set('margin_mm', parseFloat((vals.reduce((a,b)=>a+b,0)/4).toFixed(2)))
+                }
+              }
+              const mv = (side) => form[side] ?? form.margin_mm ?? 5
+              return (
+                <div>
+                  <div style={{display:'flex',alignItems:'center',gap:4,marginBottom:10}}>
+                    <span className="text-xs text-muted">Margini (mm)</span>
+                    <button onClick={()=>setMarginLocked(l=>!l)}
+                      style={{padding:'2px 8px',borderRadius:5,border:'1px solid var(--border)',
+                        cursor:'pointer',fontSize:10,
+                        background:marginLocked?'var(--gold-dim)':'var(--bg3)',
+                        color:marginLocked?'var(--gold)':'var(--text3)'}}>
+                      {marginLocked?'🔒 Tutti uguali':'🔓 Indipendenti'}
+                    </button>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',gap:8,maxWidth:320}}>
+                    <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                      <MarginInput side="margin_top" label="↑ Alto" formValue={mv('margin_top')} onCommit={handleMargin}/>
+                      <div style={{flex:1,height:1,background:'var(--border)'}}/>
+                    </div>
+                    <div style={{display:'flex',gap:6,alignItems:'flex-end'}}>
+                      <MarginInput side="margin_left" label="← Esterno" formValue={mv('margin_left')} onCommit={handleMargin}/>
+                      <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:3,padding:'0 4px'}}>
+                        <span style={{fontSize:9,color:'var(--text3)',textAlign:'center',lineHeight:1.3}}>Rilegatura → interno</span>
+                        <div style={{width:'100%',height:1,background:'var(--border)'}}/>
+                        <span style={{fontSize:9,color:'var(--text3)',textAlign:'center'}}>← esterno</span>
+                      </div>
+                      <MarginInput side="margin_right" label="Interno →" formValue={mv('margin_right')} onCommit={handleMargin}/>
+                    </div>
+                    <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                      <MarginInput side="margin_bottom" label="↓ Basso" formValue={mv('margin_bottom')} onCommit={handleMargin}/>
+                      <div style={{flex:1,height:1,background:'var(--border)'}}/>
+                    </div>
+                    <p style={{fontSize:10,color:'var(--text3)',lineHeight:1.4,marginTop:2}}>
+                      Il margine <strong>Interno</strong> è verso la rilegatura: sulle pagine pari sarà a destra, sulle dispari a sinistra.
+                    </p>
+                  </div>
+                </div>
+              )
+            })()}
+            <div className="form-row" style={{marginTop:16}}>
               <div className="form-group">
                 <label className="form-label">{p.gapLabel}</label>
                 <input type="number" className="form-input" min={0} max={30} step={0.5}
-                  value={form.gap_mm} onChange={e=>set('gap_mm',parseFloat(e.target.value))}/>
+                  defaultValue={form.gap_mm}
+                  onBlur={e=>{ const v=parseFloat(e.target.value); if(!isNaN(v)) set('gap_mm',v) }}
+                  onKeyDown={e=>{ if(e.key==='Enter'){ const v=parseFloat(e.target.value); if(!isNaN(v)) set('gap_mm',v); e.target.blur() }}}/>
                 <p className="text-xs text-muted mt-1">{p.gapHint}</p>
               </div>
               <div className="form-group">
@@ -440,6 +516,32 @@ export default function ProfilesPage() {
                     </div>
                   </div>
                 </div>
+              )
+            })()}
+          </div>
+          {/* Cover editor */}
+          <div className="card">
+            <div className="card-title">Stile copertina</div>
+            <p className="text-sm text-muted mb-4">
+              Imposta il layout visivo della copertina per questo profilo. Puoi salvare stili personalizzati riutilizzabili.
+            </p>
+            {(()=>{
+              // Compute preview size matching profile orientation
+              const sizeEntry = allSizes.find(s => s.id === form.page_size) || {w:200,h:300}
+              let [pw, ph] = [sizeEntry.w, sizeEntry.h]
+              if (form.orientation === 'landscape') [pw, ph] = [ph, pw]
+              const maxD = 160
+              const isLand = form.orientation === 'landscape'
+              const cW = isLand ? maxD : Math.round(maxD * pw / ph)
+              const cH = isLand ? Math.round(maxD * ph / pw) : maxD
+              return (
+                <CoverStyleEditor
+                  value={form.cover_style || DEFAULT_COVER}
+                  onChange={cs => set('cover_style', cs)}
+                  albumName={form.name || 'Nome album'}
+                  coverWidth={cW}
+                  coverHeight={cH}
+                  mapUrl={null}/>
               )
             })()}
           </div>

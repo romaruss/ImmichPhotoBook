@@ -14,6 +14,7 @@ import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { useT } from '../i18n.jsx'
+import CoverStyleEditor, { CoverPreview, DEFAULT_COVER } from '../components/CoverEditor'
 
 // ── Page geometry ─────────────────────────────────────────────────────────────
 const PAGE_SIZES_PT = {
@@ -157,15 +158,28 @@ function PhotoPickerModal({ assets, usageMap, onSelect, onClose }) {
 }
 
 
-function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart, onNavigate }) {
+function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart, onNavigate, highlightedAsset, onClearHighlight }) {
   const t = useT()
   const tp = t.preview
   const [filter, setFilter]         = useState('')
-  const [view, setView]             = useState(1)
+  const [view, setView]             = useState(()=>{try{return JSON.parse(localStorage.getItem('pb_view'))||1}catch{return 1}})
   const [statusFilter, setStatusFilter] = useState('all')
   const [previewAsset, setPreviewAsset] = useState(null)  // foto ingrandita
+  const highlightRef = useRef(null)  // ref to highlighted photo item
 
-  const filtered = assets.filter(a => {
+  // Scroll highlighted asset into view when it changes
+  useEffect(() => {
+    if (highlightedAsset && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior:'smooth', block:'nearest' })
+    }
+  }, [highlightedAsset])
+
+  // Sort by date (oldest first)
+  // Sort by date and exclude videos
+  const sortedAssets = [...assets]
+    .filter(a => (a.type||'IMAGE').toUpperCase() !== 'VIDEO')
+    .sort((a,b)=>(a.localDateTime||'').localeCompare(b.localDateTime||''))
+  const filtered = sortedAssets.filter(a => {
     const uses = usageMap[a.id] || 0
     if (statusFilter === 'unused' && uses > 0)  return false
     if (statusFilter === 'multi'  && uses < 2)  return false
@@ -175,7 +189,7 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
 
   const used   = Object.values(usageMap).filter(v => v > 0).length
   const multi  = Object.values(usageMap).filter(v => v > 1).length
-  const unused = assets.length - used
+  const unused = sortedAssets.length - used  // sortedAssets already excludes videos
 
   const borderColor = (id) => {
     const u = usageMap[id] || 0
@@ -308,7 +322,7 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
             {/* View mode */}
             <div style={{display:'flex',gap:3,marginTop:5}}>
               {[1,2,3].map(n=>(
-                <button key={n} onClick={()=>setView(n)}
+                <button key={n} onClick={()=>{setView(n);localStorage.setItem('pb_view',n)}}
                   style={{
                     flex:1, fontSize:10, padding:'2px 0',
                     border:`1px solid ${view===n?'var(--gold)':'var(--border)'}`,
@@ -346,20 +360,25 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
                   const firstPage = pages[0]
                   return (
                     <div key={asset.id}
+                      ref={highlightedAsset===asset.id ? highlightRef : null}
                       draggable
                       onDragStart={e=>{e.dataTransfer.setData('asset_id',asset.id);onDragStart(asset)}}
-                      onClick={()=>firstPage!==undefined&&onNavigate(firstPage)}
+                      onClick={()=>{ if(firstPage!==undefined) onNavigate(firstPage); onClearHighlight?.() }}
                       title={alt}
                       style={{
                         display:'flex', gap:6, alignItems:'center', flexShrink:0,
                         cursor:firstPage!==undefined?'pointer':'grab',
                         borderRadius:4, padding:'3px 5px',
-                        border:`1.5px solid ${bc}`,
+                        border: highlightedAsset===asset.id
+                          ? '2px solid var(--gold)'
+                          : `1.5px solid ${bc}`,
+                        background: highlightedAsset===asset.id ? 'var(--gold-dim)' : 'transparent',
                         opacity:uses===0?0.65:1,
-                        transition:'background 0.1s',
+                        transition:'background 0.1s, border-color 0.1s',
+                        boxShadow: highlightedAsset===asset.id ? '0 0 0 2px rgba(212,170,90,0.25)' : 'none',
                       }}
-                      onMouseEnter={e=>e.currentTarget.style.background='var(--bg3)'}
-                      onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                      onMouseEnter={e=>{if(highlightedAsset!==asset.id)e.currentTarget.style.background='var(--bg3)'}}
+                      onMouseLeave={e=>{if(highlightedAsset!==asset.id)e.currentTarget.style.background='transparent'}}>
                       <div style={{width:38,height:38,flexShrink:0,borderRadius:3,
                         overflow:'hidden',background:'var(--bg3)',position:'relative'}}>
                         <img src={`/api/thumb/${asset.id}`} alt={alt} loading="lazy"
@@ -396,27 +415,34 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
                   const firstPage = pages[0]
                   return (
                     <div key={asset.id}
+                      ref={highlightedAsset===asset.id ? highlightRef : null}
                       draggable
                       onDragStart={e=>{e.dataTransfer.setData('asset_id',asset.id);onDragStart(asset)}}
-                      onClick={()=>handlePhotoClick(asset, firstPage)}
+                      onClick={()=>{ handlePhotoClick(asset, firstPage); onClearHighlight?.() }}
                       title={alt}
                       style={{
-                        /* Use padding-top trick for reliable aspect ratio in grid */
                         position:'relative', width:'100%', paddingTop:'100%',
                         cursor:(usageMap[asset.id]||0)===0?'zoom-in':firstPage!==undefined?'pointer':'grab',
                         borderRadius:4, overflow:'hidden',
-                        border:`2px solid ${bc}`,
+                        border: highlightedAsset===asset.id
+                          ? '2px solid var(--gold)'
+                          : `2px solid ${bc}`,
                         opacity:uses===0?0.6:1,
                         transition:'box-shadow 0.12s, border-color 0.12s',
                         boxSizing:'border-box',
+                        boxShadow: highlightedAsset===asset.id ? '0 0 0 3px rgba(212,170,90,0.4)' : 'none',
                       }}
                       onMouseEnter={e=>{
-                        e.currentTarget.style.boxShadow='0 0 0 2px var(--gold)'
-                        e.currentTarget.style.borderColor='var(--gold)'
+                        if(highlightedAsset!==asset.id){
+                          e.currentTarget.style.boxShadow='0 0 0 2px var(--gold)'
+                          e.currentTarget.style.borderColor='var(--gold)'
+                        }
                       }}
                       onMouseLeave={e=>{
-                        e.currentTarget.style.boxShadow='none'
-                        e.currentTarget.style.borderColor=bc
+                        if(highlightedAsset!==asset.id){
+                          e.currentTarget.style.boxShadow='none'
+                          e.currentTarget.style.borderColor=bc
+                        }
                       }}>
                       {/* Content inside the aspect-ratio box */}
                       <div style={{position:'absolute',inset:0}}>
@@ -790,11 +816,20 @@ function PhotoSlot({ item, slotW, slotH, transform, photoAR,
 function EditablePage({ page, pageIdx, profile, allPageTypes,
                         photoAspects, photoTransforms, onTransformChange,
                         onUpdatePage, onOpenPicker, onAddCaption,
-                        onDrop, maxW=570 }) {
+                        onDrop, maxW=570, onPhotoClick }) {
   const t = useT(); const tp = t.preview
   const [pw,ph]=getPageDims(profile)
-  const MAX_W=maxW
-  const scale=Math.min(MAX_W/pw, 720/ph)
+  const containerRef = useRef(null)
+  const [containerW, setContainerW] = useState(maxW)
+
+  useEffect(()=>{
+    if(!containerRef.current) return
+    const ro = new ResizeObserver(([e])=> setContainerW(e.contentRect.width||maxW))
+    ro.observe(containerRef.current)
+    return ()=>ro.disconnect()
+  },[maxW])
+
+  const scale=Math.min(containerW/pw, (containerW*1.4)/ph)
   const W=pw*scale, H=ph*scale
 
   const [dragFromIdx,setDragFromIdx]=useState(null)
@@ -894,22 +929,67 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
   }
 
 
+  // Special pages: album cover marker and blank separator
+  if (page?._album_cover) {
+    const cs = profile?.cover_style || {}
+    return (
+      <div ref={containerRef} style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}>
+        <div style={{width:W,height:H,background:cs.bg||'#0a0a0e',
+          boxShadow:'0 16px 64px rgba(0,0,0,0.55)',borderRadius:2,overflow:'hidden',
+          display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:14}}>
+          <div style={{width:'60%',height:1,background:(cs.accent_color||'#d4aa5a')+'99'}}/>
+          <p style={{fontFamily:'var(--font-display)',fontWeight:300,
+            fontSize:Math.round(24*scale*2),color:cs.text_color||'#f0ede6',textAlign:'center',padding:'0 16px'}}>
+            {page._album_info?.albumName||'Album'}
+          </p>
+          {page._album_info?.assetCount>0 && (
+            <p style={{fontSize:Math.round(11*scale*2),color:cs.accent_color||'#d4aa5a',fontFamily:'var(--font-mono)'}}>
+              {page._album_info.assetCount} foto
+            </p>
+          )}
+          <div style={{width:'60%',height:1,background:(cs.accent_color||'#d4aa5a')+'99'}}/>
+        </div>
+      </div>
+    )
+  }
+
+  if (page?._album_separator) {
+    return (
+      <div ref={containerRef} style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}>
+        <div style={{width:W,height:H,background:'#e8e4dc',
+          boxShadow:'0 16px 64px rgba(0,0,0,0.55)',borderRadius:2,
+          display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <p style={{fontSize:11,color:'#aaa',fontFamily:'var(--font-mono)'}}>pagina vuota</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div>
-      {/* Page type switcher */}
+    <div ref={containerRef} style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}>
+      {/* Page type switcher — compact select + add slot button */}
       {allPageTypes.length>0&&(
-        <div style={{display:'flex',gap:5,alignItems:'center',marginBottom:10,flexWrap:'wrap'}}>
-          <span className="text-xs text-muted">Layout:</span>
-          {allPageTypes.map(pt=>(
-            <button key={pt.id} className={`btn btn-sm${page.page_type_id===pt.id?' btn-primary':''}`}
-              style={{fontSize:11}} onClick={()=>changePageType(pt.id)}>{pt.label}</button>
-          ))}
-          <button className="btn btn-sm" style={{fontSize:11,marginLeft:'auto'}}
-            title={tp.addSlot} onClick={addSlot}>{tp.addSlot}</button>
+        <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8,flexShrink:0}}>
+          <span className="text-xs text-muted" style={{flexShrink:0}}>Layout:</span>
+          <select
+            value={page.page_type_id||''}
+            onChange={e=>changePageType(e.target.value)}
+            style={{
+              flex:1, minWidth:0, fontSize:11, padding:'3px 6px',
+              background:'var(--bg3)', border:'1px solid var(--border)',
+              color:'var(--text)', borderRadius:5, cursor:'pointer',
+            }}>
+            {allPageTypes.map(pt=>(
+              <option key={pt.id} value={pt.id}>{pt.label}</option>
+            ))}
+          </select>
+          <button className="btn btn-sm" style={{fontSize:10,flexShrink:0,padding:'3px 8px'}}
+            title={tp.addSlot} onClick={addSlot}>+ Slot</button>
         </div>
       )}
 
       {/* Page canvas */}
+      {(
       <div style={{width:W,height:H,background:'#f0ece4',position:'relative',
         boxShadow:'0 16px 64px rgba(0,0,0,0.55)',borderRadius:2,overflow:'hidden',
         userSelect:'none',WebkitUserSelect:'none'}}>
@@ -932,6 +1012,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
 
           return (
             <div key={slotIdx}
+              onClick={()=>{ if(item?.type==='photo'&&!isPhotoEdit&&!isCaptionEdit) onPhotoClick?.(item.asset_id) }}
               draggable={canDrag}
               onDragStart={e=>{if(!canDrag){e.preventDefault();return};setDragFromIdx(slotIdx)}}
               onDragEnd={()=>{setDragFromIdx(null);setDragOverIdx(null)}}
@@ -1166,6 +1247,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
           onUpdateItems={newItems=>onUpdatePage({...page,items:newItems,page_type_id:'custom',
             page_type:{id:'custom',label:'Custom',slots:newItems.map(i=>i.slot)}})}/>
       </div>
+      )}
 
       <p className="text-xs text-muted mt-2">
         Hover → azioni · "🖐 Riposiziona" → drag+scroll per spostare e zoomare · ⇄ drag tra slot per scambiare
@@ -1177,39 +1259,114 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
 // ── Export panel ──────────────────────────────────────────────────────────────
 function ExportPanel({ layout, onExport, exporting }) {
   const t = useT(); const tp = t.preview
-  const [open,setOpen]=useState(false)
-  const p=layout?.profile||{}
+  const [open, setOpen]       = useState(false)
+  const [quality, setQuality] = useState('hires')   // 'hires' | 'preview'
+  const [progress, setProgress] = useState(null)    // {pct, step} | null
+  const pollRef = useRef(null)
+  const p = layout?.profile || {}
+
+  // Start polling progress when export begins, stop when done
+  useEffect(() => {
+    if (exporting) {
+      setProgress({ pct: 0, step: 'Avvio…' })
+      pollRef.current = setInterval(async () => {
+        try {
+          const r = await axios.get('/api/export/progress')
+          setProgress({ pct: r.data.pct, step: r.data.step })
+          if (r.data.done) {
+            clearInterval(pollRef.current)
+            setTimeout(() => setProgress(null), 1500)
+          }
+        } catch {}
+      }, 600)
+    } else {
+      clearInterval(pollRef.current)
+    }
+    return () => clearInterval(pollRef.current)
+  }, [exporting])
+
+  const pct = progress?.pct || 0
+
   return (
-    <div style={{padding:12,borderTop:'1px solid var(--border)',flexShrink:0}}>
-      <button className="btn btn-primary w-full" style={{justifyContent:'center',fontSize:12}}
-        onClick={()=>setOpen(o=>!o)} disabled={exporting}>
-        {exporting?<><span className="spinner"/> Generazione…</>:<>📄 Esporta</>}
+    <div style={{ padding:12, borderTop:'1px solid var(--border)', flexShrink:0 }}>
+      {/* Main button with progress fill */}
+      <button
+        className="btn btn-primary w-full"
+        style={{
+          justifyContent:'center', fontSize:12, position:'relative',
+          overflow:'hidden', transition:'background 0.3s',
+        }}
+        onClick={() => setOpen(o => !o)}
+        disabled={exporting}>
+        {/* Progress fill layer */}
+        {exporting && pct > 0 && (
+          <div style={{
+            position:'absolute', left:0, top:0, bottom:0,
+            width:`${pct}%`,
+            background:'rgba(255,255,255,0.18)',
+            transition:'width 0.5s ease',
+            pointerEvents:'none',
+          }}/>
+        )}
+        {/* Label */}
+        <span style={{ position:'relative', zIndex:1 }}>
+          {exporting
+            ? <>{progress?.step || 'Generazione…'} {pct > 0 ? `(${pct}%)` : ''}</>
+            : <>📄 Esporta</>}
+        </span>
       </button>
-      {open&&!exporting&&(
-        <div style={{marginTop:8,background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:8,padding:12}}>
-          {[['📐 Formato',`${p.page_size} ${p.orientation==='landscape'?'Orizz.':'Vert.'}`],
-            ['📏 Margini',`${p.margin_mm}mm`],
-            ['✂ Abbondanza',p.bleed?`${p.bleed_mm}mm`:'No'],
-            ['📄 Pagine',`${(layout?.pages?.length||0)+1}`],
-          ].map(([k,v])=>(
-            <div key={k} style={{fontSize:11,fontFamily:'var(--font-mono)',color:'var(--text2)',
-              display:'flex',justifyContent:'space-between',padding:'2px 0',borderBottom:'1px solid var(--border)'}}>
-              <span>{k}</span><strong style={{color:'var(--text)'}}>{v}</strong>
+
+      {open && !exporting && (
+        <div style={{ marginTop:8, background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:8, padding:12 }}>
+          {/* Profile info */}
+          {[['📐 Formato', `${p.page_size} ${p.orientation==='landscape'?'Orizz.':'Vert.'}`],
+            ['📏 Margini', `${p.margin_mm}mm`],
+            ['✂ Abbondanza', p.bleed ? `${p.bleed_mm}mm` : 'No'],
+            ['📄 Pagine', `${(layout?.pages?.length||0)+1}`],
+          ].map(([k,v]) => (
+            <div key={k} style={{ fontSize:11, fontFamily:'var(--font-mono)', color:'var(--text2)',
+              display:'flex', justifyContent:'space-between', padding:'2px 0',
+              borderBottom:'1px solid var(--border)' }}>
+              <span>{k}</span><strong style={{ color:'var(--text)' }}>{v}</strong>
             </div>
           ))}
-          <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:10}}>
-            <button className="btn btn-primary" style={{justifyContent:'center',fontSize:12}}
-              onClick={()=>onExport('pdf')}>
+
+          {/* Quality toggle */}
+          <div style={{ marginTop:10, display:'flex', gap:4, padding:'6px 0' }}>
+            {[['hires','🖨 Alta qualità','Foto originali da Immich — per stampa'],
+              ['preview','⚡ Anteprima','Thumbnails — veloce, bassa risoluzione']
+            ].map(([v,lbl,hint]) => (
+              <button key={v} onClick={() => setQuality(v)}
+                title={hint}
+                style={{ flex:1, padding:'5px 4px', fontSize:10, borderRadius:5,
+                  border:`1px solid ${quality===v?'var(--gold)':'var(--border)'}`,
+                  background: quality===v?'var(--gold-dim)':'var(--bg3)',
+                  color: quality===v?'var(--gold)':'var(--text3)',
+                  cursor:'pointer', lineHeight:1.3 }}>
+                {lbl}
+              </button>
+            ))}
+          </div>
+          {quality === 'hires' && (
+            <p style={{ fontSize:9, color:'var(--text3)', marginBottom:8, textAlign:'center' }}>
+              ⏳ L'esportazione hi-res può richiedere qualche minuto
+            </p>
+          )}
+
+          {/* Export buttons */}
+          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+            <button className="btn btn-primary" style={{ justifyContent:'center', fontSize:12 }}
+              onClick={() => onExport('pdf', quality)}>
               📄 Esporta PDF
             </button>
-            <button className="btn" style={{justifyContent:'center',fontSize:12}}
-              onClick={()=>onExport('svg')}
+            <button className="btn" style={{ justifyContent:'center', fontSize:12 }}
+              onClick={() => onExport('svg', quality)}
               title="ZIP con SVG modificabili (Illustrator, Scribus, InDesign)">
               🎨 Esporta SVG / Illustrator
             </button>
           </div>
-          <p style={{textAlign:'center',fontSize:9,color:'var(--text3)',marginTop:6,fontFamily:'var(--font-mono)'}}>
-            SVG compatibile con Illustrator, Scribus, InDesign
+          <p style={{ textAlign:'center', fontSize:9, color:'var(--text3)', marginTop:6, fontFamily:'var(--font-mono)' }}>
+            SVG: compatibile con Illustrator, Scribus, InDesign
           </p>
         </div>
       )}
@@ -1592,10 +1749,14 @@ export default function PreviewPage() {
   const [recalcMenuOpen,setRecalcMenuOpen]=useState(false)
   const [projectModal,setProjectModal]=useState(null)  // null | 'save' | 'load'
   const recalcBtnRef = useRef(null)
-  const [panelOpen,setPanelOpen]=useState(true)
+  const [panelOpen,setPanelOpen]=useState(()=>{try{return JSON.parse(localStorage.getItem('pb_panelOpen'))??true}catch{return true}})
   const [draggedAsset,setDraggedAsset]=useState(null)
-  const [spreadView,setSpreadView]=useState(false)  // false=single, true=2-page spread
-  const [sidebarDrag,setSidebarDrag]=useState(null)  // {idx} being dragged in sidebar
+  const [spreadView,setSpreadView]=useState(()=>{try{return JSON.parse(localStorage.getItem('pb_spreadView'))||false}catch{return false}})
+  const [sidebarDrag,setSidebarDrag]=useState(null)
+  const [leftSidebarOpen,setLeftSidebarOpen]=useState(true)
+  const [coverStyleOpen,setCoverStyleOpen]=useState(false)
+  const [highlightedAsset,setHighlightedAsset]=useState(null)  // asset_id highlighted in right panel
+  const highlightRef=useRef(null)  // ref to highlighted element in AlbumPanel
 
   useEffect(() => {
     const stored = sessionStorage.getItem('photobook_layout')
@@ -1611,7 +1772,7 @@ export default function PreviewPage() {
         .then(r=>setMapUrl(URL.createObjectURL(r.data))).catch(()=>{})
     if (data.album?.id)
       axios.get(`/api/albums/${data.album.id}`)
-        .then(r=>setAlbumAssets(r.data.assets||[])).catch(()=>{})
+        .then(r=>setAlbumAssets([...(r.data.assets||[])].sort((a,b)=>(a.localDateTime||'').localeCompare(b.localDateTime||'')))).catch(()=>{})
   },[])
 
   // Detect aspect ratios
@@ -1634,8 +1795,14 @@ export default function PreviewPage() {
     const onKey=e=>{
       if(e.target.tagName==='TEXTAREA'||e.target.tagName==='INPUT') return
       if(!layout) return
-      if(e.key==='ArrowRight'||e.key==='ArrowDown') setCurrentPage(p=>Math.min(layout.pages.length-1,p+1))
-      if(e.key==='ArrowLeft'||e.key==='ArrowUp')   setCurrentPage(p=>Math.max(-1,p-1))
+      if(e.key==='ArrowRight'||e.key==='ArrowDown') setCurrentPage(p=>{
+        if(spreadView&&p>=0){const l=p%2===0?p-1:p;return Math.min(layout.pages.length-1,l+2)}
+        return Math.min(layout.pages.length-1,p+1)
+      })
+      if(e.key==='ArrowLeft'||e.key==='ArrowUp') setCurrentPage(p=>{
+        if(spreadView&&p>=0){const l=p%2===0?p-1:p;return Math.max(-1,l-2)}
+        return Math.max(-1,p-1)
+      })
     }
     window.addEventListener('keydown',onKey)
     return()=>window.removeEventListener('keydown',onKey)
@@ -1932,7 +2099,7 @@ export default function PreviewPage() {
     map[id]?.()
   }
 
-  const exportBook=async(format='pdf')=>{
+  const exportBook=async(format='pdf', quality='hires')=>{
     if(!layout) return; setExporting(true)
     try{
       const r=await axios.post('/api/export',{
@@ -1942,6 +2109,7 @@ export default function PreviewPage() {
         locations:layout.locations||[],
         photo_transforms:photoTransforms,
         format,
+        quality,
       },{responseType:'blob'})
       const url=URL.createObjectURL(r.data)
       const a=document.createElement('a');a.href=url
@@ -1968,7 +2136,7 @@ export default function PreviewPage() {
     // reload album assets for the picker
     if (projectData.album?.id)
       axios.get(`/api/albums/${projectData.album.id}`)
-        .then(r=>setAlbumAssets(r.data.assets||[])).catch(()=>{})
+        .then(r=>setAlbumAssets([...(r.data.assets||[])].sort((a,b)=>(a.localDateTime||'').localeCompare(b.localDateTime||'')))).catch(()=>{})
   }
 
   if(!layout) return(
@@ -1987,7 +2155,30 @@ export default function PreviewPage() {
     <div style={{display:'flex',height:'100%',overflow:'hidden'}}>
 
       {/* ── Left sidebar: page list ── */}
-      <div className="preview-sidebar" style={{width:200}}>
+      <div className="preview-sidebar" style={{
+        width: leftSidebarOpen ? 200 : 38,
+        transition:'width 0.2s ease',
+        overflow:'hidden',
+        flexShrink:0,
+        position:'relative',
+      }}>
+        {/* Collapse toggle — always visible */}
+        <button
+          onClick={()=>setLeftSidebarOpen(o=>!o)}
+          title={leftSidebarOpen ? 'Comprimi sidebar' : 'Espandi sidebar'}
+          style={{
+            position:'absolute', right:0, top:'50%', transform:'translateY(-50%)',
+            width:16, height:48,
+            background:'var(--bg3)', border:'1px solid var(--border)', borderLeft:'none',
+            borderRadius:'0 5px 5px 0', cursor:'pointer', zIndex:10,
+            display:'flex', alignItems:'center', justifyContent:'center',
+            color:'var(--text3)', fontSize:12,
+          }}>
+          {leftSidebarOpen ? '‹' : '›'}
+        </button>
+
+        {/* Full content — hidden when collapsed */}
+        {leftSidebarOpen && (<>
         <div className="preview-sidebar-header">
           <h3 style={{fontFamily:'var(--font-display)',fontWeight:300,fontSize:16,marginBottom:2}}>{album.albumName}</h3>
           <p className="text-xs text-muted font-mono">{pages.length} pag. · {album.assetCount} foto</p>
@@ -2097,80 +2288,154 @@ export default function PreviewPage() {
           </div>
         </div>
         <ExportPanel layout={layout} onExport={exportBook} exporting={exporting}/>
+
+        {/* Log ultima generazione */}
+        <div style={{padding:'6px 12px',borderTop:'1px solid var(--border)',flexShrink:0}}>
+          <button className="btn w-full" style={{justifyContent:'center',fontSize:11,gap:6}}
+            onClick={()=>window.open('/api/layout/generate/log','_blank')}
+            title="Scarica il log dell'ultima generazione album">
+            📄 Log generazione
+          </button>
+        </div>
+        </>)}
       </div>
 
       {/* ── Main canvas ── */}
-      <div className="preview-main" style={{flex:1}}>
-        {/* Top bar: prev/next + spread toggle + add page */}
-        <div className="flex items-center justify-between" style={{width:'100%',maxWidth:900,marginBottom:12,flexShrink:0,gap:8}}>
-          <button className="btn btn-ghost" style={{fontSize:12}}
-            onClick={()=>setCurrentPage(p=>Math.max(-1,p-1))} disabled={currentPage<=-1}>{tp.prevBtn}</button>
+      <div className="preview-main" style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
+        {/* Top bar: prev/next + spread toggle + add/remove page — one compact line */}
+        <div style={{
+          display:'flex', alignItems:'center', justifyContent:'space-between',
+          padding:'6px 12px', flexShrink:0, gap:6,
+          borderBottom:'1px solid var(--border)', background:'var(--bg2)',
+        }}>
+          <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px'}}
+            onClick={()=>{
+              if(spreadView&&currentPage>=0){
+                // In spread: step back by 2 (to prev pair), snap to odd index (left of pair)
+                const leftIdx=currentPage%2===0?currentPage-1:currentPage
+                setCurrentPage(Math.max(-1,leftIdx-2))
+              } else {
+                setCurrentPage(p=>Math.max(-1,p-1))
+              }
+            }} disabled={currentPage<=-1}>{tp.prevBtn}</button>
 
-          <div style={{display:'flex',alignItems:'center',gap:8}}>
-            <span className="text-sm font-mono text-muted">
+          <div style={{display:'flex',alignItems:'center',gap:6,flex:1,justifyContent:'center'}}>
+            <span className="text-sm font-mono text-muted" style={{minWidth:90,textAlign:'center'}}>
               {currentPage===-1?tp.coverPage:tp.pageOf(currentPage+1, pages.length)}
             </span>
             {/* Spread / Single toggle */}
-            <div style={{display:'flex',gap:2,background:'var(--bg3)',borderRadius:6,padding:2,border:'1px solid var(--border)'}}>
-              <button
-                onClick={()=>setSpreadView(false)}
-                title="Pagina singola"
-                style={{padding:'3px 8px',borderRadius:4,border:'none',cursor:'pointer',fontSize:11,
+            <div style={{display:'flex',gap:1,background:'var(--bg3)',borderRadius:5,padding:2,border:'1px solid var(--border)'}}>
+              <button onClick={()=>{setSpreadView(false);localStorage.setItem('pb_spreadView','false')}} title="Pagina singola"
+                style={{padding:'2px 7px',borderRadius:3,border:'none',cursor:'pointer',fontSize:12,
                   background:!spreadView?'var(--bg)':'transparent',
                   color:!spreadView?'var(--text)':'var(--text3)'}}>□</button>
-              <button
-                onClick={()=>setSpreadView(true)}
-                title="Doppia pagina (spread)"
-                style={{padding:'3px 8px',borderRadius:4,border:'none',cursor:'pointer',fontSize:11,
+              <button onClick={()=>{setSpreadView(true);localStorage.setItem('pb_spreadView','true')}} title="Doppia pagina"
+                style={{padding:'2px 7px',borderRadius:3,border:'none',cursor:'pointer',fontSize:12,
                   background:spreadView?'var(--bg)':'transparent',
                   color:spreadView?'var(--text)':'var(--text3)'}}>□□</button>
             </div>
-            {/* Add page */}
             {currentPage >= 0 && (
-              <button className="btn btn-sm" style={{fontSize:11}}
+              <button className="btn btn-sm" style={{fontSize:10,padding:'2px 8px'}}
                 title="Aggiungi pagina vuota dopo questa"
-                onClick={()=>addPage(currentPage)}>+ Pagina</button>
+                onClick={()=>addPage(currentPage)}>+ Pag.</button>
             )}
-            {/* Remove current page */}
             {currentPage >= 0 && pages.length > 1 && (
-              <button className="btn btn-sm btn-danger" style={{fontSize:11}}
+              <button className="btn btn-sm" style={{fontSize:10,padding:'2px 8px',
+                background:'rgba(197,74,74,0.12)',borderColor:'rgba(197,74,74,0.4)',color:'#e05050'}}
                 title="Elimina questa pagina"
-                onClick={()=>removePage(currentPage)}>× Elimina</button>
+                onClick={()=>removePage(currentPage)}>× Elim.</button>
             )}
           </div>
 
-          <button className="btn btn-ghost" style={{fontSize:12}}
-            onClick={()=>setCurrentPage(p=>Math.min(pages.length-1,p+1))} disabled={currentPage>=pages.length-1}>{tp.nextBtn}</button>
+          <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px'}}
+            onClick={()=>{
+              if(spreadView&&currentPage>=0){
+                // In spread: step forward by 2 (to next pair), snap to odd index
+                const leftIdx=currentPage%2===0?currentPage-1:currentPage
+                setCurrentPage(Math.min(pages.length-1,leftIdx+2))
+              } else {
+                setCurrentPage(p=>Math.min(pages.length-1,p+1))
+              }
+            }} disabled={currentPage>=pages.length-1}>{tp.nextBtn}</button>
         </div>
 
+        {/* Canvas area — fills all remaining height, centers content */}
+        <div style={{flex:1,overflow:'auto',display:'flex',alignItems:'center',justifyContent:'center',padding:'16px 8px'}}>
+
         {currentPage===-1?(
-          <div style={{textAlign:'center'}}>
-            <div style={{background:'#0a0a0e',borderRadius:8,padding:32,boxShadow:'0 12px 56px rgba(0,0,0,0.6)',minWidth:240,maxWidth:420,margin:'0 auto'}}>
-              {mapUrl&&<img src={mapUrl} alt="" style={{width:'100%',borderRadius:4,marginBottom:20,opacity:0.75,display:'block'}}/>}
-              <div style={{borderTop:'1px solid rgba(212,170,90,0.5)',paddingTop:16,marginBottom:10}}>
-                <h2 style={{fontFamily:'var(--font-display)',fontSize:24,fontWeight:300,color:'#f0ede6'}}>{album.albumName}</h2>
-              </div>
-              {album.description&&<p style={{color:'#888',fontStyle:'italic',fontSize:13,lineHeight:1.5}}>{album.description}</p>}
-              <div style={{marginTop:16,display:'flex',justifyContent:'space-between',fontSize:11,fontFamily:'var(--font-mono)',color:'#555'}}>
-                <span>{album.assetCount} foto</span>
-                {layout.locations?.length>0&&<span>{layout.locations.length} GPS</span>}
-              </div>
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:12}}>
+            {/* Live cover preview */}
+            <div style={{position:'relative'}}>
+              {(()=>{
+                const [pw,ph] = getPageDims(layout.profile)
+                const isLandscape = layout.profile?.orientation === 'landscape'
+                // Fit the cover preview to ~320px on its longest dimension
+                const maxDim = 320
+                const coverW = isLandscape ? maxDim : Math.round(maxDim * pw / ph)
+                const coverH = isLandscape ? Math.round(maxDim * ph / pw) : maxDim
+                return (
+                  <CoverPreview
+                    style={layout.profile?.cover_style||DEFAULT_COVER}
+                    albumName={album.albumName}
+                    assetCount={album.assetCount}
+                    mapUrl={mapUrl}
+                    width={coverW}
+                    height={coverH}/>
+                )
+              })()}
+              <button
+                onClick={()=>setCoverStyleOpen(o=>!o)}
+                style={{position:'absolute',top:8,right:8,padding:'4px 10px',fontSize:11,
+                  background:'rgba(0,0,0,0.7)',border:'1px solid rgba(255,255,255,0.2)',
+                  color:'#fff',borderRadius:5,cursor:'pointer'}}>
+                {coverStyleOpen ? '✕ Chiudi' : '✏️ Modifica stile'}
+              </button>
             </div>
-            <p className="text-xs text-muted mt-3">La copertina viene generata automaticamente con mappa GPS</p>
+
+            {/* Inline cover editor */}
+            {coverStyleOpen && (
+              <div style={{background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:10,
+                padding:20,width:'100%',maxWidth:720,boxShadow:'0 8px 40px rgba(0,0,0,0.5)'}}>
+                {(()=>{
+                  const [cpw,cph]=getPageDims(layout.profile)
+                  const isLand=layout.profile?.orientation==='landscape'
+                  const maxD=280
+                  const cW=isLand?maxD:Math.round(maxD*cpw/cph)
+                  const cH=isLand?Math.round(maxD*cph/cpw):maxD
+                  return (
+                    <CoverStyleEditor
+                      value={layout.profile?.cover_style||DEFAULT_COVER}
+                      albumName={album.albumName}
+                      assetCount={album.assetCount}
+                      mapUrl={mapUrl}
+                      assets={albumAssets}
+                      compact={true}
+                      coverWidth={cW}
+                      coverHeight={cH}
+                      onChange={cs=>{
+                        setLayout(prev=>persist({...prev,profile:{...prev.profile,cover_style:cs}}))
+                        setHasChanges(true)
+                      }}/>
+                  )
+                })()}
+                <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:14,paddingTop:12,borderTop:'1px solid var(--border)'}}>
+                  <button className="btn" onClick={()=>setCoverStyleOpen(false)}>✕ Chiudi</button>
+                </div>
+              </div>
+            )}
+            <p className="text-xs text-muted">Clicca "Modifica stile" per personalizzare la copertina</p>
           </div>
         ) : spreadView ? (
-          /* ── Spread view: 2 pages side by side ── */
+          /* ── Spread view: 2 pages side by side, fill available space ── */
           (() => {
-            // Even page on left (0-indexed: even idx = right-hand page in book terms,
-            // but user wants pairs: 0+1, 2+3 etc. — floor to even pair)
             const leftIdx  = currentPage % 2 === 0 ? currentPage - 1 : currentPage
             const rightIdx = leftIdx + 1
             const leftPage  = leftIdx >= 0 ? pages[leftIdx]  : null
             const rightPage = rightIdx < pages.length ? pages[rightIdx] : null
             return (
-              <div style={{display:'flex',gap:8,alignItems:'flex-start',justifyContent:'center'}}>
+              <div style={{display:'flex',gap:12,alignItems:'flex-start',justifyContent:'center',width:'100%'}}>
                 {/* Left page */}
-                <div style={{display:'flex',flexDirection:'column',alignItems:'center'}}>
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center',flex:1,minWidth:0}}>
                   {leftPage ? (
                     <EditablePage
                       page={leftPage} pageIdx={leftIdx}
@@ -2180,19 +2445,17 @@ export default function PreviewPage() {
                       onUpdatePage={p=>updatePage(leftIdx,p)}
                       onOpenPicker={openPicker} onAddCaption={addCaption}
                       onDrop={handleDropFromPanel}
-                      maxW={360}/>
+                      onPhotoClick={aid=>{ setHighlightedAsset(aid); if(!panelOpen) setPanelOpen(true) }}/>
                   ) : (
-                    <div style={{width:250,height:354,background:'rgba(0,0,0,0.08)',borderRadius:2,
+                    <div style={{width:'100%',aspectRatio:'1/1.4',background:'rgba(0,0,0,0.08)',borderRadius:2,
                       display:'flex',alignItems:'center',justifyContent:'center'}}>
                       <span style={{fontSize:11,color:'var(--text3)'}}>copertina/inizio</span>
                     </div>
                   )}
-                  {leftPage && (
-                    <p className="text-xs text-muted mt-1">Pagina {leftIdx+1}</p>
-                  )}
+                  {leftPage && <p className="text-xs text-muted mt-1">Pagina {leftIdx+1}</p>}
                 </div>
                 {/* Right page */}
-                <div style={{display:'flex',flexDirection:'column',alignItems:'center'}}>
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center',flex:1,minWidth:0}}>
                   {rightPage ? (
                     <EditablePage
                       page={rightPage} pageIdx={rightIdx}
@@ -2202,16 +2465,14 @@ export default function PreviewPage() {
                       onUpdatePage={p=>updatePage(rightIdx,p)}
                       onOpenPicker={openPicker} onAddCaption={addCaption}
                       onDrop={handleDropFromPanel}
-                      maxW={360}/>
+                      onPhotoClick={aid=>{ setHighlightedAsset(aid); if(!panelOpen) setPanelOpen(true) }}/>
                   ) : (
-                    <div style={{width:250,height:354,background:'rgba(0,0,0,0.08)',borderRadius:2,
+                    <div style={{width:'100%',aspectRatio:'1/1.4',background:'rgba(0,0,0,0.08)',borderRadius:2,
                       display:'flex',alignItems:'center',justifyContent:'center'}}>
                       <span style={{fontSize:11,color:'var(--text3)'}}>fine album</span>
                     </div>
                   )}
-                  {rightPage && (
-                    <p className="text-xs text-muted mt-1">Pagina {rightIdx+1}</p>
-                  )}
+                  {rightPage && <p className="text-xs text-muted mt-1">Pagina {rightIdx+1}</p>}
                 </div>
               </div>
             )
@@ -2229,8 +2490,10 @@ export default function PreviewPage() {
             onOpenPicker={openPicker}
             onAddCaption={addCaption}
             onDrop={handleDropFromPanel}
+            onPhotoClick={aid=>{ setHighlightedAsset(aid); if(!panelOpen) setPanelOpen(true) }}
           />
         )}
+        </div>{/* end canvas area */}
       </div>
 
       {/* ── Right panel: album photos ── */}
@@ -2239,9 +2502,11 @@ export default function PreviewPage() {
         usageMap={usageMap}
         usagePages={usagePages}
         open={panelOpen}
-        onToggle={()=>setPanelOpen(o=>!o)}
+        onToggle={()=>setPanelOpen(o=>{localStorage.setItem('pb_panelOpen',!o);return !o})}
         onDragStart={setDraggedAsset}
         onNavigate={pi=>setCurrentPage(pi)}
+        highlightedAsset={highlightedAsset}
+        onClearHighlight={()=>setHighlightedAsset(null)}
       />
 
       {photoPicker&&(

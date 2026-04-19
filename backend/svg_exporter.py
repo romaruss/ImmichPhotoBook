@@ -29,6 +29,11 @@ from PIL import Image as PILImage, ExifTags
 
 logger = logging.getLogger(__name__)
 
+# ── SVG namespace constants ───────────────────────────────────────────────────
+SVG_NS      = "http://www.w3.org/2000/svg"
+XLINK       = "http://www.w3.org/1999/xlink"
+INKSCAPE_NS = "http://www.inkscape.org/namespaces/inkscape"
+
 PAGE_SIZES_MM: dict[str, tuple[float, float]] = {
     "A4":     (210,   297),
     "A3":     (297,   420),

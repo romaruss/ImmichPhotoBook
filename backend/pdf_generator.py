@@ -63,7 +63,8 @@ def _parse_page_size(size_name: str, custom_sizes: list | None = None) -> tuple[
     return (200.0, 300.0)
 
 def _mm(v: float) -> float:
-    return v * PT
+    """Convert millimetres to ReportLab points."""
+    return v * mm
 
 
 def _fix_orientation(img: PILImage.Image) -> PILImage.Image:
@@ -255,8 +256,9 @@ def _draw_title_page(c: canvas.Canvas, album: dict,
 def _draw_photo_page(c: canvas.Canvas, page: dict,
                      photo_cache: dict,
                      pw: float, ph: float,
-                     margin: float, gap: float, bleed: float) -> None:
-    """Render a single photo page."""
+                     ml: float, mr: float, mt: float, mb: float,
+                     gap: float, bleed: float) -> None:
+    """Render a single photo page with independent per-side margins."""
 
     # ── Background ──────────────────────────────────────────────────────────
     c.setFillColorRGB(0.97, 0.96, 0.94)
@@ -269,9 +271,10 @@ def _draw_photo_page(c: canvas.Canvas, page: dict,
     if not items:
         return
 
-    # Usable area (inside margins)
-    ux, uy = margin, margin
-    uw, uh = pw - 2 * margin, ph - 2 * margin
+    # Usable area (inside independent margins)
+    ux = ml
+    uw = pw - ml - mr
+    uh = ph - mt - mb
 
     for item_data in items:
         slot = item_data.get("slot", {"x": 0, "y": 0, "w": 100, "h": 100})
@@ -292,7 +295,7 @@ def _draw_photo_page(c: canvas.Canvas, page: dict,
                                           - (0 if bot_edge   else gap / 2)
 
         # ReportLab: Y from bottom
-        sy = ph - uy - sy_top - sh
+        sy = ph - mt - sy_top - sh
 
         if sw <= 0 or sh <= 0:
             continue
@@ -384,12 +387,38 @@ def generate_pdf(
     gap_mm    = profile.get("gap_mm",    3.0)
     duplex    = profile.get("duplex", False)
 
+    # Independent margins (fall back to margin_mm for all sides if not set)
+    mt = profile.get("margin_top",    margin_mm)  # top
+    mr = profile.get("margin_right",  margin_mm)  # right (outer on even pages)
+    mb = profile.get("margin_bottom", margin_mm)  # bottom
+    ml = profile.get("margin_left",   margin_mm)  # left (inner/binding on odd pages)
+
     # All dimensions in points; bleed is added around the page
-    pw     = _mm(pw_mm + 2 * bleed_mm)
-    ph     = _mm(ph_mm + 2 * bleed_mm)
+    pw    = _mm(pw_mm + 2 * bleed_mm)
+    ph    = _mm(ph_mm + 2 * bleed_mm)
+    bleed = _mm(bleed_mm)
+    gap   = _mm(gap_mm)
+    # Margins per side (including bleed offset)
+    def margins_for_page(page_num: int):
+        """page_num: 1-based. Odd = right-hand page (left=binding). Even = left-hand page (right=binding)."""
+        if duplex:
+            # Odd pages: left margin is inner (binding), right is outer
+            # Even pages: left is outer, right is inner (binding)
+            inner = ml; outer = mr
+            if page_num % 2 == 0:   # even = left page → right is inner
+                m_left = outer; m_right = inner
+            else:                    # odd = right page → left is inner
+                m_left = inner; m_right = outer
+        else:
+            m_left = ml; m_right = mr
+        return (
+            _mm(m_left  + bleed_mm),   # left
+            _mm(m_right + bleed_mm),   # right
+            _mm(mt      + bleed_mm),   # top
+            _mm(mb      + bleed_mm),   # bottom
+        )
+    # For title page use symmetric margin
     margin = _mm(margin_mm + bleed_mm)
-    bleed  = _mm(bleed_mm)
-    gap    = _mm(gap_mm)
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(pw, ph))
@@ -402,19 +431,23 @@ def generate_pdf(
     c.showPage()
 
     # Blank back of cover for duplex
+    page_counter = 2  # cover = page 1
     if duplex:
         c.setFillColorRGB(0.97, 0.96, 0.94)
         c.rect(0, 0, pw, ph, fill=1, stroke=0)
         c.showPage()
+        page_counter += 1
 
     # ── Photo pages ──────────────────────────────────────────────────────────
     for page in pages:
-        _draw_photo_page(c, page, photo_cache, pw, ph, margin, gap, bleed)
+        ml_pt, mr_pt, mt_pt, mb_pt = margins_for_page(page_counter)
+        _draw_photo_page(c, page, photo_cache, pw, ph,
+                         ml_pt, mr_pt, mt_pt, mb_pt, gap, bleed)
         c.showPage()
+        page_counter += 1
 
     # Ensure even page count for duplex binding
-    total_pages = 1 + (1 if duplex else 0) + len(pages)
-    if duplex and total_pages % 2 != 0:
+    if duplex and page_counter % 2 != 0:
         c.setFillColorRGB(0.97, 0.96, 0.94)
         c.rect(0, 0, pw, ph, fill=1, stroke=0)
         c.showPage()
