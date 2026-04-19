@@ -5,6 +5,24 @@ All notable changes to PhotoBook Studio are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
+feat: layout engine fixes, cover editor redesign, PDF/SVG export improvements
+
+- Fix slot AR calculation for landscape pages (page_ar propagated everywhere)
+- Rewrite face crop pan formula: target 38% from top with safe-margin clamps
+- Lower face prominence threshold 0.05→0.02 for transform/log
+- PDF: fix NameError PT→mm, add per-side margins with duplex binding swap
+- SVG: fix NameError SVG_NS/XLINK/INKSCAPE_NS (constants were undefined)
+- Export: hi-res/preview quality toggle, progress bar with polling, 300s timeout
+- CoverEditor: full redesign — bg_type (color/photo/map), inset box (map/photo,
+  position top/bottom/left/right), photo picker modal, orientation-aware preview
+- Profile model: add margin_top/right/bottom/left and cover_style fields to Pydantic
+- ProfilesPage: MarginInput top-level component (fix focus loss), binding margin labels
+- PreviewPage: spread nav advances by 2, per-view highlight, video filter,
+  persist spreadView/panelOpen/view in localStorage, export progress bar
+- AlbumsPage: SliderInput fixes drag + text focus loss
+- Multi-album: concatenate with section covers and blank separator pages
+- App: nav sidebar collapse tab on right edge
+- Filter VIDEO assets from layout generation, panel display and unused count
 
 ## [1.0.0] — 2025
 

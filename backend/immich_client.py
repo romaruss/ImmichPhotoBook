@@ -75,3 +75,51 @@ async def update_asset_description(asset_id: str, description: str) -> bool:
             return r.status_code in (200, 204)
     except Exception:
         return False
+
+async def get_asset_detail(asset_id: str) -> dict:
+    """Fetch full asset detail including people/faces and checksum."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.get(
+            f"{get_base_url()}/assets/{asset_id}",
+            headers=get_headers()
+        )
+        r.raise_for_status()
+        return r.json()
+
+async def enrich_assets(assets: list[dict], fields: list[str] = None) -> list[dict]:
+    """
+    Fetches full asset details for a list of assets in parallel (batch of 20).
+    Merges the extra fields (people, checksum, thumbhash, isFavorite) into each asset.
+    Only fetches if the fields are not already present.
+    
+    fields: list of field names to check — if all present in first asset, skip enrichment.
+    """
+    import asyncio
+    if not assets:
+        return assets
+
+    check_fields = fields or ["people", "checksum"]
+    first = assets[0]
+    # If the first asset already has these fields populated, no need to enrich
+    if all(first.get(f) is not None for f in check_fields):
+        return assets
+
+    BATCH = 20
+    enriched = list(assets)
+
+    async def fetch_one(idx: int, asset: dict):
+        try:
+            detail = await get_asset_detail(asset["id"])
+            # Merge fields that were missing
+            for field in ["people", "faces", "checksum", "thumbhash", "isFavorite",
+                          "localDateTime", "fileCreatedAt", "exifInfo"]:
+                if detail.get(field) is not None:
+                    enriched[idx] = {**enriched[idx], field: detail[field]}
+        except Exception:
+            pass  # Keep original data if fetch fails
+
+    for start in range(0, len(assets), BATCH):
+        batch = assets[start:start + BATCH]
+        await asyncio.gather(*[fetch_one(start + i, a) for i, a in enumerate(batch)])
+
+    return enriched
