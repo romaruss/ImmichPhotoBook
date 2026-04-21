@@ -1,0 +1,441 @@
+/**
+ * LogViewer.jsx — Pannello debug interattivo generazione album.
+ * Aperto dall'anteprima di stampa con il pulsante "🔍 Log impaginazione".
+ * 3 colonne: lista pagine | dettaglio pagina | candidati con punteggi.
+ */
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { createPortal } from 'react-dom'
+
+const C = {
+  bg:'#0c0d10', bg2:'#13141a', bg3:'#1a1c24', border:'#252830',
+  gold:'#d4aa5a', goldDim:'rgba(212,170,90,0.13)',
+  blue:'#4a9edd', blueDim:'rgba(74,158,221,0.12)',
+  green:'#5dbd7a', greenDim:'rgba(93,189,122,0.12)',
+  red:'#e05050',  redDim:'rgba(224,80,80,0.12)',
+  cyan:'#4dcfcf', text:'#e8e5de', text2:'#a8a49c', text3:'#5a5650',
+  mono:"'JetBrains Mono','Fira Code',monospace",
+}
+
+// ── Micro-components ──────────────────────────────────────────────────────────
+function Tag({ color, children }) {
+  return (
+    <span style={{display:'inline-block',fontFamily:C.mono,fontSize:10,
+      padding:'2px 6px',borderRadius:3,lineHeight:1.4,
+      background:color+'22',border:`1px solid ${color}44`,color}}>
+      {children}
+    </span>
+  )
+}
+
+function ScoreBar({ score, max=10000, label, warn=500, danger=5000 }) {
+  const pct = Math.min(100, (score/max)*100)
+  const col = score>=danger?C.red:score>=warn?C.gold:C.green
+  return (
+    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:3}}>
+      {label && <span style={{fontSize:10,color:C.text3,fontFamily:C.mono,minWidth:130,flexShrink:0}}>{label}</span>}
+      <div style={{flex:1,height:4,background:C.bg3,borderRadius:2,overflow:'hidden'}}>
+        <div style={{width:`${pct}%`,height:'100%',background:col,borderRadius:2,transition:'width 0.2s'}}/>
+      </div>
+      <span style={{fontSize:10,fontFamily:C.mono,color:col,minWidth:44,textAlign:'right'}}>
+        {score>=10000?'∞':score.toFixed(0)}
+      </span>
+    </div>
+  )
+}
+
+// ── CandidateRow ──────────────────────────────────────────────────────────────
+function CandidateRow({ cand, expanded, onToggle }) {
+  const b = cand.breakdown||{}
+  const maxScore = Math.max(b.total||0, 1000)
+  return (
+    <div style={{border:`1px solid ${cand.winner?C.gold+'55':C.border}`,borderRadius:6,
+      marginBottom:5,overflow:'hidden',background:cand.winner?C.goldDim:C.bg3}}>
+      <button onClick={onToggle} style={{width:'100%',display:'flex',alignItems:'center',
+        gap:8,padding:'8px 10px',background:'none',border:'none',cursor:'pointer',textAlign:'left'}}>
+        <span style={{fontSize:13,minWidth:18}}>{cand.winner?'🏆':'·'}</span>
+        <span style={{flex:1,fontSize:11,fontFamily:C.mono,fontWeight:cand.winner?700:400,
+          color:cand.winner?C.gold:C.text2}}>
+          {cand.label}
+        </span>
+        {(b.orient_violations||0)>0 && <Tag color={C.red}>⚠ orient.</Tag>}
+        {(b.cap_unfilled||0)>0     && <Tag color={C.red}>⚠ T vuoto</Tag>}
+        {b.unused_bonus             && <Tag color={C.green}>nuovo</Tag>}
+        <span style={{fontSize:12,fontFamily:C.mono,
+          color:cand.score>=5000?C.red:cand.score>=1000?C.gold:C.green}}>
+          {cand.score>=10000?'∞':cand.score.toFixed(0)} pt
+        </span>
+        <span style={{color:C.text3,fontSize:10}}>{expanded?'▲':'▼'}</span>
+      </button>
+
+      {expanded && (
+        <div style={{padding:'4px 10px 12px',borderTop:`1px solid ${C.border}`}}>
+          <div style={{marginTop:8}}>
+            <ScoreBar score={b.orient_score||0} max={20000}
+              label={`Orientamento ×${b.orient_violations||0}`} danger={9999} warn={1}/>
+            <ScoreBar score={b.cap_score||0} max={10000}
+              label={`Slot T vuoti ×${b.cap_unfilled||0}`} danger={4999} warn={1}/>
+            <ScoreBar score={b.empty_score||0} max={2000}
+              label={`Slot vuoti ×${b.empty_slots||0}`} danger={800} warn={200}/>
+            <ScoreBar score={b.density_score||0} max={200}
+              label={`Densità diff=${b.slot_diff||0}`} danger={100} warn={40}/>
+            <ScoreBar score={b.face_penalty||0} max={60}
+              label="Volto tagliato" danger={30} warn={10}/>
+            <ScoreBar score={b.usage_score||0} max={80}
+              label={`Utilizzo ×${b.usage||0}`} danger={50} warn={16}/>
+          </div>
+          {b.unused_bonus    && <div style={{fontSize:10,color:C.green,fontFamily:C.mono,marginTop:4}}>↳ Bonus nuovo layout: −30 pt</div>}
+          {b.rhythm_penalty  && <div style={{fontSize:10,color:C.gold,fontFamily:C.mono,marginTop:2}}>↳ Penalità ritmo: +4 pt</div>}
+          <div style={{fontSize:9,color:C.text3,fontFamily:C.mono,marginTop:6}}>
+            {`slot_foto:${b.n_photo_slots??'?'}  slot_T:${b.n_caption_slots??'?'}  target_densità:${b.slot_target??'?'}`}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── SlotCard ─────────────────────────────────────────────────────────────────
+function SlotCard({ slot }) {
+  const isCaption = slot.slot_type==='caption'
+
+  if (isCaption) return (
+    <div style={{border:`1px solid ${C.blue}44`,borderRadius:6,background:C.blueDim,padding:10,marginBottom:6}}>
+      <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:6}}>
+        <Tag color={C.blue}>T</Tag>
+        <span style={{fontSize:11,color:C.blue,fontFamily:C.mono}}>Slot didascalia #{slot.slot_idx+1}</span>
+        {slot.empty && <Tag color={C.red}>⚠ vuoto</Tag>}
+      </div>
+      {slot.text
+        ? <div style={{fontSize:11,color:C.text2,lineHeight:1.5,fontStyle:'italic',
+            borderLeft:`2px solid ${C.blue}55`,paddingLeft:8}}>"{slot.text}"</div>
+        : <div style={{fontSize:10,color:C.text3,fontFamily:C.mono}}>Nessuna descrizione disponibile</div>
+      }
+    </div>
+  )
+
+  if (slot.empty) return (
+    <div style={{border:`1px solid ${C.border}`,borderRadius:6,padding:10,marginBottom:6,opacity:.5}}>
+      <span style={{fontSize:11,color:C.text3,fontFamily:C.mono}}>📷 Slot #{slot.slot_idx+1} — vuoto</span>
+    </div>
+  )
+
+  const tr    = slot.transform||{x:50,y:50,zoom:1}
+  const faces = slot.faces
+  const ok    = slot.orient_match
+
+  return (
+    <div style={{border:`1px solid ${ok?C.green+'44':C.red+'66'}`,borderRadius:6,
+      background:ok?C.greenDim:C.redDim,padding:10,marginBottom:6}}>
+      {/* Header */}
+      <div style={{display:'flex',gap:9,alignItems:'flex-start',marginBottom:8}}>
+        <div style={{width:42,height:42,borderRadius:4,overflow:'hidden',background:C.bg3,flexShrink:0,
+          border:`1px solid ${C.border}`}}>
+          {slot.asset_id && <img src={`/api/thumb/${slot.asset_id}`} alt="" style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>}
+        </div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:11,fontFamily:C.mono,color:C.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+            {slot.filename||slot.asset_id}
+          </div>
+          {slot.datetime && <div style={{fontSize:10,color:C.text3,fontFamily:C.mono,marginTop:2}}>{slot.datetime?.slice(0,16).replace('T',' ')}</div>}
+          <div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:5}}>
+            <Tag color={slot.photo_portrait?C.cyan:'#a07fd4'}>{slot.photo_portrait?'↕ V':'↔ H'} foto</Tag>
+            <Tag color={slot.slot_portrait ?C.cyan:'#a07fd4'}>{slot.slot_portrait ?'↕ V':'↔ H'} slot</Tag>
+            {ok ? <Tag color={C.green}>✓ orient. match</Tag> : <Tag color={C.red}>⚠ mismatch</Tag>}
+            {slot.has_caption   && <Tag color={C.gold}>💬 desc.</Tag>}
+            {slot.is_favorite   && <Tag color={C.gold}>★ pref.</Tag>}
+          </div>
+        </div>
+      </div>
+
+      {/* AR */}
+      <div style={{display:'flex',gap:12,marginBottom:8}}>
+        <span style={{fontSize:10,fontFamily:C.mono,color:C.text3}}>AR foto: <span style={{color:C.text2}}>{slot.photo_ar}</span></span>
+        <span style={{fontSize:10,fontFamily:C.mono,color:C.text3}}>AR slot: <span style={{color:C.text2}}>{slot.slot_ar}</span></span>
+      </div>
+
+      {/* Faces */}
+      {faces && (
+        <div style={{background:C.bg3,borderRadius:5,padding:8,marginBottom:8,
+          border:`1px solid ${faces.would_clip?C.red+'44':C.border}`}}>
+          <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:5}}>
+            <span style={{fontSize:11}}>👤</span>
+            <span style={{fontSize:11,fontWeight:600,color:C.text,fontFamily:C.mono}}>
+              {faces.count} volt{faces.count===1?'o':'i'}
+              {faces.prominent>0&&` (${faces.prominent} in primo piano)`}
+            </span>
+            {faces.would_clip ? <Tag color={C.red}>⚠ tagliato</Tag> : <Tag color={C.green}>✓ visibile</Tag>}
+          </div>
+          {faces.bbox && (
+            <div style={{fontSize:9,color:C.text3,fontFamily:C.mono,marginBottom:6}}>
+              bbox: [{faces.bbox.map(v=>v.toFixed(2)).join(', ')}]
+            </div>
+          )}
+          {/* Mini bbox visualizer */}
+          {faces.bbox && (() => {
+            const [x1,y1,x2,y2] = faces.bbox
+            return (
+              <div style={{position:'relative',width:96,height:64,background:C.bg,
+                borderRadius:3,border:`1px solid ${C.border}`,overflow:'hidden',marginBottom:6}}>
+                <div style={{position:'absolute',
+                  left:`${x1*100}%`,top:`${y1*100}%`,
+                  width:`${(x2-x1)*100}%`,height:`${(y2-y1)*100}%`,
+                  background:`${faces.would_clip?C.red:C.green}33`,
+                  border:`1px solid ${faces.would_clip?C.red:C.green}`,borderRadius:2}}/>
+                <div style={{position:'absolute',bottom:2,right:3,fontSize:7,color:C.text3,fontFamily:C.mono}}>bbox</div>
+              </div>
+            )
+          })()}
+          {/* Pan indicator */}
+          <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+            <div style={{fontSize:10,fontFamily:C.mono,color:C.text3}}>
+              Pan: <span style={{color:C.cyan}}>x={tr.x}% y={tr.y}%</span>
+              {tr.zoom!==1 && <> zoom=<span style={{color:C.cyan}}>{tr.zoom}×</span></>}
+            </div>
+            <div style={{position:'relative',width:30,height:20,background:C.bg,
+              border:`1px solid ${C.border}`,borderRadius:3,flexShrink:0}}>
+              <div style={{position:'absolute',
+                left:`calc(${tr.x}% - 3px)`,top:`calc(${tr.y}% - 3px)`,
+                width:6,height:6,background:C.cyan,borderRadius:'50%',
+                boxShadow:`0 0 4px ${C.cyan}`}}/>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Caption text */}
+      {slot.has_caption && slot.description && (
+        <div style={{fontSize:10,color:C.gold,fontFamily:C.mono,
+          background:C.goldDim,borderRadius:4,padding:'5px 8px',
+          borderLeft:`2px solid ${C.gold}`}}>
+          💬 "{slot.description.slice(0,90)}{slot.description.length>90?'…':''}"
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── PageRow (sidebar) ─────────────────────────────────────────────────────────
+function PageRow({ pg, active, onClick }) {
+  const winner  = pg.candidates?.[0]
+  const score   = winner?.score??0
+  const hasIssue = pg.slots?.some(s =>
+    s.orient_match===false || s.faces?.would_clip || (s.slot_type==='caption'&&s.empty))
+
+  return (
+    <button onClick={onClick} style={{width:'100%',display:'flex',alignItems:'center',
+      gap:8,padding:'8px 10px',background:'none',
+      border:`1px solid ${active?C.gold+'55':'transparent'}`,borderRadius:5,
+      cursor:'pointer',textAlign:'left',
+      background:active?C.goldDim:'transparent',transition:'background 0.1s'}}>
+      <span style={{fontSize:10,fontFamily:C.mono,color:C.text3,minWidth:24,textAlign:'right'}}>{pg.page_num}</span>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:11,fontFamily:C.mono,color:active?C.gold:C.text2,
+          overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{pg.page_type_label}</div>
+        <div style={{fontSize:9,color:C.text3,fontFamily:C.mono,marginTop:1,
+          overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{pg.group}</div>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:2,alignItems:'flex-end',flexShrink:0}}>
+        {hasIssue  && <span style={{fontSize:9,color:C.red}}>⚠</span>}
+        {pg.is_favorite && <span style={{fontSize:10,color:C.gold}}>★</span>}
+        <span style={{fontSize:9,fontFamily:C.mono,
+          color:score>=5000?C.red:score>=1000?C.gold:C.green}}>
+          {score>=10000?'∞':score.toFixed(0)}
+        </span>
+      </div>
+    </button>
+  )
+}
+
+// ── Main LogViewer ────────────────────────────────────────────────────────────
+export default function LogViewer({ pageLogs, currentPage, onNavigate, onClose }) {
+  const [sel, setSel]         = useState(Math.max(0, currentPage>=0?currentPage:0))
+  const [expCand, setExpCand] = useState(null)
+  const [search, setSearch]   = useState('')
+  const [onlyIssues, setOnlyIssues] = useState(false)
+  const listRef = useRef(null)
+
+  useEffect(() => {
+    if (currentPage>=0 && currentPage<pageLogs.length) setSel(currentPage)
+  }, [currentPage, pageLogs.length])
+
+  useEffect(() => {
+    listRef.current?.querySelector(`[data-pg="${sel}"]`)?.scrollIntoView({block:'nearest',behavior:'smooth'})
+  }, [sel])
+
+  const pg = pageLogs[sel]
+
+  const stats = useMemo(() => {
+    let orient=0, clip=0, capEmpty=0, perfect=0
+    pageLogs.forEach(p => {
+      let ok=true
+      p.slots?.forEach(s => {
+        if(s.orient_match===false){orient++;ok=false}
+        if(s.faces?.would_clip){clip++;ok=false}
+        if(s.slot_type==='caption'&&s.empty){capEmpty++;ok=false}
+      })
+      if(ok) perfect++
+    })
+    return {orient,clip,capEmpty,perfect,total:pageLogs.length}
+  }, [pageLogs])
+
+  const filtered = useMemo(() => pageLogs.filter((p,i) => {
+    if (onlyIssues && !p.slots?.some(s=>s.orient_match===false||s.faces?.would_clip||(s.slot_type==='caption'&&s.empty))) return false
+    if (search) {
+      const q=search.toLowerCase()
+      return p.page_type_label.toLowerCase().includes(q) || p.group.toLowerCase().includes(q) ||
+             p.slots?.some(s=>(s.filename||'').toLowerCase().includes(q)||(s.text||'').toLowerCase().includes(q))
+    }
+    return true
+  }), [pageLogs, onlyIssues, search])
+
+  if (!pg) return null
+
+  return createPortal(
+    <div style={{position:'fixed',inset:0,zIndex:9500,
+      display:'flex',flexDirection:'column',background:'rgba(0,0,0,0.88)',backdropFilter:'blur(3px)'}}>
+      <div style={{flex:1,display:'flex',flexDirection:'column',
+        background:C.bg,margin:16,borderRadius:12,
+        border:`1px solid ${C.border}`,boxShadow:'0 32px 96px rgba(0,0,0,0.8)',
+        overflow:'hidden',maxHeight:'calc(100vh - 32px)'}}>
+
+        {/* ── Header ── */}
+        <div style={{display:'flex',alignItems:'center',gap:16,
+          padding:'12px 20px',borderBottom:`1px solid ${C.border}`,
+          background:C.bg3,flexShrink:0}}>
+          <div style={{flex:1}}>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <span style={{fontSize:15,fontWeight:700,color:C.gold,fontFamily:C.mono,letterSpacing:'0.04em'}}>
+                🔍 Log impaginazione
+              </span>
+              <span style={{fontSize:11,color:C.text3,fontFamily:C.mono}}>{stats.total} pagine</span>
+            </div>
+            <div style={{display:'flex',gap:8,marginTop:6,flexWrap:'wrap'}}>
+              <Tag color={C.green}>✓ {stats.perfect} perfette</Tag>
+              {stats.orient>0  && <Tag color={C.red}>⚠ {stats.orient} mismatch orient.</Tag>}
+              {stats.clip>0    && <Tag color={C.red}>⚠ {stats.clip} volti tagliati</Tag>}
+              {stats.capEmpty>0&& <Tag color={C.gold}>⚠ {stats.capEmpty} slot T vuoti</Tag>}
+            </div>
+          </div>
+          <button onClick={onClose}
+            style={{background:'none',border:`1px solid ${C.border}`,color:C.text3,
+              borderRadius:6,width:30,height:30,cursor:'pointer',fontSize:16,
+              display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
+        </div>
+
+        {/* ── 3-pane body ── */}
+        <div style={{flex:1,display:'flex',overflow:'hidden'}}>
+
+          {/* Left: page list */}
+          <div style={{width:210,borderRight:`1px solid ${C.border}`,display:'flex',flexDirection:'column',flexShrink:0}}>
+            <div style={{padding:'8px 10px',borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+              <input value={search} onChange={e=>setSearch(e.target.value)}
+                placeholder="Cerca…"
+                style={{width:'100%',background:C.bg,border:`1px solid ${C.border}`,
+                  borderRadius:5,padding:'5px 8px',color:C.text,fontSize:11,
+                  fontFamily:C.mono,outline:'none',marginBottom:6}}/>
+              <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',
+                fontSize:10,color:C.text3,fontFamily:C.mono}}>
+                <input type="checkbox" checked={onlyIssues} onChange={e=>setOnlyIssues(e.target.checked)}/>
+                Solo pagine con problemi
+              </label>
+            </div>
+            <div ref={listRef} style={{flex:1,overflowY:'auto'}}>
+              {filtered.map(p => {
+                const ri = pageLogs.indexOf(p)
+                return (
+                  <div key={ri} data-pg={ri}>
+                    <PageRow pg={p} active={ri===sel}
+                      onClick={()=>{setSel(ri);setExpCand(null)}}/>
+                  </div>
+                )
+              })}
+              {filtered.length===0 && (
+                <div style={{padding:20,textAlign:'center',fontSize:11,color:C.text3}}>Nessuna pagina</div>
+              )}
+            </div>
+          </div>
+
+          {/* Center: page detail */}
+          <div style={{flex:1,overflowY:'auto',padding:'16px 20px'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14,gap:12}}>
+              <div>
+                <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:3}}>
+                  <span style={{fontSize:14,fontWeight:700,color:C.gold,fontFamily:C.mono}}>Pagina {pg.page_num}</span>
+                  <span style={{fontSize:12,color:C.text2}}>—</span>
+                  <span style={{fontSize:13,fontWeight:600,color:C.text}}>{pg.page_type_label}</span>
+                  {pg.is_favorite && <Tag color={C.gold}>★ preferita</Tag>}
+                </div>
+                <div style={{fontSize:11,color:C.text3,fontFamily:C.mono}}>
+                  Gruppo: {pg.group}
+                  {pg.prev_dense!==null&&` · prev: ${pg.prev_dense?'densa':'rada'} · questa: ${pg.is_dense?'densa':'rada'}`}
+                </div>
+              </div>
+              <button onClick={()=>{onNavigate(sel);onClose()}}
+                style={{padding:'6px 14px',fontSize:11,fontFamily:C.mono,
+                  background:C.goldDim,border:`1px solid ${C.gold}55`,
+                  color:C.gold,borderRadius:6,cursor:'pointer',flexShrink:0}}>
+                → Vai alla pagina
+              </button>
+            </div>
+
+            {/* Winner score bar */}
+            {pg.candidates?.[0] && (
+              <div style={{background:C.bg3,border:`1px solid ${C.gold}33`,
+                borderRadius:6,padding:'8px 12px',marginBottom:16}}>
+                <div style={{fontSize:10,fontFamily:C.mono,color:C.text3,marginBottom:6}}>PUNTEGGIO LAYOUT VINCITORE</div>
+                <ScoreBar score={pg.candidates[0].score}
+                  max={Math.max(...pg.candidates.map(c=>c.score),100)}
+                  label={pg.candidates[0].label} warn={500} danger={2000}/>
+              </div>
+            )}
+
+            {/* Slots */}
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:10,fontFamily:C.mono,color:C.text3,
+                textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:8}}>
+                Slot ({pg.slots?.length||0})
+              </div>
+              {pg.slots?.map((s,i) => <SlotCard key={i} slot={s}/>)}
+            </div>
+          </div>
+
+          {/* Right: candidates */}
+          <div style={{width:290,borderLeft:`1px solid ${C.border}`,display:'flex',flexDirection:'column',flexShrink:0}}>
+            <div style={{padding:'10px 14px',borderBottom:`1px solid ${C.border}`,background:C.bg3,flexShrink:0}}>
+              <div style={{fontSize:10,fontFamily:C.mono,color:C.text3,
+                textTransform:'uppercase',letterSpacing:'0.1em'}}>
+                Candidati ({pg.candidates?.length||0})
+              </div>
+              <div style={{fontSize:10,color:C.text3,marginTop:3}}>Clicca per il breakdown punteggio</div>
+            </div>
+            <div style={{flex:1,overflowY:'auto',padding:'10px 12px'}}>
+              {pg.candidates?.map((cand,i) => (
+                <CandidateRow key={i} cand={cand}
+                  expanded={expCand===`${sel}_${i}`}
+                  onToggle={()=>setExpCand(prev=>prev===`${sel}_${i}`?null:`${sel}_${i}`)}/>
+              ))}
+              {!pg.candidates?.length && (
+                <div style={{fontSize:11,color:C.text3,textAlign:'center',padding:20}}>Nessun candidato</div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Footer nav */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',
+          padding:'8px 16px',borderTop:`1px solid ${C.border}`,background:C.bg3,flexShrink:0}}>
+          <button onClick={()=>setSel(p=>Math.max(0,p-1))} disabled={sel===0}
+            style={{padding:'4px 14px',fontSize:11,fontFamily:C.mono,
+              background:'none',border:`1px solid ${C.border}`,color:C.text2,
+              borderRadius:5,cursor:sel===0?'not-allowed':'pointer',opacity:sel===0?.4:1}}>← Prec.</button>
+          <span style={{fontSize:11,fontFamily:C.mono,color:C.text3}}>{sel+1} / {pageLogs.length}</span>
+          <button onClick={()=>setSel(p=>Math.min(pageLogs.length-1,p+1))} disabled={sel>=pageLogs.length-1}
+            style={{padding:'4px 14px',fontSize:11,fontFamily:C.mono,
+              background:'none',border:`1px solid ${C.border}`,color:C.text2,
+              borderRadius:5,cursor:sel>=pageLogs.length-1?'not-allowed':'pointer',opacity:sel>=pageLogs.length-1?.4:1}}>Succ. →</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}

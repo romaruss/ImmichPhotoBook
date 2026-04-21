@@ -63,6 +63,7 @@ function makeGrid(n) {
         y: parseFloat(((r / rows) * 100).toFixed(2)),
         w: parseFloat((100 / cols).toFixed(2)),
         h: parseFloat((100 / rows).toFixed(2)),
+        slot_type: 'photo',
       })
   return slots
 }
@@ -88,12 +89,15 @@ function LayoutThumb({ pt, landscape, onEdit, onDelete }) {
             return (
               <g key={i}>
                 <rect x={x+1.5} y={y+1.5} width={w-3} height={h-3}
-                  fill="rgba(155,150,140,0.25)" stroke="#a8a49c"
-                  strokeWidth={1} strokeDasharray="4,2.5" rx={1}/>
+                  fill={s.slot_type==='caption'?'rgba(100,160,200,0.18)':'rgba(155,150,140,0.25)'}
+                  stroke={s.slot_type==='caption'?'#7eb8d4':'#a8a49c'}
+                  strokeWidth={1} strokeDasharray={s.slot_type==='caption'?'3,2':'4,2.5'} rx={1}/>
                 {w>20&&h>14&&(
                   <text x={x+w/2} y={y+h/2+3.5} textAnchor="middle"
                     fontSize={Math.min(10,Math.max(6,Math.min(w,h)*0.28))}
-                    fill="#aaa" fontFamily="monospace">{i+1}</text>
+                    fill={s.slot_type==='caption'?'#7eb8d4':'#aaa'} fontFamily="monospace">
+                    {s.slot_type==='caption'?'T':i+1}
+                  </text>
                 )}
               </g>
             )
@@ -367,7 +371,7 @@ function SlotEditorModal({ initSlots, initLabel, landscape, onSave, onCancel }) 
               </p>
               <table style={{ borderCollapse:'collapse', fontSize:10, fontFamily:'var(--font-mono)', width:'100%' }}>
                 <thead><tr style={{ color:'var(--text3)' }}>
-                  {['#','X','Y','W','H'].map(h=>(
+                  {['#','Tipo','X','Y','W','H'].map(h=>(
                     <th key={h} style={{ padding:'2px 5px', textAlign:'right', fontWeight:400 }}>{h}</th>
                   ))}
                 </tr></thead>
@@ -375,6 +379,17 @@ function SlotEditorModal({ initSlots, initLabel, landscape, onSave, onCancel }) 
                   {slots.map((s,i)=>(
                     <tr key={i} style={{ borderTop:'1px solid var(--border)', color:'var(--text2)' }}>
                       <td style={{ padding:'2px 5px', color:'var(--gold)', textAlign:'right' }}>{i+1}</td>
+                      <td style={{ padding:'2px 4px', textAlign:'center' }}>
+                        <button
+                          onClick={()=>setSlots(ss=>ss.map((sl,si)=>si===i?{...sl,slot_type:sl.slot_type==='caption'?'photo':'caption'}:sl))}
+                          title={s.slot_type==='caption'?'Slot didascalia (clicca per foto)':'Slot foto (clicca per didascalia)'}
+                          style={{fontSize:10,padding:'1px 4px',borderRadius:3,cursor:'pointer',border:'1px solid',
+                            borderColor:s.slot_type==='caption'?'#7eb8d4':'var(--border)',
+                            background:s.slot_type==='caption'?'rgba(126,184,212,0.15)':'var(--bg3)',
+                            color:s.slot_type==='caption'?'#7eb8d4':'var(--text3)'}}>
+                          {s.slot_type==='caption'?'T':'📷'}
+                        </button>
+                      </td>
                       {[s.x,s.y,s.w,s.h].map((v,j)=>(
                         <td key={j} style={{ padding:'2px 5px', textAlign:'right' }}>{v.toFixed(1)}</td>
                       ))}
@@ -383,7 +398,10 @@ function SlotEditorModal({ initSlots, initLabel, landscape, onSave, onCancel }) 
                 </tbody>
               </table>
               <p style={{ fontSize:9, color:'var(--text3)', fontFamily:'var(--font-mono)', marginTop:6 }}>
-                {slots.length} slot · {slots.filter(s=>s.h>s.w).length} vert · {slots.filter(s=>s.w>=s.h).length} orizz
+                {slots.length} slot · {slots.filter(s=>s.h>s.w).length} vert · {slots.filter(s=>s.w>=s.h).length} orizz · {slots.filter(s=>s.slot_type==='caption').length} T
+              </p>
+              <p style={{ fontSize:9, color:'#7eb8d4', marginTop:4 }}>
+                📷 = slot foto &nbsp;·&nbsp; T = slot didascalia (usato solo con foto con descrizione)
               </p>
             </div>
           </div>
@@ -409,23 +427,32 @@ function SlotEditorModal({ initSlots, initLabel, landscape, onSave, onCancel }) 
                 return (
                   <g key={i}
   >
-                    <rect x={sx+0.5} y={sy+0.5} width={sw-1} height={sh-1}
-                      fill={isA?'rgba(212,170,90,0.1)':'rgba(212,170,90,0.04)'}
-                      stroke={isA?'rgba(212,170,90,0.9)':'rgba(212,170,90,0.45)'}
-                      strokeWidth={isA?1.5:1} strokeDasharray={isA?'none':'8,5'} rx={1}/>
-                    {sw>30&&sh>20&&(
-                      <text x={sx+sw/2} y={sy+sh/2+5} textAnchor="middle"
-                        fontSize={Math.min(18,Math.max(8,Math.min(sw,sh)*0.22))}
-                        fill={isA?'rgba(212,170,90,0.7)':'#bbb'} fontFamily="monospace">
-                        {i+1}
-                      </text>
-                    )}
-                    {sw>50&&sh>30&&(
-                      <text x={sx+sw/2} y={sy+sh/2+18} textAnchor="middle"
-                        fontSize={8} fill="#aaa" fontFamily="monospace">
-                        {(s.w/s.h).toFixed(2)} {isP?'↕':'↔'}
-                      </text>
-                    )}
+                    {(()=>{
+                      const isCaption = s.slot_type === 'caption'
+                      const fillBase = isCaption ? 'rgba(100,160,200,0.10)' : 'rgba(212,170,90,0.04)'
+                      const fillAct  = isCaption ? 'rgba(100,160,200,0.22)' : 'rgba(212,170,90,0.10)'
+                      const strokeB  = isCaption ? 'rgba(100,160,200,0.7)'  : 'rgba(212,170,90,0.45)'
+                      const strokeA  = isCaption ? 'rgba(100,160,200,1.0)'  : 'rgba(212,170,90,0.9)'
+                      return (<>
+                        <rect x={sx+0.5} y={sy+0.5} width={sw-1} height={sh-1}
+                          fill={isA?fillAct:fillBase}
+                          stroke={isA?strokeA:strokeB}
+                          strokeWidth={isA?1.5:1} strokeDasharray={isA?'none':'8,5'} rx={1}/>
+                        {sw>30&&sh>20&&(
+                          <text x={sx+sw/2} y={sy+sh/2+(isCaption?2:5)} textAnchor="middle"
+                            fontSize={Math.min(18,Math.max(8,Math.min(sw,sh)*0.22))}
+                            fill={isA?(isCaption?'rgba(100,160,200,0.9)':'rgba(212,170,90,0.7)'):(isCaption?'#7eb8d4':'#bbb')} fontFamily="monospace">
+                            {isCaption ? 'T' : i+1}
+                          </text>
+                        )}
+                        {sw>50&&sh>30&&(
+                          <text x={sx+sw/2} y={sy+sh/2+(isCaption?16:18)} textAnchor="middle"
+                            fontSize={8} fill={isCaption?'#7eb8d4':'#aaa'} fontFamily="monospace">
+                            {isCaption ? 'didascalia' : `${(s.w/s.h).toFixed(2)} ${isP?'↕':'↔'}`}
+                          </text>
+                        )}
+                      </>)
+                    })()}
                   </g>
                 )
               })}

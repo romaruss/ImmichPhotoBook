@@ -20,6 +20,8 @@ const DEFAULT_PROFILE = {
   name:'', page_size:'20x30', orientation:'portrait', duplex:false,
   margin_mm:5, margin_top:5, margin_right:5, margin_bottom:5, margin_left:5,
   bleed:false, bleed_mm:3, gap_mm:3, page_types:[],
+  export_dpi: 300,
+  color_profile: 'srgb',
   caption_style:{ font:'Georgia, serif', size:13, color:'#e8e6e0', align:'center', valign:'center', bg:'#111116', italic:true, bold:false },
   cover_style: { ...DEFAULT_COVER },
 }
@@ -122,6 +124,7 @@ export default function ProfilesPage() {
   const [saving, setSaving]           = useState(false)
   const [toast, setToast]             = useState(null)
   const [showCustomSizeMgr, setShowCustomSizeMgr] = useState(false)
+  const [ptKey, setPtKey]             = useState(0)  // bumped on import to force PageTypeEditor remount
   const [marginLocked, setMarginLocked] = useState(true)
 
   useEffect(() => {
@@ -156,12 +159,14 @@ export default function ProfilesPage() {
 
   const startNew = () => {
     setForm({ ...DEFAULT_PROFILE, page_types:[] })
+    setPtKey(0)
     setEditing('new')
   }
 
   const startEdit = async (profile) => {
     const r = await axios.get(`/api/profiles/${profile.id}`)
     setForm({ ...DEFAULT_PROFILE, ...r.data })  // merge so new fields have defaults
+    setPtKey(k => k + 1)
     setEditing(r.data)
   }
 
@@ -169,9 +174,9 @@ export default function ProfilesPage() {
     try {
       await axios.post(`/api/profiles/${profile.id}/duplicate`)
       await loadProfiles()
-      showToast('Profilo duplicato ✓', 'success')
+      showToast(p.duplicateOk, 'success')
     } catch {
-      showToast('Errore nella duplicazione', 'error')
+      showToast(p.duplicateError, 'error')
     }
   }
 
@@ -220,6 +225,38 @@ export default function ProfilesPage() {
               <span className="text-muted">{p.subtitle2}</span>
             </div>
             <div className="flex gap-2">
+              {/* Export / Import profilo integrale */}
+              <button className="btn btn-sm" style={{fontSize:11}} title="Esporta profilo completo come JSON"
+                onClick={()=>{
+                  const data={...form,_exported_from:'photobook-studio',_version:1,date:new Date().toISOString()}
+                  const a=document.createElement('a')
+                  a.href='data:application/json,'+encodeURIComponent(JSON.stringify(data,null,2))
+                  a.download=`profilo-${(form.name||'profilo').replace(/\s+/g,'_')}.json`
+                  a.click()
+                }}>⬇ Esporta profilo</button>
+              <label className="btn btn-sm" style={{fontSize:11,cursor:'pointer'}} title="Importa profilo da JSON">
+                ⬆ Importa profilo
+                <input type="file" accept=".json" style={{display:'none'}} onChange={e=>{
+                  const file=e.target.files?.[0]; if(!file) return
+                  const reader=new FileReader()
+                  reader.onload=ev=>{
+                    try{
+                      const d=JSON.parse(ev.target.result)
+                      // Accept any object with at least page_size or page_types
+                      if(d && (d.page_size || d.page_types)){
+                        const imported={...DEFAULT_PROFILE,...d}
+                        delete imported._exported_from; delete imported._version; delete imported.date
+                        delete imported.id  // never import the id (would conflict)
+                        setForm(imported)
+                        setPtKey(k => k + 1)
+                        showToast(`✓ Profilo "${d.name||'?'}" importato`, 'success')
+                      } else showToast('File non valido: non è un profilo PhotoBook','error')
+                    }catch{showToast('Errore nel leggere il file JSON','error')}
+                  }
+                  reader.readAsText(file)
+                  e.target.value=''
+                }}/>
+              </label>
               <button className="btn" onClick={() => setEditing(null)}>{p.cancelBtn}</button>
               <button className="btn btn-primary" onClick={save} disabled={saving}>
                 {saving ? <span className="spinner"/> : null} {p.saveBtn}
@@ -331,29 +368,29 @@ export default function ProfilesPage() {
                         cursor:'pointer',fontSize:10,
                         background:marginLocked?'var(--gold-dim)':'var(--bg3)',
                         color:marginLocked?'var(--gold)':'var(--text3)'}}>
-                      {marginLocked?'🔒 Tutti uguali':'🔓 Indipendenti'}
+                      {marginLocked?p.marginLocked:p.marginUnlocked}
                     </button>
                   </div>
                   <div style={{display:'flex',flexDirection:'column',gap:8,maxWidth:320}}>
                     <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                      <MarginInput side="margin_top" label="↑ Alto" formValue={mv('margin_top')} onCommit={handleMargin}/>
+                      <MarginInput side="margin_top" label={p.marginTop} formValue={mv('margin_top')} onCommit={handleMargin}/>
                       <div style={{flex:1,height:1,background:'var(--border)'}}/>
                     </div>
                     <div style={{display:'flex',gap:6,alignItems:'flex-end'}}>
-                      <MarginInput side="margin_left" label="← Esterno" formValue={mv('margin_left')} onCommit={handleMargin}/>
+                      <MarginInput side="margin_left" label={p.marginOuter} formValue={mv('margin_left')} onCommit={handleMargin}/>
                       <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:3,padding:'0 4px'}}>
                         <span style={{fontSize:9,color:'var(--text3)',textAlign:'center',lineHeight:1.3}}>Rilegatura → interno</span>
                         <div style={{width:'100%',height:1,background:'var(--border)'}}/>
                         <span style={{fontSize:9,color:'var(--text3)',textAlign:'center'}}>← esterno</span>
                       </div>
-                      <MarginInput side="margin_right" label="Interno →" formValue={mv('margin_right')} onCommit={handleMargin}/>
+                      <MarginInput side="margin_right" label={p.marginInner} formValue={mv('margin_right')} onCommit={handleMargin}/>
                     </div>
                     <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                      <MarginInput side="margin_bottom" label="↓ Basso" formValue={mv('margin_bottom')} onCommit={handleMargin}/>
+                      <MarginInput side="margin_bottom" label={p.marginBottom} formValue={mv('margin_bottom')} onCommit={handleMargin}/>
                       <div style={{flex:1,height:1,background:'var(--border)'}}/>
                     </div>
                     <p style={{fontSize:10,color:'var(--text3)',lineHeight:1.4,marginTop:2}}>
-                      Il margine <strong>Interno</strong> è verso la rilegatura: sulle pagine pari sarà a destra, sulle dispari a sinistra.
+                      {p.marginBindingNote}
                     </p>
                   </div>
                 </div>
@@ -385,16 +422,124 @@ export default function ProfilesPage() {
             </div>
           </div>
 
+          {/* Impostazioni esportazione PDF */}
+          <div className="card">
+            <div className="card-title">Esportazione PDF</div>
+            <div className="form-row-3">
+              {/* DPI */}
+              <div className="form-group">
+                <label className="form-label">Risoluzione foto</label>
+                <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                  <input type="number" className="form-input" min={72} max={600} step={1}
+                    defaultValue={form.export_dpi||300}
+                    onBlur={e=>{ const v=parseInt(e.target.value); if(!isNaN(v)&&v>=72) set('export_dpi',v) }}
+                    onKeyDown={e=>{ if(e.key==='Enter'){const v=parseInt(e.target.value);if(!isNaN(v)&&v>=72){set('export_dpi',v);e.target.blur()}} }}
+                    style={{width:80}}/>
+                  <span style={{fontSize:12,color:'var(--text3)'}}>dpi</span>
+                </div>
+                <p className="text-xs text-muted mt-1">{p.exportDpiHint}</p>
+              </div>
+
+              {/* Color profile */}
+              <div className="form-group" style={{gridColumn:'span 2'}}>
+                <label className="form-label">Profilo colore</label>
+                <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                  <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                    {/* RGB group */}
+                    <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                      <span style={{fontSize:9,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.06em'}}>RGB</span>
+                      <div style={{display:'flex',gap:4}}>
+                        {[
+                          ['srgb',      'sRGB IEC61966',    'Standard web e consumer. Compatibile con tutti i laboratori.'],
+                          ['adobe_rgb', 'Adobe RGB (1998)',  'Gamut più ampio. Per laboratori professionali che accettano AdobeRGB.'],
+                        ].map(([v,lbl,hint])=>(
+                          <button key={v} onClick={()=>set('color_profile',v)} title={hint}
+                            style={{padding:'4px 8px',fontSize:10,borderRadius:5,cursor:'pointer',
+                              border:`1px solid ${form.color_profile===v?'var(--gold)':'var(--border)'}`,
+                              background:form.color_profile===v?'var(--gold-dim)':'var(--bg3)',
+                              color:form.color_profile===v?'var(--gold)':'var(--text2)'}}>
+                            {lbl}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {/* CMYK group */}
+                    <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                      <span style={{fontSize:9,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.06em'}}>CMYK — per offset professionale</span>
+                      <div style={{display:'flex',gap:4}}>
+                        {[
+                          ['fogra39', 'FOGRA39',  'ISO Coated v2 — standard europeo per carta patinata. Tipografia offset.'],
+                          ['fogra51', 'FOGRA51',  'PSO Coated v3 — versione aggiornata. Richiede ICC FOGRA51 installato.'],
+                          ['swop',    'SWOP',     'US Web Coated — standard USA. Richiede ICC SWOP installato.'],
+                        ].map(([v,lbl,hint])=>(
+                          <button key={v} onClick={()=>set('color_profile',v)} title={hint}
+                            style={{padding:'4px 8px',fontSize:10,borderRadius:5,cursor:'pointer',
+                              border:`1px solid ${form.color_profile===v?'#7eb8d4':'var(--border)'}`,
+                              background:form.color_profile===v?'rgba(126,184,212,0.15)':'var(--bg3)',
+                              color:form.color_profile===v?'#7eb8d4':'var(--text2)'}}>
+                            {lbl}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted" style={{lineHeight:1.5}}>
+                    {form.color_profile==='fogra39' && '✓ FOGRA39 (ISO Coated v2) — profilo disponibile sul sistema'}
+                    {form.color_profile==='fogra51' && '⚠ FOGRA51 — richiede ICC file installato sul server. Se non disponibile usa sRGB.'}
+                    {form.color_profile==='swop'    && '⚠ SWOP — richiede ICC file installato sul server. Se non disponibile usa sRGB.'}
+                    {form.color_profile==='adobe_rgb' && '⚠ Adobe RGB — la conversione usa sRGB come sorgente. Verifica con il laboratorio.'}
+                    {form.color_profile==='srgb'    && 'sRGB: profilo standard, compatibile con tutti i laboratori fotografici.'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style={{display:'flex',justifyContent:'flex-end',marginTop:-6,marginBottom:4}}>
+            <button className="btn btn-sm btn-primary" style={{fontSize:10,padding:'3px 10px'}}
+              onClick={save} disabled={saving}>{saving?p.saving:p.saveQuick}</button>
+          </div>
+
           {/* Page types — pass a stable key so PageTypeEditor doesn't reset on every onChange */}
           <div className="card">
-            <div className="card-title">{p.pageTypesCard}</div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+              <div className="card-title" style={{marginBottom:0}}>{p.pageTypesCard}</div>
+              <div style={{display:'flex',gap:6}}>
+                <button className="btn btn-sm" style={{fontSize:10}} title="Esporta layout pagine come JSON"
+                  onClick={()=>{
+                    const data={page_types:form.page_types,exported_from:form.name,date:new Date().toISOString()}
+                    const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(data,null,2))
+                    a.download=`layouts-${(form.name||'profilo').replace(/\s+/g,'_')}.json`;a.click()
+                  }}>⬇ Esporta layout</button>
+                <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}} title="Importa layout da JSON">
+                  ⬆ Importa layout
+                  <input type="file" accept=".json" style={{display:'none'}} onChange={e=>{
+                    const file=e.target.files?.[0]; if(!file) return
+                    const r=new FileReader(); r.onload=ev=>{
+                      try{
+                        const d=JSON.parse(ev.target.result)
+                        if(d.page_types&&Array.isArray(d.page_types)){
+                          set('page_types',d.page_types)
+                          setPtKey(k => k + 1)
+                          showToast(p.importLayoutsOk(d.page_types.length, d.exported_from), 'success')
+                        } else showToast(p.importLayoutsErr,'error')
+                      }catch{showToast(p.importJsonErr,'error')}
+                    }; r.readAsText(file)
+                    e.target.value=''
+                  }}/>
+                </label>
+              </div>
+            </div>
             <p className="text-sm text-muted mb-4">{p.pageTypesHint}</p>
             <PageTypeEditor
-              key={editing === 'new' ? 'new' : editing.id}
+              key={`${editing === 'new' ? 'new' : editing.id}_${ptKey}`}
               pageTypes={form.page_types}
               orientation={form.orientation}
               onChange={pt => set('page_types', pt)}
             />
+          </div>
+          <div style={{display:'flex',justifyContent:'flex-end',marginTop:-6,marginBottom:4}}>
+            <button className="btn btn-sm btn-primary" style={{fontSize:10,padding:'3px 10px'}}
+              onClick={save} disabled={saving}>{saving?p.saving:p.saveQuick}</button>
           </div>
 
           {/* Caption style defaults */}
@@ -511,7 +656,7 @@ export default function ProfilesPage() {
                         fontStyle: cs.italic ? 'italic' : 'normal',
                         textAlign: cs.align||'center',
                       }}>
-                        Testo didascalia di esempio
+                        {p.captionPreview}
                       </span>
                     </div>
                   </div>
@@ -521,7 +666,26 @@ export default function ProfilesPage() {
           </div>
           {/* Cover editor */}
           <div className="card">
-            <div className="card-title">Stile copertina</div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+              <div className="card-title" style={{marginBottom:0}}>Stile copertina</div>
+              <div style={{display:'flex',gap:6}}>
+                <button className="btn btn-sm" style={{fontSize:10}} title="Esporta stile copertina"
+                  onClick={()=>{
+                    const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(form.cover_style||{},null,2))
+                    a.download=`cover-style-${(form.name||'profilo').replace(/\s+/g,'_')}.json`;a.click()
+                  }}>⬇ Esporta stile</button>
+                <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}} title="Importa stile copertina">
+                  ⬆ Importa stile
+                  <input type="file" accept=".json" style={{display:'none'}} onChange={e=>{
+                    const file=e.target.files?.[0]; if(!file) return
+                    const r=new FileReader(); r.onload=ev=>{
+                      try{const d=JSON.parse(ev.target.result);set('cover_style',d);showToast(p.importCoverOk,'success')}
+                      catch{showToast(p.importCoverErr,'error')}
+                    };r.readAsText(file);e.target.value=''
+                  }}/>
+                </label>
+              </div>
+            </div>
             <p className="text-sm text-muted mb-4">
               Imposta il layout visivo della copertina per questo profilo. Puoi salvare stili personalizzati riutilizzabili.
             </p>
@@ -538,12 +702,16 @@ export default function ProfilesPage() {
                 <CoverStyleEditor
                   value={form.cover_style || DEFAULT_COVER}
                   onChange={cs => set('cover_style', cs)}
-                  albumName={form.name || 'Nome album'}
+                  albumName={form.name || p.namePlaceholder.replace('es. ','')}
                   coverWidth={cW}
                   coverHeight={cH}
                   mapUrl={null}/>
               )
             })()}
+          </div>
+          <div style={{display:'flex',justifyContent:'flex-end',marginTop:-6,marginBottom:4}}>
+            <button className="btn btn-sm btn-primary" style={{fontSize:10,padding:'3px 10px'}}
+              onClick={save} disabled={saving}>{saving?p.saving:p.saveQuick}</button>
           </div>
         </div>
         {toast&&<div className={`toast ${toast.type}`}>{toast.msg}</div>}
@@ -583,7 +751,7 @@ export default function ProfilesPage() {
                 <div className="profile-item-info">
                   <h3>{prof.name}</h3>
                   <p>
-                    {getSizeLabel(prof.page_size)} · {prof.orientation==='portrait'?'Verticale':'Orizzontale'}
+                    {getSizeLabel(prof.page_size)} · {prof.orientation==='portrait'?p.portrait.split(' ')[0]:p.landscape.split(' ')[0]}
                     {prof.duplex?' · F/R':''}
                     {prof.bleed?` · Abbondanza ${prof.bleed_mm}mm`:''}
                     {` · ${(prof.page_types||[]).length} pagine tipo`}

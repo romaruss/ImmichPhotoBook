@@ -75,18 +75,52 @@ def _slot_ar(slot: Slot, page_ar: float = 1.0) -> float:
 
 
 
-def _photo_is_portrait(photo: Photo) -> bool:
+
+def _count_slot_types(slots: list[Slot]) -> tuple[int, int]:
+    """Return (n_photo_slots, n_caption_slots). Default is photo if not set."""
+    n_caption = sum(1 for s in slots if s.get("slot_type") == "caption")
+    n_photo   = len(slots) - n_caption
+    return n_photo, n_caption
+
+def _display_dims(photo: Photo) -> tuple[float, float]:
+    """
+    Ritorna (larghezza_display, altezza_display) tenendo conto dell'orientamento EXIF.
+
+    Le fotocamere spesso salvano fisicamente i pixel come landscape e memorizzano
+    l'orientamento desiderato in un tag EXIF. In questi casi exifImageWidth > exifImageHeight
+    anche se la foto visualizzata è portrait.
+
+    Tag EXIF orientation:
+      1 = normale
+      2 = specchio orizzontale
+      3 = 180°
+      4 = specchio verticale
+      5 = 90° CW + specchio
+      6 = 90° CW         ← portrait da DSLR/telefono landscape
+      7 = 90° CCW + specchio
+      8 = 90° CCW        ← portrait ruotato
+    Per 5,6,7,8 le dimensioni fisiche sono invertite rispetto al display.
+    """
     exif = photo.get("exifInfo") or {}
-    w = exif.get("exifImageWidth") or exif.get("imageWidth") or 0
-    h = exif.get("exifImageHeight") or exif.get("imageHeight") or 0
+    w = float(exif.get("exifImageWidth")  or exif.get("imageWidth")  or 1)
+    h = float(exif.get("exifImageHeight") or exif.get("imageHeight") or 1)
+    try:
+        orient = int(exif.get("orientation") or 1)
+    except (ValueError, TypeError):
+        orient = 1
+    if orient in (5, 6, 7, 8):
+        w, h = h, w   # swap: dimensioni fisiche invertite rispetto al display
+    return w, h
+
+
+def _photo_is_portrait(photo: Photo) -> bool:
+    w, h = _display_dims(photo)
     return (h > w) if (w and h) else True
 
 
 
 def _photo_ar(photo: Photo) -> float:
-    exif = photo.get("exifInfo") or {}
-    w = exif.get("exifImageWidth") or exif.get("imageWidth") or 1
-    h = exif.get("exifImageHeight") or exif.get("imageHeight") or 1
+    w, h = _display_dims(photo)
     return w / h if h else 1.0
 
 
@@ -133,12 +167,13 @@ def _photo_quality(photo: Photo) -> float:
 def _get_all_faces(photo: Photo) -> list[dict]:
     """
     Restituisce TUTTI i volti normalizzati dell'asset Immich (coordinate 0..1).
-    Immich fornisce boundingBoxX1/Y1/X2/Y2 in PIXEL ASSOLUTI — normalizza per
-    le dimensioni dell'immagine da exifInfo.
+
+    Immich esegue la face detection sull'immagine ORIENTATA (dopo aver applicato
+    il tag EXIF orientation). Le bounding box sono quindi in coordinate display.
+    La normalizzazione deve usare le dimensioni DISPLAY (non fisiche), altrimenti
+    per le foto con rotation tag le coordinate risultanti sono sbagliate.
     """
-    exif  = photo.get("exifInfo") or {}
-    img_w = float(exif.get("exifImageWidth")  or exif.get("imageWidth")  or 0)
-    img_h = float(exif.get("exifImageHeight") or exif.get("imageHeight") or 0)
+    img_w, img_h = _display_dims(photo)
 
     def normalize_bbox(x1r, y1r, x2r, y2r):
         if img_w > 1 and img_h > 1 and (x2r > 1.0 or y2r > 1.0):
@@ -535,17 +570,25 @@ def _merge_small_groups(
 
 def _assign_to_slots(photos: list[Photo], slots: list[Slot], page_ar: float = 1.0) -> list[Photo | None]:
     """
-    Assegna le foto agli slot rispettando SEMPRE l'orientamento.
-    Portrait photo → portrait slot, landscape → landscape slot.
-    I residui (quando i numeri non tornano) vanno agli slot rimasti.
-    """
-    n      = min(len(photos), len(slots))
-    ps     = list(photos[:n])
-    ss     = list(slots[:n])
-    result: list[Photo | None] = [None] * n
+    Assegna le foto agli slot FOTO rispettando l'orientamento.
+    Gli slot DIDASCALIA non ricevono mai foto — rimangono None qui,
+    verranno popolati con testo in _make_pages_from_group.
 
-    p_port_idx = [i for i, s in enumerate(ss) if _slot_is_portrait(s, page_ar)]
-    p_land_idx = [i for i, s in enumerate(ss) if not _slot_is_portrait(s, page_ar)]
+    Regole:
+      - slot_type == "caption" → sempre None (testo, non foto)
+      - slot_type == "photo"   → foto per orientamento
+    """
+    result: list[Photo | None] = [None] * len(slots)
+
+    # Solo slot foto (non caption) ricevono foto
+    photo_slot_idx = [i for i, s in enumerate(slots) if s.get("slot_type") != "caption"]
+
+    n = min(len(photos), len(photo_slot_idx))
+    ps = list(photos[:n])
+    ss = [slots[i] for i in photo_slot_idx[:n]]
+
+    p_port_idx = [photo_slot_idx[i] for i, s in enumerate(ss) if _slot_is_portrait(s, page_ar)]
+    p_land_idx = [photo_slot_idx[i] for i, s in enumerate(ss) if not _slot_is_portrait(s, page_ar)]
     f_port     = [p for p in ps if _photo_is_portrait(p)]
     f_land     = [p for p in ps if not _photo_is_portrait(p)]
 
@@ -554,13 +597,13 @@ def _assign_to_slots(photos: list[Photo], slots: list[Slot], page_ar: float = 1.
     for si, photo in zip(p_land_idx, f_land):
         result[si] = photo
 
-    used     = {id(p) for p in result if p is not None}
+    # Leftover (orientation mismatch) → fill remaining empty photo slots
+    used = {id(p) for p in result if p is not None}
     leftover = [p for p in ps if id(p) not in used]
-    empty    = [i for i in range(n) if result[i] is None]
-    for si, photo in zip(empty, leftover):
+    empty_photo_slots = [i for i in photo_slot_idx if result[i] is None]
+    for si, photo in zip(empty_photo_slots, leftover):
         result[si] = photo
 
-    result += [None] * (len(slots) - n)
     return result
 
 
@@ -574,7 +617,8 @@ def _score_page_type(
     max_slots: int,
     page_ar: float = 1.0,
     verbose_log: list | None = None,
-) -> float:
+    _return_breakdown: bool = False,
+) -> float | tuple:
     """
     Punteggio per un page type dato un gruppo di foto (più basso = migliore).
     Pesi calibrati per garantire diversità senza sacrificare le regole fondamentali.
@@ -593,9 +637,12 @@ def _score_page_type(
     if ns == 0:
         return 9_999_999
 
-    n_photos = len(photos)
-    photos_for = photos[:ns]
-    assigned   = _assign_to_slots(photos_for, slots, page_ar)
+    n_photo_slots, n_caption_slots = _count_slot_types(slots)
+    n_photos    = len(photos)
+    n_with_cap  = sum(1 for p in photos if p.get("has_caption"))
+    # Caption slots don't receive photos — chunk size = photo slots only
+    photos_for  = photos[:n_photo_slots]
+    assigned    = _assign_to_slots(photos_for, slots, page_ar)
 
     score = 0.0
     detail = []
@@ -609,6 +656,27 @@ def _score_page_type(
         score += orientation_violations * 10_000
         detail.append(f"orient_viol={orientation_violations}×10000")
 
+    # ── 1b. Caption slot matching ────────────────────────────────────────────
+    # Caption slots will contain text from photos on this page.
+    # Prefer: use pages WITH caption slots when some/all photos have descriptions.
+    # Penalize: using caption-slot pages when NO photo has a description
+    #           (the caption slot would remain empty → bad layout).
+    n_photos_on_page = len(photos_for)  # photos that will actually go on this page
+    n_caps_on_page   = sum(1 for p in photos_for if p.get("has_caption"))
+    if n_caption_slots > 0:
+        # Each caption slot needs at least one photo-with-caption on this page
+        captions_available = min(n_caps_on_page, n_caption_slots)
+        unfilled_cap_slots = n_caption_slots - captions_available
+        if unfilled_cap_slots > 0:
+            # Caption slot would be empty: heavy penalty
+            score += unfilled_cap_slots * 5_000
+            detail.append(f"empty_caption_slot={unfilled_cap_slots}×5000")
+    if n_caption_slots == 0 and n_caps_on_page > 0:
+        # Photos have descriptions but no caption slot available: mild nudge
+        # (not catastrophic — the description can still be used elsewhere)
+        score += min(n_caps_on_page, 2) * 30
+        detail.append(f"has_caption_no_cap_slot={min(n_caps_on_page,2)*30}")
+
     # ── 2. Slot vuoti (penalizza layout troppo grandi rispetto alle foto) ─────
     empty_slots = max(0, ns - n_photos)
     if empty_slots > 0:
@@ -618,9 +686,11 @@ def _score_page_type(
 
     # ── 3. Differenza dal target di slot ──────────────────────────────────────
     # density 100 → 1 slot target, density 0 → max_slots
+    # For density scoring: only count photo slots (caption slots are bonus)
+    effective_slots = max(1, n_photo_slots)
     slot_target = max(1, round(1 + (max_slots - 1) * (1 - density_target / 100)))
-    slot_target = min(slot_target, n_photos)  # non usare più slot di foto disponibili
-    diff = abs(ns - slot_target)
+    slot_target = min(slot_target, n_photos)
+    diff = abs(effective_slots - slot_target)
     score += diff * 20
     detail.append(f"slot_diff=|{ns}-{slot_target}|×20={diff*20}")
 
@@ -662,6 +732,26 @@ def _score_page_type(
     if verbose_log is not None:
         verbose_log.append(f"      {pt.get('label','?'):25s} score={score:7.1f}  [{', '.join(detail)}]")
 
+    if _return_breakdown:
+        return score, {
+            'orient_violations': orientation_violations,
+            'orient_score':      orientation_violations * 10_000,
+            'cap_unfilled':      unfilled_cap_slots if n_caption_slots > 0 else 0,
+            'cap_score':         (unfilled_cap_slots * 5_000) if n_caption_slots > 0 else (min(n_caps_on_page,2)*30 if n_caps_on_page > 0 else 0),
+            'empty_slots':       empty_slots,
+            'empty_score':       (empty_slots**2)*200,
+            'slot_target':       slot_target,
+            'slot_diff':         diff,
+            'density_score':     diff * 20,
+            'face_penalty':      round(face_penalty, 1),
+            'usage':             usage,
+            'usage_score':       usage * 8,
+            'unused_bonus':      usage == 0,
+            'rhythm_penalty':    bool(rhythm and prev_dense is not None and (ns>=3) == prev_dense),
+            'total':             round(score, 1),
+            'n_photo_slots':     n_photo_slots,
+            'n_caption_slots':   n_caption_slots,
+        }
     return score
 
 
@@ -674,7 +764,8 @@ def _best_page_type(
     prev_dense: bool | None,
     page_ar: float = 1.0,
     verbose_log: list | None = None,
-) -> dict:
+    _return_candidates: bool = False,
+) -> dict | tuple:
     if not photos:
         return page_types[0] if page_types else FALLBACK_PAGE_TYPES[0]
 
@@ -692,12 +783,24 @@ def _best_page_type(
     if not candidates:
         candidates = page_types
 
-    scored = [(
-        _score_page_type(pt, photos, usage_counter, density_target, rhythm, prev_dense, max_slots, page_ar, verbose_log),
-        i,   # index as tiebreaker (stable sort)
-        pt,
-    ) for i, pt in enumerate(candidates)]
+    scored = []
+    for i, pt in enumerate(candidates):
+        if _return_candidates:
+            sc, bkd = _score_page_type(
+                pt, photos, usage_counter, density_target, rhythm, prev_dense,
+                max_slots, page_ar, verbose_log, _return_breakdown=True)
+            scored.append((sc, i, pt, bkd))
+        else:
+            sc = _score_page_type(
+                pt, photos, usage_counter, density_target, rhythm, prev_dense,
+                max_slots, page_ar, verbose_log)
+            scored.append((sc, i, pt, None))
     scored.sort(key=lambda x: x[0])
+    if _return_candidates:
+        cand_list = [{'id': pt.get('id',''), 'label': pt.get('label','?'),
+                      'score': round(sc,1), 'winner': idx==0, 'breakdown': bkd}
+                     for idx,(sc,_,pt,bkd) in enumerate(scored)]
+        return scored[0][2], cand_list
     return scored[0][2]
 
 
@@ -747,22 +850,30 @@ def _make_pages_from_group(
     remaining = list(photos)
     prev_dense: bool | None = None
 
+    page_logs: list[dict] = []
     while remaining:
+        _page_candidates = []
         photo = remaining[0]
 
         # Foto preferita → pagina intera
         if favs_full and photo.get("isFavorite"):
             pt    = FULL_PAGE_TYPE
+            _page_candidates = [{'id':'__full__','label':'Pagina intera','score':0,'winner':True,'breakdown':{'total':0,'orient_violations':0,'n_photo_slots':1,'n_caption_slots':0,'unused_bonus':False,'rhythm_penalty':False}}]
             chunk = [photo]
             remaining = remaining[1:]
             log.append(f"  [★ PREFERITA] {photo.get('originalFileName','?')} → pagina intera")
         else:
             # Quante foto usare per questa pagina?
             max_slots_all = max((len(pt.get("slots", [])) for pt in page_types), default=1)
-            pt = _best_page_type(page_types, remaining, usage_counter, density, rhythm, prev_dense, page_ar)
-            n_slots = len(pt.get("slots", []))
-            chunk = remaining[:n_slots]
-            remaining = remaining[n_slots:]
+            pt, _page_candidates = _best_page_type(
+                page_types, remaining, usage_counter, density, rhythm, prev_dense,
+                page_ar, _return_candidates=True)
+            slots_all = pt.get("slots", [])
+            n_photo_sl, n_cap_sl = _count_slot_types(slots_all)
+            # Chunk = only photo slots count; caption slots hold text not photos
+            n_slots = len(slots_all)
+            chunk = remaining[:n_photo_sl] if n_photo_sl > 0 else remaining[:1]
+            remaining = remaining[len(chunk):]
 
         usage_counter[pt.get("id", "")] = usage_counter.get(pt.get("id", ""), 0) + 1
         slots     = list(pt.get("slots", [{"x":0,"y":0,"w":100,"h":100}]))
@@ -775,7 +886,36 @@ def _make_pages_from_group(
         items: list[dict] = []
         page_num = page_offset + len(pages)
 
+        # Build a list of descriptions from photos on this page (for caption slots)
+        # Use each photo's description once; queue them in order
+        descriptions_queue = [
+            (photo_a, (photo_a.get("exifInfo") or {}).get("description") or photo_a.get("description") or "")
+            for photo_a in chunk
+            if ((photo_a.get("exifInfo") or {}).get("description") or photo_a.get("description") or "").strip()
+        ]
+
         for si, (slot, photo_a) in enumerate(zip(slots, assigned)):
+            slot_type = slot.get("slot_type", "photo")
+
+            # ── Caption slot → fill with text, never a photo ──────────────────
+            if slot_type == "caption":
+                if descriptions_queue:
+                    src_photo, desc_text = descriptions_queue.pop(0)
+                    caption_item = {
+                        "type":           "caption",
+                        "text":           desc_text.strip(),
+                        "for_asset_id":   src_photo["id"],
+                        "originalFileName": src_photo.get("originalFileName",""),
+                    }
+                    items.append({"slot": slot, "item": caption_item})
+                    log.append(f"  [T] Slot {si+1} didascalia → '{desc_text[:40]}…' [{src_photo.get('originalFileName','')}]")
+                else:
+                    # No description available: leave slot empty
+                    items.append({"slot": slot, "item": None})
+                    log.append(f"  [T] Slot {si+1} didascalia → vuoto (nessuna descrizione disponibile)")
+                continue
+
+            # ── Photo slot → fill with photo ─────────────────────────────────
             if photo_a is None:
                 items.append({"slot": slot, "item": None})
                 continue
@@ -799,10 +939,8 @@ def _make_pages_from_group(
                 if all_faces:
                     p_ar = _photo_ar(photo_a)
                     s_ar = _slot_ar(slot, page_ar)
-                    # Usa il volto più grande per lo scoring del clipping
                     main_face = max(all_faces, key=lambda f: f["size"])
                     would_clip = _face_would_be_clipped(main_face, p_ar, s_ar)
-                    # Ma calcola il transform su TUTTI i volti prominenti
                     transform = _face_transform(all_faces, p_ar, s_ar)
                     key = f"{page_num}_{si}"
                     transforms[key] = transform
@@ -820,13 +958,52 @@ def _make_pages_from_group(
                     )
 
         tid = pt.get("id", "custom")
-        pages.append({
-            "page_type_id": tid,
-            "page_type":    pt,
-            "items":        items,
-        })
+        pg_idx = page_offset + len(pages)
+        # Build structured slot-level log
+        slot_logs = []
+        for si2, it2 in enumerate(items):
+            slot2 = it2['slot']; item2 = it2['item']; stype = slot2.get('slot_type','photo')
+            if stype == 'caption':
+                slot_logs.append({'slot_idx':si2,'slot_type':'caption',
+                    'empty':item2 is None,'text':(item2 or {}).get('text',''),
+                    'for_asset':(item2 or {}).get('for_asset_id','')})
+            elif item2 and item2.get('type')=='photo':
+                pr2 = next((p for p in chunk if p.get('id')==item2.get('asset_id')),None)
+                faces2 = _get_all_faces(pr2) if pr2 else []
+                prom2  = [f for f in faces2 if f.get('size',0)>=0.02]
+                fr2    = _get_face_region(pr2) if pr2 else None
+                p_ar2  = _photo_ar(pr2) if pr2 else 1.0
+                s_ar2  = _slot_ar(slot2, page_ar)
+                clipped= _face_would_be_clipped(fr2,p_ar2,s_ar2) if fr2 and fr2.get('size',0)>=0.12 else False
+                tr2    = transforms.get(f'{pg_idx}_{si2}',{'x':50,'y':50,'zoom':1.0})
+                slot_logs.append({'slot_idx':si2,'slot_type':'photo',
+                    'asset_id':item2.get('asset_id',''),'filename':item2.get('originalFileName',''),
+                    'datetime':item2.get('localDateTime',''),
+                    'photo_portrait':_photo_is_portrait(pr2) if pr2 else None,
+                    'slot_portrait':_slot_is_portrait(slot2,page_ar),
+                    'orient_match':(_photo_is_portrait(pr2)==_slot_is_portrait(slot2,page_ar)) if pr2 else None,
+                    'has_caption':item2.get('has_caption',False),
+                    'description':item2.get('description',''),
+                    'is_favorite':item2.get('isFavorite',False),
+                    'photo_ar':round(p_ar2,3),'slot_ar':round(s_ar2,3),
+                    'faces':{'count':len(faces2),'prominent':len(prom2),
+                             'bbox':[round(min(f['x1'] for f in prom2 or faces2),3),
+                                     round(min(f['y1'] for f in prom2 or faces2),3),
+                                     round(max(f['x2'] for f in prom2 or faces2),3),
+                                     round(max(f['y2'] for f in prom2 or faces2),3)] if (prom2 or faces2) else None,
+                             'would_clip':clipped} if faces2 else None,
+                    'transform':tr2})
+            else:
+                slot_logs.append({'slot_idx':si2,'slot_type':'photo','empty':True})
+        page_logs.append({'page_num':pg_idx+1,'group':group_label,
+            'page_type_label':pt.get('label','?'),'page_type_id':tid,
+            'is_favorite':bool(favs_full and len(chunk)==1 and chunk[0].get('isFavorite')),
+            'candidates':_page_candidates,'slots':slot_logs,
+            'prev_dense':bool(prev_dense) if prev_dense is not None else None,
+            'is_dense':n_slots>=3})
+        pages.append({'page_type_id':tid,'page_type':pt,'items':items})
 
-    return pages
+    return pages, page_logs
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -868,8 +1045,9 @@ def generate_album(
     log.append(f"  Pagine tipo disponibili ({len(page_types)}):")
     for pt in page_types:
         slots = pt.get("slots", [])
-        n_port = sum(1 for s in slots if _slot_is_portrait(s, page_ar))
-        n_land = len(slots) - n_port
+        n_photo_sl, n_cap_sl = _count_slot_types(slots)
+        n_port = sum(1 for s in slots if s.get("slot_type")!="caption" and _slot_is_portrait(s, page_ar))
+        n_land = n_photo_sl - n_port
         log.append(f"    • {pt.get('label','?'):30s} — {len(slots)} slot "
                    f"({'V' if n_port else ''}{'+' if n_port and n_land else ''}{'H' if n_land else ''})")
     log.append("")
@@ -930,13 +1108,15 @@ def generate_album(
     transforms: dict = {}
     usage_counter: dict[str, int] = {}
     all_pages: list[Page] = []
+    all_page_logs: list[dict] = []
 
     for label, group in units:
         log.append(f"─── {label.upper()} ({len(group)} foto) ───")
-        group_pages = _make_pages_from_group(
+        group_pages, group_logs = _make_pages_from_group(
             group, page_types, usage_counter, cfg, transforms, log, label, len(all_pages), page_ar
         )
         all_pages.extend(group_pages)
+        all_page_logs.extend(group_logs)
         log.append("")
 
     # Riepilogo
@@ -959,6 +1139,6 @@ def generate_album(
             log.append(f"    {pt.get('label','?'):30s}: {cnt:3d} pagine")
     log.append("═══ Fine ═══")
 
-    return all_pages, transforms, "\n".join(log)
+    return all_pages, transforms, "\n".join(log), all_page_logs
 
 

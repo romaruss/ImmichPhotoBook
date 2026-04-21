@@ -25,6 +25,42 @@ function loadConfig() {
   catch { return { ...DEFAULTS } }
 }
 
+// ── SliderInput — top-level so it never remounts on parent state change ────────
+// (defining components inside another component causes remount on every render,
+//  breaking drag interaction on <input type="range">)
+function SliderInput({ value, onChange, label, help, min, max, step, unit, disabled }) {
+  const [txt, setTxt] = useState(String(value))
+  useEffect(() => setTxt(String(value)), [value])
+  const commit = (raw) => {
+    const v = parseFloat(raw)
+    if (!isNaN(v)) { const cl = Math.min(max, Math.max(min, v)); onChange(cl); setTxt(String(cl)) }
+    else setTxt(String(value))
+  }
+  return (
+    <div style={{ marginBottom:14, opacity:disabled?0.4:1 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:3 }}>
+        <label style={{ fontSize:13, color:'var(--text)', flex:1 }}>{label}</label>
+        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+          <input type="range" min={min} max={max} step={step}
+            value={value} disabled={disabled}
+            onChange={e=>{ if(!disabled){ const v=parseFloat(e.target.value); onChange(v); setTxt(String(v)) } }}
+            style={{ width:110, accentColor:'var(--gold)', cursor:'pointer' }}/>
+          <input type="number" min={min} max={max} step={step}
+            value={txt} disabled={disabled}
+            onChange={e=>!disabled&&setTxt(e.target.value)}
+            onBlur={e=>!disabled&&commit(e.target.value)}
+            onKeyDown={e=>{ if(e.key==='Enter'){ commit(e.target.value); e.target.blur() } }}
+            style={{ width:58, textAlign:'right', background:'var(--bg3)',
+              border:'1px solid var(--border)', color:'var(--text)',
+              borderRadius:4, padding:'3px 6px', fontSize:12 }}/>
+          {unit && <span style={{ fontSize:11, color:'var(--text3)', minWidth:24 }}>{unit}</span>}
+        </div>
+      </div>
+      {help && <p style={{ fontSize:11, color:'var(--text3)', lineHeight:1.5 }}>{help}</p>}
+    </div>
+  )
+}
+
 // ── Config modal ───────────────────────────────────────────────────────────────
 function ConfigModal({ config, onChange, onClose }) {
   const [local, setLocal] = useState({ ...config })
@@ -71,40 +107,8 @@ function ConfigModal({ config, onChange, onClose }) {
     </div>
   )
 
-  // SliderInput: separate component so useState/useEffect hooks are valid
-  const SliderInput = ({ k, label, help, min, max, step, unit, disabled }) => {
-    const [txt, setTxt] = useState(String(local[k]))
-    useEffect(()=>setTxt(String(local[k])),[local[k]])
-    const commit = (raw) => {
-      const v = parseFloat(raw)
-      if (!isNaN(v)) { const cl = Math.min(max, Math.max(min, v)); set(k, cl); setTxt(String(cl)) }
-      else setTxt(String(local[k]))
-    }
-    return (
-      <div style={{ marginBottom:14, opacity:disabled?0.4:1 }}>
-        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:3 }}>
-          <label style={{ fontSize:13, color:'var(--text)', flex:1 }}>{label}</label>
-          <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-            <input type="range" min={min} max={max} step={step}
-              value={local[k]} disabled={disabled}
-              onChange={e=>{ if(!disabled){ const v=parseFloat(e.target.value); set(k,v); setTxt(String(v)) } }}
-              style={{ width:110, accentColor:'var(--gold)', cursor:'pointer' }}/>
-            <input type="number" min={min} max={max} step={step}
-              value={txt} disabled={disabled}
-              onChange={e=>!disabled&&setTxt(e.target.value)}
-              onBlur={e=>!disabled&&commit(e.target.value)}
-              onKeyDown={e=>{ if(e.key==='Enter'){ commit(e.target.value); e.target.blur() } }}
-              style={{ width:58, textAlign:'right', background:'var(--bg3)',
-                border:'1px solid var(--border)', color:'var(--text)',
-                borderRadius:4, padding:'3px 6px', fontSize:12 }}/>
-            {unit && <span style={{ fontSize:11, color:'var(--text3)', minWidth:24 }}>{unit}</span>}
-          </div>
-        </div>
-        {help && <p style={{ fontSize:11, color:'var(--text3)', lineHeight:1.5 }}>{help}</p>}
-      </div>
-    )
-  }
-  const Slider = SliderInput  // alias for backward compat
+  // SliderInput is now a top-level component (see above)
+  // Passing value and onChange explicitly prevents remount on drag
 
   return createPortal(
     <>
@@ -138,7 +142,7 @@ function ConfigModal({ config, onChange, onClose }) {
 
           {/* Density */}
           <Section title="Densità dell'album"/>
-          <Slider k="density" min={0} max={100} step={5} unit="%"
+          <SliderInput value={local.density} onChange={v=>set("density",v)} value={local.density} onChange={v=>set("density",v)} min={0} max={100} step={5} unit="%"
             label="Proporzione foto / pagine"
             help={`${local.density}% — ${
               local.density >= 90 ? '1 foto per pagina (album minimalista)' :
@@ -150,7 +154,7 @@ function ConfigModal({ config, onChange, onClose }) {
           <Section title="a) Clustering temporale"/>
           <Toggle k="temporal_clustering" label="Raggruppa foto per evento"
             help="Mantiene insieme le foto scattate nello stesso lasso di tempo. Le foto senza data restano nella logica base."/>
-          <Slider k="event_gap_min" min={5} max={1440} step={5} unit="min"
+          <SliderInput value={local.event_gap_min} onChange={v=>set("event_gap_min",v)} value={local.event_gap_min} onChange={v=>set("event_gap_min",v)} min={5} max={1440} step={5} unit="min"
             label="Soglia di tempo tra eventi"
             disabled={!local.temporal_clustering}
             help={`Foto con più di ${local.event_gap_min} minuti di distanza dalla precedente iniziano un nuovo evento.`}/>
@@ -169,7 +173,7 @@ function ConfigModal({ config, onChange, onClose }) {
           <Section title="d) Filtro qualità"/>
           <Toggle k="quality_filter" label="Escludi foto sotto la soglia di qualità"
             help="Calcola un punteggio basato su risoluzione e metadati, ed esclude le foto con punteggio troppo basso."/>
-          <Slider k="min_quality" min={0} max={1} step={0.01} unit=""
+          <SliderInput value={local.min_quality} onChange={v=>set("min_quality",v)} value={local.min_quality} onChange={v=>set("min_quality",v)} min={0} max={1} step={0.01} unit=""
             label="Soglia qualità minima"
             disabled={!local.quality_filter}
             help={`Soglia: ${local.min_quality.toFixed(2)}. Le foto con punteggio inferiore vengono escluse. Il punteggio è calcolato su risoluzione, metadati e stato preferito.`}/>
@@ -178,7 +182,7 @@ function ConfigModal({ config, onChange, onClose }) {
           <Section title="e) Rimozione duplicati"/>
           <Toggle k="remove_duplicates" label="Rimuovi foto quasi identiche"
             help="Rimuove foto con caratteristiche simili, tenendo quella con qualità più alta."/>
-          <Slider k="similarity_threshold" min={0.5} max={1} step={0.01} unit=""
+          <SliderInput value={local.similarity_threshold} onChange={v=>set("similarity_threshold",v)} value={local.similarity_threshold} onChange={v=>set("similarity_threshold",v)} min={0.5} max={1} step={0.01} unit=""
             label="Soglia similarità"
             disabled={!local.remove_duplicates}
             help={`Soglia: ${local.similarity_threshold.toFixed(2)}. Più alta = solo duplicati quasi identici. Più bassa = rimuove anche foto simili ma non identiche.`}/>
@@ -240,7 +244,7 @@ export default function AlbumsPage() {
 
   const generate = async () => {
     if (!selectedAlbums.length) return
-    if (!selectedProfile) { alert('Seleziona un profilo di stampa'); return }
+    if (!selectedProfile) { alert(a.noProfileAlert); return }
     setGenerating(true)
     try {
       if (selectedAlbums.length === 1) {
@@ -266,7 +270,7 @@ export default function AlbumsPage() {
         )
         // Use first album's metadata as "root"
         const first = results[0].data
-        const BLANK_PAGE = { page_type_id:'__blank__', page_type:{id:'__blank__',label:'Pagina vuota',slots:[]}, items:[] }
+        const BLANK_PAGE = { page_type_id:'__blank__', page_type:{id:'__blank__',label:a.blankPage,slots:[]}, items:[] }
         
         // Build merged pages: for each album add cover-indicator + blank + pages
         // (actual cover rendering is in PreviewPage; we mark album boundaries with a special flag)
@@ -307,9 +311,25 @@ export default function AlbumsPage() {
           pageOffset += pages.length
         })
         
+        // Merge page_logs with corrected page numbers
+        let allPageLogs = []
+        let logOffset = 0
+        results.forEach((r, i) => {
+          const logs = r.data.page_logs || []
+          // For subsequent albums, add separator/cover page offsets
+          const extraPages = i === 0 ? 0 : (() => {
+            let x = 0
+            if ((allPages.length - (r.data.pages||[]).length + 1) % 2 === 0) x++
+            x += 2 // cover + spacer
+            return x
+          })()
+          logs.forEach(pl => allPageLogs.push({...pl, page_num: pl.page_num + logOffset + extraPages}))
+          logOffset += (r.data.pages||[]).length + (i===0?0:extraPages)
+        })
         const mergedLayout = {
           ...first,
           pages: allPages,
+          page_logs: allPageLogs,
           _multi_album: true,
           _album_count: selectedAlbums.length,
         }
@@ -321,7 +341,7 @@ export default function AlbumsPage() {
       }
       navigate('/preview')
     } catch (e) {
-      alert('Errore: ' + (e.response?.data?.detail || e.message))
+      alert(a.generateError(e.response?.data?.detail || e.message))
     } finally { setGenerating(false) }
   }
 
@@ -465,7 +485,7 @@ export default function AlbumsPage() {
           <div className="empty-state">
             <div className="icon">🖼️</div>
             <h3>Nessun album trovato</h3>
-            <p>{albums.length===0?'Nessun album su Immich':`Nessun risultato per "${search}"`}</p>
+            <p>{albums.length===0?a.noAlbumsImmich:a.noAlbumsSearch(search)}</p>
           </div>
         ) : (
           <div className="album-grid">

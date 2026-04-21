@@ -54,7 +54,31 @@ async def get_asset_thumbnail(asset_id: str, size: str = "thumbnail") -> bytes:
         return r.content
 
 async def get_asset_original(asset_id: str) -> tuple[bytes, str]:
+    """
+    Fetch the highest-quality version of an asset, preferring the edited/rotated version.
+
+    Immich stores edits (rotation, crop, retouch) as a sidecar. The 'preview' size
+    thumbnail always reflects edits. The 'original' endpoint may return the raw unedited
+    file for photos edited inside Immich.
+
+    Strategy:
+      1. Try /assets/{id}/thumbnail?size=preview  — always reflects Immich edits, JPEG
+      2. Fallback to /assets/{id}/original        — raw file (may be unedited)
+    """
     async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+        # Step 1: edited preview (reflects all Immich edits)
+        try:
+            r = await client.get(
+                f"{get_base_url()}/assets/{asset_id}/thumbnail",
+                headers={**get_headers(), "Accept": "image/jpeg"},
+                params={"size": "preview"},
+            )
+            if r.status_code == 200:
+                return r.content, "image/jpeg"
+        except Exception:
+            pass
+
+        # Step 2: raw original file
         r = await client.get(
             f"{get_base_url()}/assets/{asset_id}/original",
             headers={**get_headers(), "Accept": "*/*"}

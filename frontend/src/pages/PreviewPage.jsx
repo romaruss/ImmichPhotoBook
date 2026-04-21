@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { useT } from '../i18n.jsx'
 import CoverStyleEditor, { CoverPreview, DEFAULT_COVER } from '../components/CoverEditor'
+import LogViewer from '../components/LogViewer'
 
 // ── Page geometry ─────────────────────────────────────────────────────────────
 const PAGE_SIZES_PT = {
@@ -364,6 +365,7 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
                       draggable
                       onDragStart={e=>{e.dataTransfer.setData('asset_id',asset.id);onDragStart(asset)}}
                       onClick={()=>{ if(firstPage!==undefined) onNavigate(firstPage); onClearHighlight?.() }}
+                      onDoubleClick={()=>setPreviewAsset(asset)}
                       title={alt}
                       style={{
                         display:'flex', gap:6, alignItems:'center', flexShrink:0,
@@ -419,6 +421,7 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
                       draggable
                       onDragStart={e=>{e.dataTransfer.setData('asset_id',asset.id);onDragStart(asset)}}
                       onClick={()=>{ handlePhotoClick(asset, firstPage); onClearHighlight?.() }}
+                      onDoubleClick={()=>setPreviewAsset(asset)}
                       title={alt}
                       style={{
                         position:'relative', width:'100%', paddingTop:'100%',
@@ -471,7 +474,7 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
 
           <div style={{padding:'5px 8px',borderTop:'1px solid var(--border)',
             fontSize:9,color:'var(--text3)',fontFamily:'var(--font-mono)',flexShrink:0}}>
-            ⇄ Trascina su slot · Clicca per andare alla pagina
+            {tp.panelDragHint}
           </div>
         </div>
       )}
@@ -954,12 +957,13 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
   }
 
   if (page?._album_separator) {
+    // W and H already computed from getPageDims(profile) above — orientation-aware
     return (
       <div ref={containerRef} style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}>
         <div style={{width:W,height:H,background:'#e8e4dc',
           boxShadow:'0 16px 64px rgba(0,0,0,0.55)',borderRadius:2,
           display:'flex',alignItems:'center',justifyContent:'center'}}>
-          <p style={{fontSize:11,color:'#aaa',fontFamily:'var(--font-mono)'}}>pagina vuota</p>
+          <p style={{fontSize:11,color:'#aaa',fontFamily:'var(--font-mono)'}}>{tp.blankPage}</p>
         </div>
       </div>
     )
@@ -1075,10 +1079,10 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
               {item?.type==='photo'&&!isPhotoEdit&&(
                 <div className="slot-hover-overlay" style={{alignItems:'flex-end',justifyContent:'center',padding:'0 0 8px'}}>
                   {[
-                    { icon:'🖐', label: mismatch ? 'Riposiziona (orientamento diverso)' : 'Riposiziona / Zoom', action: e=>{ e.stopPropagation(); setEditPhotoSlot(slotIdx) }, bg: mismatch ? 'rgba(220,70,70,0.9)' : undefined },
-                    { icon:'🔄', label:'Sostituisci foto', action: e=>{ e.stopPropagation(); onOpenPicker(pageIdx,slotIdx) } },
-                    { icon:'💬', label:'Aggiungi didascalia', action: e=>{ e.stopPropagation(); onAddCaption(pageIdx,slotIdx) } },
-                    { icon:'🗑️', label:'Rimuovi foto dallo slot', action: e=>{ e.stopPropagation(); removeItem(slotIdx) }, bg:'rgba(197,74,74,0.88)' },
+                    { icon:'🖐', label: mismatch ? tp.repositionMismatch : tp.reposition, action: e=>{ e.stopPropagation(); setEditPhotoSlot(slotIdx) }, bg: mismatch ? 'rgba(220,70,70,0.9)' : undefined },
+                    { icon:'🔄', label:tp.changePhoto, action: e=>{ e.stopPropagation(); onOpenPicker(pageIdx,slotIdx) } },
+                    { icon:'💬', label:tp.addCaption, action: e=>{ e.stopPropagation(); onAddCaption(pageIdx,slotIdx) } },
+                    { icon:'🗑️', label:tp.removePhoto, action: e=>{ e.stopPropagation(); removeItem(slotIdx) }, bg:'rgba(197,74,74,0.88)' },
                   ].map(({icon,label,action,bg})=>(
                     <button key={icon} title={label} onClick={action}
                       style={{
@@ -1268,7 +1272,7 @@ function ExportPanel({ layout, onExport, exporting }) {
   // Start polling progress when export begins, stop when done
   useEffect(() => {
     if (exporting) {
-      setProgress({ pct: 0, step: 'Avvio…' })
+      setProgress({ pct: 0, step: tp.exportStart })
       pollRef.current = setInterval(async () => {
         try {
           const r = await axios.get('/api/export/progress')
@@ -1311,7 +1315,7 @@ function ExportPanel({ layout, onExport, exporting }) {
         {/* Label */}
         <span style={{ position:'relative', zIndex:1 }}>
           {exporting
-            ? <>{progress?.step || 'Generazione…'} {pct > 0 ? `(${pct}%)` : ''}</>
+            ? <>{progress?.step || tp.exporting} {pct > 0 ? `(${pct}%)` : ''}</>
             : <>📄 Esporta</>}
         </span>
       </button>
@@ -1319,9 +1323,9 @@ function ExportPanel({ layout, onExport, exporting }) {
       {open && !exporting && (
         <div style={{ marginTop:8, background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:8, padding:12 }}>
           {/* Profile info */}
-          {[['📐 Formato', `${p.page_size} ${p.orientation==='landscape'?'Orizz.':'Vert.'}`],
+          {[['📐 Formato', tp.exportFormat(p.page_size, p.orientation==='landscape'?tp.exportLandscape:tp.exportPortrait)],
             ['📏 Margini', `${p.margin_mm}mm`],
-            ['✂ Abbondanza', p.bleed ? `${p.bleed_mm}mm` : 'No'],
+            ['✂ Abbondanza', p.bleed ? `${p.bleed_mm}mm` : tp.exportNo],
             ['📄 Pagine', `${(layout?.pages?.length||0)+1}`],
           ].map(([k,v]) => (
             <div key={k} style={{ fontSize:11, fontFamily:'var(--font-mono)', color:'var(--text2)',
@@ -1333,8 +1337,8 @@ function ExportPanel({ layout, onExport, exporting }) {
 
           {/* Quality toggle */}
           <div style={{ marginTop:10, display:'flex', gap:4, padding:'6px 0' }}>
-            {[['hires','🖨 Alta qualità','Foto originali da Immich — per stampa'],
-              ['preview','⚡ Anteprima','Thumbnails — veloce, bassa risoluzione']
+            {[["hires",tp.qualityHires,tp.qualityHiresDesc],
+              ["preview",tp.qualityPreview,tp.qualityPreviewDesc]
             ].map(([v,lbl,hint]) => (
               <button key={v} onClick={() => setQuality(v)}
                 title={hint}
@@ -1381,7 +1385,7 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
   const [projects, setProjects]   = useState([])
   const [loading, setLoading]     = useState(false)
   const [projectName, setProjectName] = useState(
-    layout ? `${layout.album?.albumName || 'Album'} — ${new Date().toLocaleDateString('it-IT')}` : ''
+    layout ? tp.projectDefaultName(layout.album?.albumName) : ''
   )
   const [saving, setSaving]       = useState(false)
   const [savedId, setSavedId]     = useState(null)   // current open project ID (for update)
@@ -1398,7 +1402,7 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
   const loadList = async () => {
     setLoading(true)
     try { setProjects((await axios.get('/api/projects')).data) }
-    catch { setToast({ type:'error', msg:'Errore nel caricamento dei progetti' }) }
+    catch { setToast({ type:'error', msg:tp.projectListError }) }
     finally { setLoading(false) }
   }
 
@@ -1670,7 +1674,7 @@ function RecalcMenu({ anchorRef, currentPage, totalPages, busy, onAction, onClos
         }}>
           <span style={{fontFamily:'var(--font-mono)',fontSize:11,color:'var(--text3)',
             textTransform:'uppercase',letterSpacing:'0.1em',fontWeight:500}}>
-            Ricalcola layout
+            {tp.recalcTitle}
           </span>
           <div style={{display:'flex',alignItems:'center',gap:10}}>
             <span style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--font-mono)'}}>
@@ -1744,6 +1748,7 @@ export default function PreviewPage() {
   const [mapUrl,setMapUrl]=useState(null)
   const [exporting,setExporting]=useState(false)
   const [recalculating,setRecalculating]=useState(false)
+  const [logViewerOpen,setLogViewerOpen]=useState(false)
   const [toast,setToast]=useState(null)
   const [hasChanges,setHasChanges]=useState(false)
   const [recalcMenuOpen,setRecalcMenuOpen]=useState(false)
@@ -1849,7 +1854,7 @@ export default function PreviewPage() {
   }
 
   const removePage = (idx) => {
-    if (!confirm('Eliminare questa pagina?')) return
+    if (!confirm(tp.confirmRemovePage)) return
     setLayout(prev=>{
       const pages=prev.pages.filter((_,i)=>i!==idx)
       return persist({...prev,pages})
@@ -1955,57 +1960,86 @@ export default function PreviewPage() {
     return {...page,items:cur}
   }
 
-  // ── 1. Da questa pagina in avanti ────────────────────────────────────────
-  const recalcFromHere=async()=>{
-    const fromIdx=Math.max(0,currentPage)
+  // ── 1. Consolida fino alla pagina corrente, ricalcola il resto ──────────────
+  //    - Blocca pagine 0..currentPage (inclusa)
+  //    - Colleziona tutte le foto delle pagine successive (currentPage+1..end)
+  //    - Aggiunge le foto dell'album non ancora presenti nelle pagine bloccate
+  //      con localDateTime >= la più recente delle pagine bloccate
+  //    - Deduplicazione per asset_id
+  //    - Invia al backend per ridistribuzione
+  const recalcFromNext=async()=>{
+    const lockUntil=Math.max(0,currentPage)  // 0-based: blocca pagine 0..lockUntil incluso
     setRecalculating(true)
     try{
-      const photoItems=collectPhotos(layout.pages,fromIdx)
-      const r=await axios.post('/api/layout/recalculate',{photo_items:photoItems,profile_id:layout.profile.id})
-      setLayout(prev=>{
-        const locked=prev.pages.slice(0,fromIdx)
-        return persist({...prev,pages:[...locked,...r.data.pages]})
+      const lockedPages=layout.pages.slice(0,lockUntil+1)
+      const restPages  =layout.pages.slice(lockUntil+1)
+
+      // Foto già nelle pagine bloccate → da escludere
+      const lockedIds=new Set()
+      lockedPages.forEach(pg=>pg.items.forEach(id=>{
+        if(id.item?.type==='photo') lockedIds.add(id.item.asset_id)
+      }))
+
+      // Data più recente tra le foto bloccate → soglia per includere foto non usate
+      let latestLocked=''
+      lockedPages.forEach(pg=>pg.items.forEach(id=>{
+        if(id.item?.type==='photo'&&(id.item.localDateTime||'')>latestLocked)
+          latestLocked=id.item.localDateTime||''
+      }))
+
+      // Foto dalle pagine successive (già nel layout, non bloccate)
+      const restPhotos=collectPhotos(restPages,0)
+      const seenInRest=new Set(restPhotos.map(p=>p.asset_id))
+
+      // Foto dell'album non usate da nessuna parte e con data >= latestLocked
+      const unusedPhotos=albumAssets
+        .filter(a=>(a.type||'IMAGE').toUpperCase()!=='VIDEO')
+        .filter(a=>!lockedIds.has(a.id)&&!seenInRest.has(a.id))
+        .filter(a=>!latestLocked||(a.localDateTime||'')>=latestLocked)
+        .map(asset=>{
+          const exif=asset.exifInfo||{}
+          const desc=(exif.description||asset.description||'').trim()
+          return{type:'photo',asset_id:asset.id,description:desc,
+            originalFileName:asset.originalFileName||'',
+            localDateTime:asset.localDateTime||'',exif,has_caption:!!desc}
+        })
+
+      // Unisci: prima foto dalle pagine rest, poi le non usate; dedup
+      const seenFinal=new Set()
+      const photoItems=[...restPhotos,...unusedPhotos].filter(p=>{
+        if(seenFinal.has(p.asset_id)) return false
+        seenFinal.add(p.asset_id); return true
       })
+
+      if(!photoItems.length){showToast(tp.recalcToasts.noPhotos,'info');return}
+
+      const r=await axios.post('/api/layout/recalculate',{photo_items:photoItems,profile_id:layout.profile.id})
+      setLayout(prev=>persist({...prev,pages:[...lockedPages,...r.data.pages],page_logs:null}))
       setHasChanges(false)
-      showToast(tp.recalcToasts.fromHere(fromIdx+1),'success')
+      showToast(tp.recalcToasts.fromNext(lockUntil+1),'success')
     }catch{showToast(tp.recalcToasts.recalcError,'error')}
     finally{setRecalculating(false)}
   }
 
-  // ── 2. Solo questa pagina ────────────────────────────────────────────────
+  // ── 2. Ricalcola solo questa pagina ─────────────────────────────────────────
   const recalcThisPage=async()=>{
     if(currentPage<0) return
     setRecalculating(true)
     try{
       const photoItems=collectPhotos([layout.pages[currentPage]],0)
-      if(!photoItems.length){showToast('Nessuna foto in questa pagina','error');return}
+      if(!photoItems.length){showToast(tp.recalcToasts.noPhotos,'error');return}
       const r=await axios.post('/api/layout/recalculate',{photo_items:photoItems,profile_id:layout.profile.id})
       setLayout(prev=>{
         const pages=[...prev.pages]
-        // Se il backend genera più pagine, inseriscile al posto di quella corrente
         pages.splice(currentPage,1,...r.data.pages)
         return persist({...prev,pages})
       })
       showToast(tp.recalcToasts.thisPage,'success')
-    }catch{showToast('Errore nel ricalcolo','error')}
+    }catch{showToast(tp.recalcToasts.recalcError,'error')}
     finally{setRecalculating(false)}
   }
 
-  // ── 3. Tutto l'album da zero ─────────────────────────────────────────────
-  const recalcAll=async()=>{
-    if(!window.confirm(tp.recalcConfirmAll)) return
-    setRecalculating(true)
-    try{
-      const photoItems=collectPhotos(layout.pages,0)
-      const r=await axios.post('/api/layout/recalculate',{photo_items:photoItems,profile_id:layout.profile.id})
-      setLayout(prev=>persist({...prev,pages:r.data.pages}))
-      setHasChanges(false);setCurrentPage(0)
-      showToast(tp.recalcToasts.all,'success')
-    }catch{showToast('Errore nel ricalcolo','error')}
-    finally{setRecalculating(false)}
-  }
-
-  // ── 4. Comprimi pagine vuote (ricalcola backend da fromIdx) ─────────────
+  // ── 3. Comprimi pagine con slot vuoti ───────────────────────────────────────
   const recalcCompress=async()=>{
     const fromIdx=Math.max(0,currentPage)
     setRecalculating(true)
@@ -2015,86 +2049,35 @@ export default function PreviewPage() {
       const r=await axios.post('/api/layout/recalculate',{photo_items:photoItems,profile_id:layout.profile.id})
       setLayout(prev=>{
         const locked=prev.pages.slice(0,fromIdx)
-        return persist({...prev,pages:[...locked,...r.data.pages]})
+        return persist({...prev,pages:[...locked,...r.data.pages],page_logs:null})
       })
       showToast(tp.recalcToasts.compress,'success')
-    }catch{showToast('Errore','error')}
+    }catch{showToast(tp.recalcToasts.recalcError,'error')}
     finally{setRecalculating(false)}
   }
 
-  // ── 5. Ottimizza orientamento (frontend, nessuna chiamata backend) ───────
-  const recalcOrientation=()=>{
-    const fromIdx=Math.max(0,currentPage)
-    let swapped=0
-    const newPages=layout.pages.map((pg,pi)=>{
-      if(pi<fromIdx) return pg
-      const opt=optimizePageOrientation(pg,photoAspects)
-      // conta se qualcosa è cambiato
-      opt.items.forEach((id,i)=>{
-        if(id.item?.asset_id!==pg.items[i]?.item?.asset_id) swapped++
-      })
-      return opt
-    })
-    setLayout(prev=>persist({...prev,pages:newPages}))
-    setHasChanges(true)
-    showToast(`✓ Orientamento ottimizzato${swapped?` (${swapped} scambi)`:'  — già ottimale'}`,'success')
-  }
-
-  // ── 6. Riordina per data (frontend) ──────────────────────────────────────
-  const recalcReorderDate=()=>{
-    const fromIdx=Math.max(0,currentPage)
-    // Copia profonda delle pagine da fromIdx
-    const newPages=layout.pages.map((pg,pi)=>
-      pi<fromIdx?pg:{...pg,items:pg.items.map(id=>({...id}))}
-    )
-    // Raccogli posizioni slot foto in ordine
-    const slots=[]
-    for(let pi=fromIdx;pi<newPages.length;pi++)
-      newPages[pi].items.forEach((id,si)=>{if(id.item?.type==='photo') slots.push({pi,si,item:id.item})})
-    // Ordina per data
-    const sorted=[...slots].sort((a,b)=>(a.item.localDateTime||'').localeCompare(b.item.localDateTime||''))
-    // Rimetti nelle stesse posizioni
-    slots.forEach(({pi,si},i)=>{newPages[pi].items[si]={...newPages[pi].items[si],item:sorted[i].item}})
-    setLayout(prev=>persist({...prev,pages:newPages}))
-    setHasChanges(true)
-    showToast(tp.recalcToasts.reorderDate,'success')
-  }
-
-  // ── 7. Aggiungi foto non usate ────────────────────────────────────────────
-  const recalcAddUnused=async()=>{
-    const usedIds=new Set()
-    layout.pages.forEach(pg=>pg.items.forEach(id=>{if(id.item?.type==='photo') usedIds.add(id.item.asset_id)}))
-    const unused=albumAssets.filter(a=>!usedIds.has(a.id))
-    if(!unused.length){showToast(tp.recalcToasts.allUsed,'success');return}
+  // ── 4. Ricomincia tutto da zero ──────────────────────────────────────────────
+  const recalcAll=async()=>{
+    if(!window.confirm(tp.recalcConfirmAll)) return
     setRecalculating(true)
     try{
-      const photoItems=unused.map(asset=>{
-        const exif=asset.exifInfo||{}
-        const desc=(exif.description||asset.description||'').trim()
-        return{type:'photo',asset_id:asset.id,description:desc,
-          originalFileName:asset.originalFileName||'',localDateTime:asset.localDateTime||'',
-          exif,has_caption:!!desc}
-      })
+      const photoItems=collectPhotos(layout.pages,0)
       const r=await axios.post('/api/layout/recalculate',{photo_items:photoItems,profile_id:layout.profile.id})
-      const insertAt=layout.pages.length
-      setLayout(prev=>persist({...prev,pages:[...prev.pages,...r.data.pages]}))
-      setCurrentPage(insertAt)
-      showToast(tp.recalcToasts.addedUnused(unused.length, r.data.pages.length),'success')
-    }catch{showToast('Errore','error')}
+      setLayout(prev=>persist({...prev,pages:r.data.pages,page_logs:null}))
+      setHasChanges(false);setCurrentPage(0)
+      showToast(tp.recalcToasts.all,'success')
+    }catch{showToast(tp.recalcToasts.recalcError,'error')}
     finally{setRecalculating(false)}
   }
 
-  // ── Dispatcher del menu ───────────────────────────────────────────────────
+  // ── Dispatcher ───────────────────────────────────────────────────────────────
   const handleRecalcAction = (id) => {
     setRecalcMenuOpen(false)
     const map={
-      from_here: recalcFromHere,
+      from_next: recalcFromNext,
       this_page: recalcThisPage,
-      full:      recalcAll,
       compress:  recalcCompress,
-      orientation:recalcOrientation,
-      reorder_date:recalcReorderDate,
-      add_unused:recalcAddUnused,
+      full:      recalcAll,
     }
     map[id]?.()
   }
@@ -2212,14 +2195,27 @@ export default function PreviewPage() {
               />
             )}
           </div>
+          {layout?.page_logs?.length > 0 && (
+            <button className="btn w-full" style={{fontSize:11,marginTop:6}}
+              onClick={()=>setLogViewerOpen(true)}>
+              🔍 Log impaginazione
+            </button>
+          )}
         </div>
         <div style={{flex:1,overflowY:'auto',padding:'8px 8px 0'}}>
           {/* Cover thumb */}
           <div className={`page-thumb-item${currentPage===-1?' active':''}`} onClick={()=>setCurrentPage(-1)}>
             <span className="page-num">T</span>
-            <div style={{width:28,height:40,background:'#0f0f14',borderRadius:2,overflow:'hidden',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
-              {mapUrl?<img src={mapUrl} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/>:<span style={{fontSize:12}}>🗺️</span>}
-            </div>
+            {(()=>{
+              const [pw,ph]=getPageDims(profile)
+              const isL=profile?.orientation==='landscape'
+              const tw=isL?44:28, th=isL?28:40
+              return (
+                <div style={{width:tw,height:th,background:'#0f0f14',borderRadius:2,overflow:'hidden',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                  {mapUrl?<img src={mapUrl} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/>:<span style={{fontSize:12}}>🗺️</span>}
+                </div>
+              )
+            })()}
             <span className="text-xs text-muted">Copertina</span>
           </div>
 
@@ -2284,7 +2280,7 @@ export default function PreviewPage() {
             onMouseEnter={e=>e.currentTarget.style.borderColor='var(--gold)'}
             onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}>
             <span style={{fontSize:14}}>+</span>
-            <span>Aggiungi pagina in fondo</span>
+            <span>{tp.addPageHint}</span>
           </div>
         </div>
         <ExportPanel layout={layout} onExport={exportBook} exporting={exporting}/>
@@ -2294,7 +2290,7 @@ export default function PreviewPage() {
           <button className="btn w-full" style={{justifyContent:'center',fontSize:11,gap:6}}
             onClick={()=>window.open('/api/layout/generate/log','_blank')}
             title="Scarica il log dell'ultima generazione album">
-            📄 Log generazione
+            {tp.logBtn}
           </button>
         </div>
         </>)}
@@ -2334,17 +2330,23 @@ export default function PreviewPage() {
                   background:spreadView?'var(--bg)':'transparent',
                   color:spreadView?'var(--text)':'var(--text3)'}}>□□</button>
             </div>
-            {currentPage >= 0 && (
-              <button className="btn btn-sm" style={{fontSize:10,padding:'2px 8px'}}
-                title="Aggiungi pagina vuota dopo questa"
-                onClick={()=>addPage(currentPage)}>+ Pag.</button>
-            )}
-            {currentPage >= 0 && pages.length > 1 && (
-              <button className="btn btn-sm" style={{fontSize:10,padding:'2px 8px',
-                background:'rgba(197,74,74,0.12)',borderColor:'rgba(197,74,74,0.4)',color:'#e05050'}}
-                title="Elimina questa pagina"
-                onClick={()=>removePage(currentPage)}>× Elim.</button>
-            )}
+            {/* +Pag and Elim always rendered for stable toolbar width;
+                disabled/grey on cover page so layout doesn't shift */}
+            <button className="btn btn-sm"
+              style={{fontSize:10,padding:'2px 8px',
+                opacity: currentPage>=0 ? 1 : 0.3,
+                pointerEvents: currentPage>=0 ? 'auto' : 'none'}}
+              title={currentPage>=0 ? "Aggiungi pagina vuota dopo questa" : "Non disponibile sulla copertina"}
+              onClick={()=>currentPage>=0&&addPage(currentPage)}>+ Pag.</button>
+            <button className="btn btn-sm"
+              style={{fontSize:10,padding:'2px 8px',
+                background: currentPage>=0&&pages.length>1 ? 'rgba(197,74,74,0.12)' : 'var(--bg3)',
+                borderColor: currentPage>=0&&pages.length>1 ? 'rgba(197,74,74,0.4)' : 'var(--border)',
+                color: currentPage>=0&&pages.length>1 ? '#e05050' : 'var(--text3)',
+                opacity: currentPage>=0&&pages.length>1 ? 1 : 0.3,
+                pointerEvents: currentPage>=0&&pages.length>1 ? 'auto' : 'none'}}
+              title={currentPage>=0&&pages.length>1 ? "Elimina questa pagina" : "Non disponibile sulla copertina"}
+              onClick={()=>currentPage>=0&&pages.length>1&&removePage(currentPage)}>× Elim.</button>
           </div>
 
           <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px'}}
@@ -2388,7 +2390,7 @@ export default function PreviewPage() {
                 style={{position:'absolute',top:8,right:8,padding:'4px 10px',fontSize:11,
                   background:'rgba(0,0,0,0.7)',border:'1px solid rgba(255,255,255,0.2)',
                   color:'#fff',borderRadius:5,cursor:'pointer'}}>
-                {coverStyleOpen ? '✕ Chiudi' : '✏️ Modifica stile'}
+                {coverStyleOpen ? tp.coverCloseBtn : tp.coverEditBtn}
               </button>
             </div>
 
@@ -2423,7 +2425,7 @@ export default function PreviewPage() {
                 </div>
               </div>
             )}
-            <p className="text-xs text-muted">Clicca "Modifica stile" per personalizzare la copertina</p>
+            <p className="text-xs text-muted">{tp.coverAuto}</p>
           </div>
         ) : spreadView ? (
           /* ── Spread view: 2 pages side by side, fill available space ── */
@@ -2526,6 +2528,14 @@ export default function PreviewPage() {
       )}
 
       {toast&&<div className={`toast ${toast.type}`}>{toast.msg}</div>}
+  {logViewerOpen && layout?.page_logs?.length > 0 && (
+    <LogViewer
+      pageLogs={layout.page_logs}
+      currentPage={currentPage}
+      onNavigate={(idx)=>{ setCurrentPage(idx) }}
+      onClose={()=>setLogViewerOpen(false)}
+    />
+  )}
     </div>
   )
 }

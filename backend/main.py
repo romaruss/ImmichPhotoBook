@@ -129,6 +129,8 @@ class Profile(BaseModel):
         "bold": False,
     }
     cover_style: dict | None = None
+    export_dpi: int = 300
+    color_profile: str = "srgb"    # srgb | adobe_rgb | fogra39 | fogra51 | swop
 
 @app.post("/api/profiles/{pid}/duplicate")
 async def duplicate_profile(pid: str):
@@ -297,7 +299,7 @@ async def generate_layout_new(req: GenerateRequest):
             enrich_fields.extend(["checksum", "thumbhash"])
         assets = await ic.enrich_assets(assets, fields=enrich_fields)
 
-    pages, transforms, log_text = generate_album(assets, profile, cfg)
+    pages, transforms, log_text, page_logs = generate_album(assets, profile, cfg)
     locations = extract_gps_locations(assets)
 
     # Store log for download
@@ -314,6 +316,7 @@ async def generate_layout_new(req: GenerateRequest):
         "pages":            pages,
         "locations":        locations,
         "photo_transforms": transforms,
+        "page_logs":        page_logs,
     }
 
 @app.get("/api/layout/generate/log")
@@ -753,7 +756,27 @@ frontend_dist = next((p for p in _frontend_candidates if p.exists()), None)
 
 if frontend_dist:
     logger.info(f"Serving frontend from {frontend_dist}")
-    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+    # Mount static assets (JS, CSS, images) under /assets
+    _assets = frontend_dist / "assets"
+    if _assets.exists():
+        app.mount("/assets", StaticFiles(directory=str(_assets)), name="assets")
+    # Mount public files (icons, manifest, etc.) if any
+    _public = frontend_dist / "public"
+    if _public.exists():
+        app.mount("/public", StaticFiles(directory=str(_public)), name="public")
+
+    # SPA catch-all: serve index.html for every non-API, non-asset path
+    # This allows React Router to handle /preview, /profiles etc. on hard refresh
+    from fastapi.responses import FileResponse
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        # Serve real files that exist (favicon, icon.svg, etc.)
+        candidate = frontend_dist / full_path
+        if candidate.exists() and candidate.is_file():
+            return FileResponse(str(candidate))
+        # Everything else → index.html (React Router takes over)
+        return FileResponse(str(frontend_dist / "index.html"))
 else:
     logger.warning("Frontend dist not found. Run 'npm run build' in frontend/")
     @app.get("/")
