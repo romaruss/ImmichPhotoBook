@@ -79,9 +79,10 @@ export default function ConfigPage() {
           <div className="form-group">
             <label className="form-label">{t.config.apiKeyLabel}</label>
             <input className="form-input" type="password"
-              placeholder={t.config.apiKeyPlaceholder}
+              placeholder={cfg.api_key_set ? '(chiave già configurata — lascia invariato per mantenerla)' : (t.config.apiKeyPlaceholder)}
               value={cfg.api_key}
-              onChange={e => setCfg(p => ({ ...p, api_key: e.target.value }))}/>
+              onChange={e => setCfg(p => ({ ...p, api_key: e.target.value }))}
+              style={{ fontFamily: cfg.api_key && cfg.api_key.includes('•') ? 'monospace' : undefined }}/>
             <p className="text-xs text-muted mt-1">{t.config.apiKeyHint}</p>
           </div>
           {status && (

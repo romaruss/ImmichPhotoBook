@@ -29,14 +29,46 @@ function getPageDims(profile) {
   return [w,h]
 }
 
-function slotRect(slot, pw, ph, profile, scale) {
-  const margin = (profile?.margin_mm||5)*2.835
-  const gap    = (profile?.gap_mm||3)*2.835
-  const uw = pw-2*margin, uh = ph-2*margin
+// marginsForPage: returns {ml, mr, mt, mb} in px (2.835px = 1mm)
+// Mapping profilo (coerente con le label UI di ProfilesPage):
+//   margin_left  = ESTERNO  ("← Esterno")
+//   margin_right = INTERNO  ("Interno →", lato rilegatura)
+//
+// L'alternanza interna/esterna è attiva solo con duplex (stampa fronte/retro):
+//   duplex=false: esterno sempre a sx, interno sempre a dx
+//   duplex=true, pagine DISPARI  = pagina destra → rilegatura a SINISTRA → interno a sx, esterno a dx
+//   duplex=true, pagine PARI     = pagina sinistra → rilegatura a DESTRA → esterno a sx, interno a dx
+//   pageNum == null = copertina / miniature → margini simmetrici (esterno su entrambi)
+function marginsForPage(profile, pageNum) {
+  const mmPx   = 2.835
+  const base   = (profile?.margin_mm || 5)
+  const mt     = ((profile?.margin_top    ?? base)) * mmPx
+  const mb     = ((profile?.margin_bottom ?? base)) * mmPx
+  const mOuter = ((profile?.margin_left   ?? base)) * mmPx  // ← Esterno
+  const mInner = ((profile?.margin_right  ?? base)) * mmPx  // Interno →
+
+  if (!profile?.duplex || pageNum == null) {
+    // Non duplex o copertina: fisso — esterno a sx, interno a dx
+    return { ml: mOuter, mr: mInner, mt, mb }
+  }
+  if (pageNum % 2 === 0) {
+    // Pagina PARI = destra del libro → rilegatura a SINISTRA
+    return { ml: mInner, mr: mOuter, mt, mb }
+  } else {
+    // Pagina DISPARI = sinistra del libro → rilegatura a DESTRA
+    return { ml: mOuter, mr: mInner, mt, mb }
+  }
+}
+
+function slotRect(slot, pw, ph, profile, scale, pageNum) {
+  const m = marginsForPage(profile, pageNum)
+  const gap = (profile?.gap_mm||3)*2.835
+  const uw = pw - m.ml - m.mr
+  const uh = ph - m.mt - m.mb
   const le=slot.x<0.5, te=slot.y<0.5, re=(slot.x+slot.w)>99.5, be=(slot.y+slot.h)>99.5
   const r = {
-    x: margin+(slot.x/100)*uw+(le?0:gap/2),
-    y: margin+(slot.y/100)*uh+(te?0:gap/2),
+    x: m.ml+(slot.x/100)*uw+(le?0:gap/2),
+    y: m.mt+(slot.y/100)*uh+(te?0:gap/2),
     w: (slot.w/100)*uw-(le?0:gap/2)-(re?0:gap/2),
     h: (slot.h/100)*uh-(te?0:gap/2)-(be?0:gap/2),
   }
@@ -89,8 +121,9 @@ function photoStyle(photoAR, slotW, slotH, transform) {
   const overflowY = imgH - slotH
   const panX = transform?.x ?? 50
   const panY = transform?.y ?? 50
-  const left = -(panX / 100) * overflowX
-  const top  = -(panY / 100) * overflowY
+  // When image smaller than slot (zoom < 1): center it instead of panning
+  const left = overflowX > 0 ? -(panX / 100) * overflowX : (slotW - imgW) / 2
+  const top  = overflowY > 0 ? -(panY / 100) * overflowY : (slotH - imgH) / 2
 
   return {
     position: 'absolute',
@@ -111,7 +144,7 @@ function MiniPage({ page, profile, scale=0.07 }) {
   return (
     <div style={{width:pw*scale,height:ph*scale,background:'#e8e4dc',position:'relative',overflow:'hidden',flexShrink:0}}>
       {(page?.items||[]).map((id,i)=>{
-        const r=slotRect(id.slot||{x:0,y:0,w:100,h:100},pw,ph,profile,scale)
+        const r=slotRect(id.slot||{x:0,y:0,w:100,h:100},pw,ph,profile,scale,null)
         const s={position:'absolute',left:r.x,top:r.y,width:r.w,height:r.h,overflow:'hidden'}
         const item=id.item
         if(!item) return <div key={i} style={{...s,background:'#c8c5be'}}/>
@@ -123,9 +156,12 @@ function MiniPage({ page, profile, scale=0.07 }) {
 }
 
 // ── Photo picker modal ────────────────────────────────────────────────────────
-function PhotoPickerModal({ assets, usageMap, onSelect, onClose }) {
+function PhotoPickerModal({ assets, allAlbumAssets, albumIdx, albumNames, usageMap, onSelect, onClose }) {
   const [filter,setFilter] = useState('')
-  const filtered = assets.filter(a=>!filter||(a.originalFileName||'').toLowerCase().includes(filter.toLowerCase()))
+  const isMulti = allAlbumAssets?.length > 1
+  const [showAll,setShowAll] = useState(false)
+  const base = isMulti && !showAll ? (allAlbumAssets[albumIdx] || assets) : assets
+  const filtered = base.filter(a=>!filter||(a.originalFileName||'').toLowerCase().includes(filter.toLowerCase()))
   return (
     <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.88)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center'}}
       onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -134,18 +170,34 @@ function PhotoPickerModal({ assets, usageMap, onSelect, onClose }) {
           <h3 style={{fontFamily:'var(--font-display)',fontWeight:300,fontSize:20}}>Seleziona foto</h3>
           <button className="btn btn-sm btn-ghost" onClick={onClose}>✕</button>
         </div>
+        {isMulti&&(
+          <div style={{display:'flex',gap:4,marginBottom:10,background:'var(--bg3)',borderRadius:6,padding:3}}>
+            <button onClick={()=>setShowAll(false)}
+              style={{flex:1,padding:'4px 8px',borderRadius:4,border:'none',cursor:'pointer',fontSize:12,
+                background:!showAll?'var(--gold)':'transparent',color:!showAll?'#0a0a0c':'var(--text)',fontWeight:!showAll?700:400}}>
+              {albumNames?.[albumIdx] || `Album ${albumIdx+1}`}
+            </button>
+            <button onClick={()=>setShowAll(true)}
+              style={{flex:1,padding:'4px 8px',borderRadius:4,border:'none',cursor:'pointer',fontSize:12,
+                background:showAll?'var(--gold)':'transparent',color:showAll?'#0a0a0c':'var(--text)',fontWeight:showAll?700:400}}>
+              Tutti gli album
+            </button>
+          </div>
+        )}
         <input className="form-input" placeholder="Cerca per nome file…" style={{marginBottom:10}} value={filter} onChange={e=>setFilter(e.target.value)} autoFocus/>
         <div style={{overflowY:'auto',flex:1}}>
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:8}}>
             {filtered.map(asset=>{
               const uses=usageMap[asset.id]||0
+              const bc=uses>1?'#e89a3a':uses===1?'#4ac585':'#e05050'
               return (
                 <div key={asset.id} onClick={()=>onSelect(asset)}
                   style={{cursor:'pointer',borderRadius:6,overflow:'hidden',aspectRatio:'1',position:'relative',
-                    border:`2px solid ${uses>1?'#e89a3a':uses===1?'#4ac585':'var(--border)'}`,transition:'border-color 0.15s'}}
+                    border:`2px solid ${bc}`,transition:'border-color 0.15s'}}
                   onMouseEnter={e=>e.currentTarget.style.borderColor='var(--gold)'}
-                  onMouseLeave={e=>e.currentTarget.style.borderColor=uses>1?'#e89a3a':uses===1?'#4ac585':'var(--border)'}>
+                  onMouseLeave={e=>e.currentTarget.style.borderColor=bc}>
                   <img src={`/api/thumb/${asset.id}`} alt="" loading="lazy" style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
+                  {uses===0&&<div style={{position:'absolute',inset:0,background:'rgba(220,50,50,0.35)',pointerEvents:'none'}}/>}
                   {uses>1&&<div style={{position:'absolute',top:3,right:3,background:'#e89a3a',color:'#000',fontSize:9,padding:'1px 5px',borderRadius:3,fontWeight:700}}>{uses}×</div>}
                 </div>
               )
@@ -159,7 +211,7 @@ function PhotoPickerModal({ assets, usageMap, onSelect, onClose }) {
 }
 
 
-function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart, onNavigate, highlightedAsset, onClearHighlight }) {
+function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, onDragStart, onNavigate, highlightedAsset, onClearHighlight }) {
   const t = useT()
   const tp = t.preview
   const [filter, setFilter]         = useState('')
@@ -175,11 +227,10 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
     }
   }, [highlightedAsset])
 
-  // Sort by date (oldest first)
-  // Sort by date and exclude videos
-  const sortedAssets = [...assets]
-    .filter(a => (a.type||'IMAGE').toUpperCase() !== 'VIDEO')
-    .sort((a,b)=>(a.localDateTime||'').localeCompare(b.localDateTime||''))
+  const sortedAssets = presorted
+    ? assets.filter(a => (a.type||'IMAGE').toUpperCase() !== 'VIDEO')
+    : [...assets].filter(a => (a.type||'IMAGE').toUpperCase() !== 'VIDEO')
+        .sort((a,b)=>(a.localDateTime||'').localeCompare(b.localDateTime||''))
   const filtered = sortedAssets.filter(a => {
     const uses = usageMap[a.id] || 0
     if (statusFilter === 'unused' && uses > 0)  return false
@@ -451,6 +502,7 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
                       <div style={{position:'absolute',inset:0}}>
                         <img src={`/api/thumb/${asset.id}`} alt={alt} loading="lazy"
                           style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
+                        {uses===0&&<div style={{position:'absolute',inset:0,background:'rgba(220,50,50,0.35)',pointerEvents:'none'}}/>}
                         {uses>1&&<div style={{position:'absolute',top:2,right:2,
                           background:'#e89a3a',color:'#000',fontSize:8,
                           padding:'1px 3px',borderRadius:2,fontWeight:700,lineHeight:1.3}}>{uses}×</div>}
@@ -487,14 +539,15 @@ function AlbumPanel({ assets, usageMap, usagePages, open, onToggle, onDragStart,
 // Ogni slot ha 4 handle (top/bottom/left/right).
 // Trascinare un handle sposta quel bordo e, se c'è uno slot adiacente, lo ridimensiona.
 // Se non c'è adiacente, il bordo viene spostato liberamente (entro i limiti della pagina).
-function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems }) {
+function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems, pageNum }) {
   const t = useT(); const tp = t.preview
   const dragRef = useRef(null)
-  const margin  = (profile?.margin_mm||5)*2.835
-  const uw = pw - 2*margin
-  const uh = ph - 2*margin
-  const MIN_PCT = 8
-  const EPS     = 1.5
+  const _m = marginsForPage(profile, pageNum)
+  const uw = pw - _m.ml - _m.mr
+  const uh = ph - _m.mt - _m.mb
+  const MIN_PCT   = 8
+  const EPS       = 1.5
+  const SNAP_DIST = 3   // % — snap outer edge back to 0/100 within this distance
 
   const groupClose = (vals) => {
     if (!vals.length) return []
@@ -508,30 +561,26 @@ function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems }) {
     return groups.map(g=>g.rep)
   }
 
-  // Build per-slot handles: for each slot, 4 edges
-  // Each edge is { slotIdx, side:'top'|'bottom'|'left'|'right', pct, x1,y1,x2,y2 }
+  // Build per-slot handles: all 4 edges.
+  // isOuter = no adjacent slot shares this edge → outer page border, drag inward only.
   const buildHandles = () => {
     const handles = []
     items.forEach((id, si) => {
       const s = id.slot
       if (!s) return
-      const hc = []
-      items.forEach(id2 => { const s2=id2.slot; if(s2.y>EPS) hc.push(s2.y); if(s2.y+s2.h<100-EPS) hc.push(s2.y+s2.h) })
-      const vc = []
-      items.forEach(id2 => { const s2=id2.slot; if(s2.x>EPS) vc.push(s2.x); if(s2.x+s2.w<100-EPS) vc.push(s2.x+s2.w) })
-
-      // top edge (y)
-      if (s.y > EPS) handles.push({ slotIdx:si, side:'top', pct:s.y,
-        x1:s.x, x2:s.x+s.w, y:s.y })
-      // bottom edge
-      if (s.y+s.h < 100-EPS) handles.push({ slotIdx:si, side:'bottom', pct:s.y+s.h,
-        x1:s.x, x2:s.x+s.w, y:s.y+s.h })
-      // left edge
-      if (s.x > EPS) handles.push({ slotIdx:si, side:'left', pct:s.x,
-        y1:s.y, y2:s.y+s.h, x:s.x })
-      // right edge
-      if (s.x+s.w < 100-EPS) handles.push({ slotIdx:si, side:'right', pct:s.x+s.w,
-        y1:s.y, y2:s.y+s.h, x:s.x+s.w })
+      const hasAdj = (side) => items.some((id2,j) => {
+        if (j === si) return false
+        const s2 = id2.slot
+        if (side === 'top')    return Math.abs((s2.y+s2.h) - s.y) < EPS && Math.abs(s2.x-s.x) < EPS && Math.abs(s2.w-s.w) < EPS
+        if (side === 'bottom') return Math.abs(s2.y - (s.y+s.h)) < EPS && Math.abs(s2.x-s.x) < EPS && Math.abs(s2.w-s.w) < EPS
+        if (side === 'left')   return Math.abs((s2.x+s2.w) - s.x) < EPS && Math.abs(s2.y-s.y) < EPS && Math.abs(s2.h-s.h) < EPS
+        if (side === 'right')  return Math.abs(s2.x - (s.x+s.w)) < EPS && Math.abs(s2.y-s.y) < EPS && Math.abs(s2.h-s.h) < EPS
+        return false
+      })
+      handles.push({ slotIdx:si, side:'top',    isOuter:!hasAdj('top'),    x1:s.x, x2:s.x+s.w, y:s.y       })
+      handles.push({ slotIdx:si, side:'bottom',  isOuter:!hasAdj('bottom'), x1:s.x, x2:s.x+s.w, y:s.y+s.h   })
+      handles.push({ slotIdx:si, side:'left',    isOuter:!hasAdj('left'),   y1:s.y, y2:s.y+s.h, x:s.x       })
+      handles.push({ slotIdx:si, side:'right',   isOuter:!hasAdj('right'),  y1:s.y, y2:s.y+s.h, x:s.x+s.w   })
     })
     return handles
   }
@@ -542,6 +591,7 @@ function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems }) {
     e.preventDefault(); e.stopPropagation()
     const snap = items.map(id=>({...id,slot:{...id.slot}}))
     const usableW = uw * scale, usableH = uh * scale
+    const _dm = marginsForPage(profile, pageNum)
     dragRef.current = { handle, startX:e.clientX, startY:e.clientY, snap }
 
     const onMove = me => {
@@ -550,63 +600,88 @@ function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems }) {
       const ns = s0.map(id=>({...id,slot:{...id.slot}}))
       const si = h.slotIdx
 
+      const snap0   = v => Math.abs(v)     < SNAP_DIST ? 0   : v
+      const snap100 = v => Math.abs(v-100) < SNAP_DIST ? 100 : v
+      const fmt = v => parseFloat(v.toFixed(2))
+
       if (h.side === 'top' || h.side === 'bottom') {
         const dy = ((me.clientY - dragRef.current.startY) / usableH) * 100
-        if (h.side === 'top') {
-          // Moving top edge: shrink from top or expand up
-          const maxUp   = s0[si].slot.h - MIN_PCT  // can't make slot smaller than MIN
+        if (h.isOuter) {
+          if (h.side === 'top') {
+            const raw = s0[si].slot.y + dy
+            const clamped = Math.max(0, Math.min(s0[si].slot.y + s0[si].slot.h - MIN_PCT, raw))
+            const newY = snap0(clamped)
+            ns[si].slot.h = fmt(s0[si].slot.h - (newY - s0[si].slot.y))
+            ns[si].slot.y = fmt(newY)
+          } else {
+            const raw = s0[si].slot.y + s0[si].slot.h + dy
+            const clamped = Math.max(s0[si].slot.y + MIN_PCT, Math.min(100, raw))
+            const newBot = snap100(clamped)
+            ns[si].slot.h = fmt(newBot - s0[si].slot.y)
+          }
+        } else if (h.side === 'top') {
+          const maxUp   = s0[si].slot.h - MIN_PCT
           const maxDown = s0[si].slot.h - MIN_PCT
           const adj = Math.max(-maxUp, Math.min(maxDown, dy))
-          ns[si].slot.y = parseFloat((s0[si].slot.y + adj).toFixed(2))
-          ns[si].slot.h = parseFloat((s0[si].slot.h - adj).toFixed(2))
-          // Find slot whose bottom edge is at the same Y (adiacente sopra)
+          ns[si].slot.y = fmt(s0[si].slot.y + adj)
+          ns[si].slot.h = fmt(s0[si].slot.h - adj)
           items.forEach((id2,j)=>{
             if(j===si) return
             if(Math.abs((s0[j].slot.y+s0[j].slot.h)-s0[si].slot.y)<EPS &&
                Math.abs(s0[j].slot.x-s0[si].slot.x)<EPS &&
-               Math.abs(s0[j].slot.w-s0[si].slot.w)<EPS) {
-              ns[j].slot.h = parseFloat((s0[j].slot.h + adj).toFixed(2))
-            }
+               Math.abs(s0[j].slot.w-s0[si].slot.w)<EPS)
+              ns[j].slot.h = fmt(s0[j].slot.h + adj)
           })
-        } else { // bottom
+        } else {
           const maxDown = s0[si].slot.h - MIN_PCT
           const adj = Math.max(-maxDown, Math.min(maxDown, dy))
-          ns[si].slot.h = parseFloat((s0[si].slot.h + adj).toFixed(2))
-          // Find slot whose top is at the same Y (adiacente sotto)
+          ns[si].slot.h = fmt(s0[si].slot.h + adj)
           items.forEach((id2,j)=>{
             if(j===si) return
             if(Math.abs(s0[j].slot.y-(s0[si].slot.y+s0[si].slot.h))<EPS &&
                Math.abs(s0[j].slot.x-s0[si].slot.x)<EPS &&
                Math.abs(s0[j].slot.w-s0[si].slot.w)<EPS) {
-              ns[j].slot.y = parseFloat((s0[j].slot.y + adj).toFixed(2))
-              ns[j].slot.h = parseFloat((s0[j].slot.h - adj).toFixed(2))
+              ns[j].slot.y = fmt(s0[j].slot.y + adj)
+              ns[j].slot.h = fmt(s0[j].slot.h - adj)
             }
           })
         }
       } else {
         const dx = ((me.clientX - dragRef.current.startX) / usableW) * 100
-        if (h.side === 'left') {
+        if (h.isOuter) {
+          if (h.side === 'left') {
+            const raw = s0[si].slot.x + dx
+            const clamped = Math.max(0, Math.min(s0[si].slot.x + s0[si].slot.w - MIN_PCT, raw))
+            const newX = snap0(clamped)
+            ns[si].slot.w = fmt(s0[si].slot.w - (newX - s0[si].slot.x))
+            ns[si].slot.x = fmt(newX)
+          } else {
+            const raw = s0[si].slot.x + s0[si].slot.w + dx
+            const clamped = Math.max(s0[si].slot.x + MIN_PCT, Math.min(100, raw))
+            const newRight = snap100(clamped)
+            ns[si].slot.w = fmt(newRight - s0[si].slot.x)
+          }
+        } else if (h.side === 'left') {
           const adj = Math.max(-(s0[si].slot.w-MIN_PCT), Math.min(s0[si].slot.w-MIN_PCT, dx))
-          ns[si].slot.x = parseFloat((s0[si].slot.x + adj).toFixed(2))
-          ns[si].slot.w = parseFloat((s0[si].slot.w - adj).toFixed(2))
+          ns[si].slot.x = fmt(s0[si].slot.x + adj)
+          ns[si].slot.w = fmt(s0[si].slot.w - adj)
           items.forEach((id2,j)=>{
             if(j===si) return
             if(Math.abs((s0[j].slot.x+s0[j].slot.w)-s0[si].slot.x)<EPS &&
                Math.abs(s0[j].slot.y-s0[si].slot.y)<EPS &&
-               Math.abs(s0[j].slot.h-s0[si].slot.h)<EPS) {
-              ns[j].slot.w = parseFloat((s0[j].slot.w + adj).toFixed(2))
-            }
+               Math.abs(s0[j].slot.h-s0[si].slot.h)<EPS)
+              ns[j].slot.w = fmt(s0[j].slot.w + adj)
           })
-        } else { // right
+        } else {
           const adj = Math.max(-(s0[si].slot.w-MIN_PCT), Math.min(s0[si].slot.w-MIN_PCT, dx))
-          ns[si].slot.w = parseFloat((s0[si].slot.w + adj).toFixed(2))
+          ns[si].slot.w = fmt(s0[si].slot.w + adj)
           items.forEach((id2,j)=>{
             if(j===si) return
             if(Math.abs(s0[j].slot.x-(s0[si].slot.x+s0[si].slot.w))<EPS &&
                Math.abs(s0[j].slot.y-s0[si].slot.y)<EPS &&
                Math.abs(s0[j].slot.h-s0[si].slot.h)<EPS) {
-              ns[j].slot.x = parseFloat((s0[j].slot.x + adj).toFixed(2))
-              ns[j].slot.w = parseFloat((s0[j].slot.w - adj).toFixed(2))
+              ns[j].slot.x = fmt(s0[j].slot.x + adj)
+              ns[j].slot.w = fmt(s0[j].slot.w - adj)
             }
           })
         }
@@ -617,33 +692,34 @@ function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems }) {
     window.addEventListener('mousemove',onMove); window.addEventListener('mouseup',onUp)
   }
 
-  const sx = pct => (margin + (pct/100)*uw) * scale
-  const sy = pct => (margin + (pct/100)*uh) * scale
+  const sx = pct => (_m.ml + (pct/100)*uw) * scale
+  const sy = pct => (_m.mt + (pct/100)*uh) * scale
   const GRAB = 16, PILL = 28, THICK = 10
 
   return (
     <>
       {handles.map((h, hi) => {
+        const col  = h.isOuter ? 'rgba(100,190,220,0.85)' : 'rgba(212,170,90,0.85)'
+        const pill = h.isOuter ? '#5bbcd8'                : 'var(--gold)'
         if (h.side==='top'||h.side==='bottom') {
-          const yPx = sy(h.y||h.pct)
+          const yPx = sy(h.y)
           const x1  = sx(h.x1), x2 = sx(h.x2)
           const len = x2-x1
           return (
             <div key={`${h.slotIdx}-${h.side}`}
               onMouseDown={e=>startDrag(e,h)}
-              {...{title: tp.resizeHintH(h.slotIdx+1, h.side)}}
+              title={h.isOuter ? `Margine slot ${h.slotIdx+1} (${h.side})` : tp.resizeHintH(h.slotIdx+1, h.side)}
               style={{
                 position:'absolute', left:x1, top:yPx-GRAB/2,
                 width:len, height:GRAB, cursor:'row-resize', zIndex:40,
                 display:'flex', alignItems:'center', justifyContent:'center',
               }}>
               <div style={{position:'absolute',left:0,right:0,top:'50%',
-                transform:'translateY(-50%)',height:2,
-                background:`rgba(212,170,90,${h.side==='bottom'?0.9:0.65})`,
-                pointerEvents:'none'}}/>
+                transform:'translateY(-50%)',height:h.isOuter?1.5:2,
+                background:col, pointerEvents:'none'}}/>
               <div style={{position:'absolute',left:'50%',top:'50%',
                 transform:'translate(-50%,-50%)',
-                width:PILL,height:THICK,background:'var(--gold)',
+                width:PILL,height:THICK,background:pill,
                 borderRadius:THICK/2,pointerEvents:'none',
                 boxShadow:'0 1px 6px rgba(0,0,0,0.5)',
                 display:'flex',alignItems:'center',justifyContent:'center',gap:3}}>
@@ -652,25 +728,24 @@ function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems }) {
             </div>
           )
         } else {
-          const xPx = sx(h.x||h.pct)
+          const xPx = sx(h.x)
           const y1  = sy(h.y1), y2 = sy(h.y2)
           const len = y2-y1
           return (
             <div key={`${h.slotIdx}-${h.side}`}
               onMouseDown={e=>startDrag(e,h)}
-              {...{title: tp.resizeHintV(h.slotIdx+1, h.side)}}
+              title={h.isOuter ? `Margine slot ${h.slotIdx+1} (${h.side})` : tp.resizeHintV(h.slotIdx+1, h.side)}
               style={{
                 position:'absolute', top:y1, left:xPx-GRAB/2,
                 height:len, width:GRAB, cursor:'col-resize', zIndex:40,
                 display:'flex', alignItems:'center', justifyContent:'center',
               }}>
               <div style={{position:'absolute',top:0,bottom:0,left:'50%',
-                transform:'translateX(-50%)',width:2,
-                background:`rgba(212,170,90,${h.side==='right'?0.9:0.65})`,
-                pointerEvents:'none'}}/>
+                transform:'translateX(-50%)',width:h.isOuter?1.5:2,
+                background:col, pointerEvents:'none'}}/>
               <div style={{position:'absolute',left:'50%',top:'50%',
                 transform:'translate(-50%,-50%)',
-                height:PILL,width:THICK,background:'var(--gold)',
+                height:PILL,width:THICK,background:pill,
                 borderRadius:THICK/2,pointerEvents:'none',
                 boxShadow:'0 1px 6px rgba(0,0,0,0.5)',
                 display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:3}}>
@@ -688,7 +763,8 @@ function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems }) {
 // ── Photo slot — pan + zoom ───────────────────────────────────────────────────
 function PhotoSlot({ item, slotW, slotH, transform, photoAR,
                      isEditMode, onEnterEdit, onExitEdit,
-                     onTransformChange, mismatch }) {
+                     onTransformChange, onResetTransform,
+                     originalTransform, mismatch }) {
   const t = useT(); const tp = t.preview
   const panDragRef = useRef(null)
   const containerRef = useRef(null)
@@ -735,14 +811,14 @@ function PhotoSlot({ item, slotW, slotH, transform, photoAR,
     e.preventDefault()
     const delta = e.deltaY > 0 ? -0.08 : 0.08
     const cur = transform?.zoom || 1
-    const newZoom = Math.max(1, Math.min(4, cur+delta))
+    const newZoom = Math.max(0.1, Math.min(4, cur+delta))
     onTransformChange({...(transform||{x:50,y:50}), zoom:newZoom})
   },[isEditMode,transform,onTransformChange])
 
   // Zoom buttons
   const adjustZoom = (delta) => {
     const cur = transform?.zoom || 1
-    const newZoom = Math.max(1, Math.min(4, cur+delta))
+    const newZoom = Math.max(0.1, Math.min(4, cur+delta))
     onTransformChange({...(transform||{x:50,y:50}), zoom:newZoom})
   }
 
@@ -796,7 +872,7 @@ function PhotoSlot({ item, slotW, slotH, transform, photoAR,
           </div>
           <div style={{display:'flex',gap:3}}>
             <button onMouseDown={e=>e.stopPropagation()}
-              onClick={()=>onTransformChange({x:50,y:50,zoom:1})}
+              onClick={()=>onResetTransform?.(originalTransform)}
               {...{title:tp.resetZoom}}
               style={{background:'rgba(0,0,0,0.72)',border:'1px solid rgba(255,255,255,0.18)',
                 color:'#ccc',fontSize:10,padding:'3px 8px',borderRadius:4,cursor:'pointer'}}>
@@ -815,11 +891,138 @@ function PhotoSlot({ item, slotW, slotH, transform, photoAR,
   )
 }
 
+const MAP_AR = 2.0  // matches backend generate_map_image(800, 400)
+
+function MapSlot({ item, slotW, slotH, transform, isEditMode, onEnterEdit, onExitEdit, onTransformChange, onResetTransform }) {
+  const panDragRef = useRef(null)
+  // Cover mode: map fills slot at zoom=1, min zoom=1 to avoid empty areas
+  const imgStyle = photoStyle(MAP_AR, slotW, slotH, transform)
+
+  const startPan = useCallback((e) => {
+    e.preventDefault(); e.stopPropagation()
+    const zoom = Math.max(1, transform?.zoom || 1)
+    const panX = transform?.x ?? 50, panY = transform?.y ?? 50
+    const slotAR = slotW / slotH
+    let baseW, baseH
+    if (MAP_AR >= slotAR) { baseH = slotH; baseW = slotH * MAP_AR }
+    else                  { baseW = slotW; baseH = slotW / MAP_AR }
+    const imgW = baseW * zoom, imgH = baseH * zoom
+    const maxDX = Math.max(0, imgW - slotW), maxDY = Math.max(0, imgH - slotH)
+    panDragRef.current = { startX:e.clientX, startY:e.clientY, panX, panY, maxDX, maxDY }
+    const onMove = (me) => {
+      if (!panDragRef.current) return
+      const { startX, startY, panX, panY, maxDX, maxDY } = panDragRef.current
+      const dx = maxDX > 0 ? ((me.clientX - startX) / maxDX) * 100 : 0
+      const dy = maxDY > 0 ? ((me.clientY - startY) / maxDY) * 100 : 0
+      onTransformChange({ zoom, x:Math.max(0,Math.min(100,panX-dx)), y:Math.max(0,Math.min(100,panY-dy)) })
+    }
+    const onUp = () => { panDragRef.current=null; window.removeEventListener('mousemove',onMove); window.removeEventListener('mouseup',onUp) }
+    window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp)
+  }, [transform, slotW, slotH, onTransformChange])
+
+  const onWheel = useCallback((e) => {
+    if (!isEditMode) return
+    e.preventDefault()
+    const newZoom = Math.max(1, Math.min(4, (transform?.zoom||1) + (e.deltaY > 0 ? -0.08 : 0.08)))
+    onTransformChange({ ...(transform||{x:50,y:50}), zoom:newZoom })
+  }, [isEditMode, transform, onTransformChange])
+
+  const adjustZoom = (delta) => {
+    const newZoom = Math.max(1, Math.min(4, (transform?.zoom||1) + delta))
+    onTransformChange({ ...(transform||{x:50,y:50}), zoom:newZoom })
+  }
+
+  return (
+    <div style={{width:'100%',height:'100%',position:'relative',overflow:'hidden',background:'#1a1a1a'}}
+      onWheel={onWheel}>
+      <img draggable={false} src={item._map_url} alt="Mappa GPS"
+        style={{...imgStyle, cursor:isEditMode?'move':'default'}}/>
+      {isEditMode&&(
+        <div style={{position:'absolute',inset:0,zIndex:15,cursor:'move',background:'transparent'}}
+          onMouseDown={startPan}/>
+      )}
+      {isEditMode&&(
+        <div style={{position:'absolute',top:6,right:6,zIndex:20,display:'flex',flexDirection:'column',gap:4,alignItems:'flex-end'}}>
+          <div style={{display:'flex',gap:3,alignItems:'center',background:'rgba(0,0,0,0.72)',borderRadius:6,padding:'4px 6px'}}>
+            <button onMouseDown={e=>e.stopPropagation()} onClick={()=>adjustZoom(-0.15)}
+              style={{background:'var(--bg3)',border:'1px solid var(--border)',color:'var(--text)',
+                width:24,height:24,borderRadius:4,cursor:'pointer',fontSize:15,lineHeight:1,
+                display:'flex',alignItems:'center',justifyContent:'center'}}>−</button>
+            <span style={{fontSize:10,fontFamily:'var(--font-mono)',color:'#ddd',minWidth:34,textAlign:'center'}}>
+              {Math.round((transform?.zoom||1)*100)}%</span>
+            <button onMouseDown={e=>e.stopPropagation()} onClick={()=>adjustZoom(0.15)}
+              style={{background:'var(--bg3)',border:'1px solid var(--border)',color:'var(--text)',
+                width:24,height:24,borderRadius:4,cursor:'pointer',fontSize:15,lineHeight:1,
+                display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>
+          </div>
+          <div style={{display:'flex',gap:3}}>
+            <button onMouseDown={e=>e.stopPropagation()}
+              onClick={()=>onResetTransform?.({x:50,y:50,zoom:1})}
+              style={{background:'rgba(0,0,0,0.72)',border:'1px solid rgba(255,255,255,0.18)',
+                color:'#ccc',fontSize:10,padding:'3px 8px',borderRadius:4,cursor:'pointer'}}>↺</button>
+            <button onMouseDown={e=>e.stopPropagation()} onClick={onExitEdit}
+              style={{background:'var(--gold)',border:'none',color:'#0a0a0c',
+                fontSize:10,padding:'3px 8px',borderRadius:4,cursor:'pointer',fontWeight:700}}>✓</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Editable page ─────────────────────────────────────────────────────────────
+// ── BlankPage — stesse dimensioni e struttura di EditablePage ────────────────
+// Replica pixel-perfect il layout di EditablePage: stesso ResizeObserver,
+// stesso calcolo scale, stesso toolbar invisibile (visibility:hidden ma
+// con le stesse dimensioni del toolbar reale → allineamento garantito da CSS).
+function BlankPage({ profile, allPageTypes, label, maxW=570 }) {
+  const [pw,ph]=getPageDims(profile)
+  const containerRef = useRef(null)
+  const [containerW, setContainerW] = useState(maxW)
+
+  useEffect(()=>{
+    if(!containerRef.current) return
+    const ro = new ResizeObserver(([e])=> setContainerW(e.contentRect.width||maxW))
+    ro.observe(containerRef.current)
+    return ()=>ro.disconnect()
+  },[maxW])
+
+  const maxH_px = typeof window !== 'undefined' ? window.innerHeight * 0.65 : 600
+  const scale = Math.min(containerW/pw, (containerW*1.4)/ph, maxH_px/ph)
+  const W = pw*scale, H = ph*scale
+
+  return (
+    <div ref={containerRef} style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}>
+      {/* Toolbar fantasma: stessa struttura di EditablePage ma invisibile.
+          visibility:hidden mantiene le dimensioni senza mostrare nulla,
+          garantendo che il canvas parta alla stessa coordinata Y. */}
+      {allPageTypes.length>0 && (
+        <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8,flexShrink:0,visibility:'hidden'}}>
+          <span className="text-xs text-muted" style={{flexShrink:0}}>Layout:</span>
+          <select style={{flex:1,minWidth:0,fontSize:11,padding:'3px 6px',
+            background:'var(--bg3)',border:'1px solid var(--border)',
+            color:'var(--text)',borderRadius:5}}>
+            <option>—</option>
+          </select>
+          <button className="btn btn-sm" style={{fontSize:10,flexShrink:0,padding:'3px 8px'}}>+ Slot</button>
+        </div>
+      )}
+      <div style={{width:W,height:H,background:'#f0ece4',
+        boxShadow:'0 16px 64px rgba(0,0,0,0.55)',borderRadius:2,flexShrink:0,
+        display:'flex',alignItems:'center',justifyContent:'center'}}>
+        <p style={{fontSize:11,color:'#c0bbb2',fontFamily:'var(--font-mono)',fontStyle:'italic'}}>
+          {label || 'pagina vuota'}
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function EditablePage({ page, pageIdx, profile, allPageTypes,
-                        photoAspects, photoTransforms, onTransformChange,
+                        photoAspects, photoTransforms, originalTransforms,
+                        onTransformChange,
                         onUpdatePage, onOpenPicker, onAddCaption,
-                        onDrop, maxW=570, onPhotoClick }) {
+                        onDrop, maxW=570, onPhotoClick, onAddMap }) {
   const t = useT(); const tp = t.preview
   const [pw,ph]=getPageDims(profile)
   const containerRef = useRef(null)
@@ -832,16 +1035,33 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
     return ()=>ro.disconnect()
   },[maxW])
 
-  const scale=Math.min(containerW/pw, (containerW*1.4)/ph)
+  // Cap scale so portrait pages don't overflow available viewport height.
+  // 65vh leaves room for the top toolbar (~80px) and nav bar (~50px).
+  const maxH_px = typeof window !== 'undefined' ? window.innerHeight * 0.65 : 600
+  const scale=Math.min(containerW/pw, (containerW*1.4)/ph, maxH_px/ph)
   const W=pw*scale, H=ph*scale
 
   const [dragFromIdx,setDragFromIdx]=useState(null)
   const [dragOverIdx,setDragOverIdx]=useState(null)
   const [editCaptionIdx,setEditCaptionIdx]=useState(null)
-  const [editPhotoSlot,setEditPhotoSlot]=useState(null)  // slotIdx in pan/zoom mode
+  const [captionToolbarMore,setCaptionToolbarMore]=useState(false)
+  const [syncToImmich,setSyncToImmich]=useState(true)
+  const [showSymbols,setShowSymbols]=useState(false)
+  const textareaRef=useRef(null)
+  const [editPhotoSlot,setEditPhotoSlot]=useState(null)
+  const [editMapSlot,setEditMapSlot]=useState(null)
 
   // Reset edit quando cambia pagina
-  useEffect(()=>{setEditPhotoSlot(null);setEditCaptionIdx(null)},[pageIdx])
+  useEffect(()=>{setEditPhotoSlot(null);setEditCaptionIdx(null);setCaptionToolbarMore(false);setShowSymbols(false)},[pageIdx])
+
+  // Quando si apre una caption: imposta syncToImmich in base a for_asset_id
+  useEffect(()=>{
+    if(editCaptionIdx!==null){
+      const it=page.items[editCaptionIdx]?.item
+      setSyncToImmich(!!it?.for_asset_id)
+      setShowSymbols(false)
+    }
+  },[editCaptionIdx])
 
   const swapItems=(fromIdx,toIdx)=>{
     if(fromIdx===toIdx) return
@@ -957,7 +1177,6 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
   }
 
   if (page?._album_separator) {
-    // W and H already computed from getPageDims(profile) above — orientation-aware
     return (
       <div ref={containerRef} style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}>
         <div style={{width:W,height:H,background:'#e8e4dc',
@@ -968,6 +1187,11 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
       </div>
     )
   }
+
+  // _album_divider pages use the normal EditablePage slot system below.
+  // Their dark background is achieved via the page canvas background color override.
+  // The album info (name, photo count) is shown as a banner at the bottom of the canvas.
+  const isDivider = !!page?._album_divider
 
   return (
     <div ref={containerRef} style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}>
@@ -994,24 +1218,74 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
 
       {/* Page canvas */}
       {(
-      <div style={{width:W,height:H,background:'#f0ece4',position:'relative',
+      <div style={{width:W,height:H,
+        background: isDivider ? (page._divider_style?.bg||'#13141a') : '#f0ece4',
+        position:'relative',
         boxShadow:'0 16px 64px rgba(0,0,0,0.55)',borderRadius:2,overflow:'hidden',
         userSelect:'none',WebkitUserSelect:'none'}}>
+        {/* Margin overlay — shows actual margin lines per page */}
+        {(()=>{
+          const _mo = marginsForPage(profile, pageIdx+2)
+          const bleedMm = profile?.bleed ? (profile?.bleed_mm||3) : 0
+          const bleedPx = bleedMm * 2.835 * scale
+          const mlPx = _mo.ml*scale, mrPx = _mo.mr*scale
+          const mtPx = _mo.mt*scale, mbPx = _mo.mb*scale
+          return (
+            <svg style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',zIndex:1}} overflow="visible">
+              {/* Margin lines */}
+              <line x1={mlPx} y1={0} x2={mlPx} y2={H} stroke="rgba(100,140,200,0.35)" strokeWidth={0.7} strokeDasharray="4,3"/>
+              <line x1={W-mrPx} y1={0} x2={W-mrPx} y2={H} stroke="rgba(100,140,200,0.35)" strokeWidth={0.7} strokeDasharray="4,3"/>
+              <line x1={0} y1={mtPx} x2={W} y2={mtPx} stroke="rgba(100,140,200,0.35)" strokeWidth={0.7} strokeDasharray="4,3"/>
+              <line x1={0} y1={H-mbPx} x2={W} y2={H-mbPx} stroke="rgba(100,140,200,0.35)" strokeWidth={0.7} strokeDasharray="4,3"/>
+              {/* Binding edge highlight */}
+              {profile?.duplex && (
+                <rect
+                  x={(pageIdx+2)%2===0 ? W-mrPx-1 : mlPx-2}
+                  y={0} width={3} height={H}
+                  fill="rgba(212,170,90,0.18)"
+                />
+              )}
+              {/* Bleed indicators (corner marks) */}
+              {bleedMm > 0 && profile?.crop_marks && (
+                <g stroke="rgba(200,0,0,0.4)" strokeWidth={0.7}>
+                  <line x1={0} y1={bleedPx} x2={bleedPx*0.6} y2={bleedPx}/>
+                  <line x1={bleedPx} y1={0} x2={bleedPx} y2={bleedPx*0.6}/>
+                  <line x1={W} y1={bleedPx} x2={W-bleedPx*0.6} y2={bleedPx}/>
+                  <line x1={W-bleedPx} y1={0} x2={W-bleedPx} y2={bleedPx*0.6}/>
+                  <line x1={0} y1={H-bleedPx} x2={bleedPx*0.6} y2={H-bleedPx}/>
+                  <line x1={bleedPx} y1={H} x2={bleedPx} y2={H-bleedPx*0.6}/>
+                  <line x1={W} y1={H-bleedPx} x2={W-bleedPx*0.6} y2={H-bleedPx}/>
+                  <line x1={W-bleedPx} y1={H} x2={W-bleedPx} y2={H-bleedPx*0.6}/>
+                </g>
+              )}
+              {/* Margin labels on hover area */}
+              <text x={mlPx/2} y={mtPx+14} textAnchor="middle" fontSize={7} fill="rgba(100,140,200,0.6)" fontFamily="monospace">
+                {profile?.duplex && (pageIdx+2)%2!==0 ? `Int ${profile?.margin_right||profile?.margin_mm||5}mm` : `Ext ${profile?.margin_left||profile?.margin_mm||5}mm`}
+              </text>
+              <text x={W-mrPx/2} y={mtPx+14} textAnchor="middle" fontSize={7} fill="rgba(100,140,200,0.6)" fontFamily="monospace">
+                {profile?.duplex && (pageIdx+2)%2!==0 ? `Ext ${profile?.margin_left||profile?.margin_mm||5}mm` : `Int ${profile?.margin_right||profile?.margin_mm||5}mm`}
+              </text>
+              <text x={W/2} y={mtPx-3} textAnchor="middle" fontSize={7} fill="rgba(100,140,200,0.6)" fontFamily="monospace">↑ {profile?.margin_top||profile?.margin_mm||5}mm</text>
+              <text x={W/2} y={H-mbPx+9} textAnchor="middle" fontSize={7} fill="rgba(100,140,200,0.6)" fontFamily="monospace">↓ {profile?.margin_bottom||profile?.margin_mm||5}mm</text>
+            </svg>
+          )
+        })()}
 
         {(page?.items||[]).map((id,slotIdx)=>{
           const slot=id.slot||{x:0,y:0,w:100,h:100}
           const item=id.item
-          const r=slotRect(slot,pw,ph,profile,scale)
+          const r=slotRect(slot,pw,ph,profile,scale,pageIdx+2)
           const panKey=`${pageIdx}_${slotIdx}`
           const transform=photoTransforms[panKey]||{x:50,y:50,zoom:1}
           const photoAR=item?.type==='photo'?photoAspects[item.asset_id]:null
           const mismatch=item?.type==='photo'&&isMismatch(photoAR,slot)
           const isPhotoEdit=editPhotoSlot===slotIdx
+          const isMapEdit=editMapSlot===slotIdx
           const isDragSrc=dragFromIdx===slotIdx
           const isDragTgt=dragOverIdx===slotIdx
           const isCaptionEdit=editCaptionIdx===slotIdx
-          const canDrag=!!item&&!isPhotoEdit&&!isCaptionEdit
-          const outlineColor=isPhotoEdit?'#6a8fd8':mismatch?'#e05050':isDragTgt?'var(--gold)':'transparent'
+          const canDrag=!!item&&!isPhotoEdit&&!isMapEdit&&!isCaptionEdit
+          const outlineColor=isPhotoEdit||isMapEdit?'#6a8fd8':mismatch?'#e05050':isDragTgt?'var(--gold)':'transparent'
           const outlineStyle=isDragTgt?'2px dashed':'3px solid'
 
           return (
@@ -1053,6 +1327,8 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                     onClick={()=>onOpenPicker(pageIdx,slotIdx)}>📷 Scegli foto</button>
                   <button className="btn btn-sm" style={{fontSize:10}}
                     onClick={()=>onAddCaption(pageIdx,slotIdx)}>💬 Didascalia</button>
+                  <button className="btn btn-sm" style={{fontSize:10}}
+                    onClick={()=>onAddMap?.(pageIdx,slotIdx)}>🗺 Mappa GPS</button>
                   {page.items.length>1&&(
                     <button className="btn btn-sm btn-danger" style={{fontSize:10}}
                       onClick={()=>removeSlot(slotIdx)}>✕ Rimuovi slot</button>
@@ -1071,7 +1347,19 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                   mismatch={mismatch}
                   onEnterEdit={()=>setEditPhotoSlot(slotIdx)}
                   onExitEdit={()=>setEditPhotoSlot(null)}
+                  originalTransform={item?.type==='photo'
+                    ? (originalTransforms?.[panKey] ?? {x:50, y:50, zoom:1})
+                    : null}
                   onTransformChange={t=>onTransformChange(panKey,t)}
+                  onResetTransform={(origT)=>{
+                    // Restore to the original face-detection transform (or center if none)
+                    const restored = origT || {x:50, y:50, zoom:1}
+                    setPhotoTransforms(prev=>{
+                      const next={...prev,[panKey]:restored}
+                      sessionStorage.setItem('photobook_transforms',JSON.stringify(next))
+                      return next
+                    })
+                  }}
                 />
               )}
 
@@ -1080,6 +1368,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                 <div className="slot-hover-overlay" style={{alignItems:'flex-end',justifyContent:'center',padding:'0 0 8px'}}>
                   {[
                     { icon:'🖐', label: mismatch ? tp.repositionMismatch : tp.reposition, action: e=>{ e.stopPropagation(); setEditPhotoSlot(slotIdx) }, bg: mismatch ? 'rgba(220,70,70,0.9)' : undefined },
+                    { icon:'🗺', label: 'Inserisci mappa GPS', action: e=>{ e.stopPropagation(); onAddMap?.(pageIdx, slotIdx) } },
                     { icon:'🔄', label:tp.changePhoto, action: e=>{ e.stopPropagation(); onOpenPicker(pageIdx,slotIdx) } },
                     { icon:'💬', label:tp.addCaption, action: e=>{ e.stopPropagation(); onAddCaption(pageIdx,slotIdx) } },
                     { icon:'🗑️', label:tp.removePhoto, action: e=>{ e.stopPropagation(); removeItem(slotIdx) }, bg:'rgba(197,74,74,0.88)' },
@@ -1103,133 +1392,305 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
 
 
 
+              {/* Map */}
+              {item?.type==='map'&&(
+                <MapSlot
+                  item={item} slotW={r.w} slotH={r.h}
+                  transform={transform}
+                  isEditMode={isMapEdit}
+                  onEnterEdit={()=>setEditMapSlot(slotIdx)}
+                  onExitEdit={()=>setEditMapSlot(null)}
+                  onTransformChange={t=>onTransformChange(panKey,t)}
+                  onResetTransform={()=>onTransformChange(panKey,{x:50,y:50,zoom:1})}/>
+              )}
+              {item?.type==='map'&&!isMapEdit&&(
+                <div className="slot-hover-overlay" style={{alignItems:'flex-end',justifyContent:'center',padding:'0 0 8px'}}>
+                  {[
+                    { icon:'🖐', label:'Riposiziona / zoom mappa', action: e=>{ e.stopPropagation(); setEditMapSlot(slotIdx) } },
+                    { icon:'🔄', label:'Rigenera mappa', action: e=>{ e.stopPropagation(); onAddMap?.(pageIdx,slotIdx) } },
+                    { icon:'🗑️', label:'Rimuovi mappa', action: e=>{ e.stopPropagation(); removeItem(slotIdx) }, bg:'rgba(197,74,74,0.88)' },
+                  ].map(({icon,label,action,bg})=>(
+                    <button key={icon} title={label} onClick={action}
+                      style={{width:32,height:32,borderRadius:6,border:'none',cursor:'pointer',
+                        fontSize:15,display:'flex',alignItems:'center',justifyContent:'center',
+                        background:bg||'rgba(212,170,90,0.88)',boxShadow:'0 2px 8px rgba(0,0,0,0.4)',
+                        transition:'transform 0.1s,background 0.1s',flexShrink:0}}
+                      onMouseEnter={e=>e.currentTarget.style.transform='scale(1.12)'}
+                      onMouseLeave={e=>e.currentTarget.style.transform='scale(1)'}>
+                      {icon}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {/* Caption */}
               {item?.type==='caption'&&(()=>{
-                // Merge profile default style with per-caption overrides
                 const profileCs = profile?.caption_style || {}
-                const cs = { ...profileCs, ...(item.caption_style||{}) }
-                const font     = cs.font     || 'Georgia, serif'
-                const size     = Math.max(8, Math.min(cs.size||13, Math.max(11, r.w*0.05)))
-                const color    = cs.color    || '#e8e6e0'
-                const bg       = cs.bg       || '#111116'
-                const align    = cs.align    || 'center'
-                const valign   = cs.valign   || 'center'
-                const italic   = cs.italic   !== false
-                const bold     = cs.bold     || false
+                const sessionCs = (() => { try { return JSON.parse(sessionStorage.getItem('pb_caption_style')||'{}') } catch { return {} } })()
+                const cs = { ...profileCs, ...sessionCs, ...(item.caption_style||{}) }
+                const font          = cs.font          || 'Georgia, serif'
+                const size          = cs.size          || 13
+                const color         = cs.color         || '#e8e6e0'
+                const bg            = cs.bg            || '#111116'
+                const align         = cs.align         || 'left'
+                const valign        = cs.valign        || 'center'
+                const italic        = cs.italic        !== false
+                const bold          = cs.bold          || false
+                const underline     = cs.underline     || false
+                const lineHeight    = cs.lineHeight    || 1.55
+                const letterSpacing = cs.letterSpacing || 0
 
-                const setCs = (key, val) => updateCaption(slotIdx, undefined, {...(item.caption_style||{}), [key]: val})
+                const setCs = (key, val) => {
+                  try {
+                    const cur = JSON.parse(sessionStorage.getItem('pb_caption_style')||'{}')
+                    sessionStorage.setItem('pb_caption_style', JSON.stringify({...cur, [key]: val}))
+                  } catch {}
+                  updateCaption(slotIdx, undefined, {...(item.caption_style||{}), [key]: val})
+                }
+
+                const insertSymbol = (sym) => {
+                  const ta = textareaRef.current
+                  if (!ta) return
+                  const start = ta.selectionStart, end = ta.selectionEnd
+                  const newText = ta.value.substring(0, start) + sym + ta.value.substring(end)
+                  updateCaption(slotIdx, newText)
+                  requestAnimationFrame(() => {
+                    if (textareaRef.current) {
+                      textareaRef.current.selectionStart = textareaRef.current.selectionEnd = start + sym.length
+                      textareaRef.current.focus()
+                    }
+                  })
+                }
+
+                // ── Toolbar helpers ──────────────────────────────────
+                const TB = (active, extra={}) => ({
+                  width:22, height:22, flexShrink:0, padding:0,
+                  border:`1px solid ${active?'rgba(212,170,90,0.55)':'rgba(255,255,255,0.12)'}`,
+                  borderRadius:4, cursor:'pointer',
+                  background: active?'rgba(212,170,90,0.22)':'rgba(255,255,255,0.07)',
+                  color: active?'#f0c040':'#ccc', fontSize:11,
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  ...extra,
+                })
+                const SEP = { width:1, height:16, background:'rgba(255,255,255,0.1)', flexShrink:0, margin:'0 2px' }
+                const TEXT_PRESETS = ['#ffffff','#f0ede6','#e8e4d0','#d4aa5a','#a8cfe8','#c8a0e8','#a8e0b0','#111116']
+                const BG_PRESETS   = ['#111116','#13141a','#1a1a2e','#0a0a0e','transparent','#f0ece4','#2a1a0e','#1a2a1a']
+                const FONTS = [
+                  ['Georgia, serif',                     'Georgia'],
+                  ['"Playfair Display", Georgia, serif',  'Playfair'],
+                  ['"Helvetica Neue", Arial, sans-serif', 'Helvetica'],
+                  ['Montserrat, Arial, sans-serif',       'Montserrat'],
+                  ['"Courier New", monospace',            'Courier'],
+                  ['var(--font-display)',                 'Display'],
+                  ['var(--font-mono)',                    'Mono'],
+                ]
 
                 if (isCaptionEdit) return (
-                  <div style={{width:'100%',height:'100%',background:bg,
-                    display:'flex',flexDirection:'column',overflow:'hidden'}}>
+                  <>
+                    {/* Floating toolbar — portal to document.body, unaffected by slot size */}
+                    {createPortal(
+                      <div style={{
+                        position:'fixed', bottom:20, left:'50%', transform:'translateX(-50%)',
+                        width:'min(calc(100vw - 24px), 720px)',
+                        background:'rgba(10,10,18,0.96)', backdropFilter:'blur(18px)',
+                        borderRadius:14, border:'1px solid rgba(255,255,255,0.1)',
+                        boxShadow:'0 8px 48px rgba(0,0,0,0.75), 0 0 0 1px rgba(255,255,255,0.04)',
+                        zIndex:9999, overflow:'hidden',
+                        userSelect:'none', WebkitUserSelect:'none',
+                      }}>
+                        {/* ── Main row ── */}
+                        <div onMouseDown={e=>e.preventDefault()} style={{
+                          display:'flex', gap:3, padding:'7px 10px', alignItems:'center', flexWrap:'wrap',
+                        }}>
+                          <span style={{fontSize:8,color:'rgba(255,255,255,0.28)',fontFamily:'var(--font-mono)',
+                            letterSpacing:'0.08em',flexShrink:0,marginRight:1}}>DIDASCALIA</span>
+                          <div style={SEP}/>
 
-                    {/* WYSIWYG toolbar
-                        IMPORTANT: ogni controllo ha onMouseDown={e=>e.preventDefault()}
-                        per impedire che il textarea perda il focus prima del click */}
-                    <div
-                      onMouseDown={e=>e.preventDefault()}
-                      style={{display:'flex',gap:3,padding:'3px 5px',flexShrink:0,flexWrap:'wrap',
-                        background:'rgba(0,0,0,0.35)',borderBottom:'1px solid rgba(255,255,255,0.08)'}}>
+                          {/* Font family */}
+                          <select value={font} onMouseDown={e=>e.stopPropagation()} onChange={e=>setCs('font',e.target.value)}
+                            style={{height:26,fontSize:11,background:'rgba(255,255,255,0.07)',
+                              border:'1px solid rgba(255,255,255,0.12)',borderRadius:6,
+                              color:'#ddd',padding:'0 4px',flexShrink:0,maxWidth:94,cursor:'pointer'}}>
+                            {FONTS.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                          </select>
 
-                      {/* Font size */}
-                      <input type="number" min={8} max={72} step={1} value={cs.size||13}
-                        onMouseDown={e=>e.stopPropagation()}
-                        onChange={e=>setCs('size', +e.target.value)}
-                        title="Dimensione"
-                        style={{width:38,height:22,background:'rgba(255,255,255,0.08)',border:'1px solid rgba(255,255,255,0.15)',
-                          borderRadius:3,color:'#ddd',fontSize:10,textAlign:'center',padding:'0 2px'}}/>
+                          {/* Font size ± */}
+                          <div style={{display:'flex',alignItems:'center',gap:1,flexShrink:0}}>
+                            <button onMouseDown={e=>{e.preventDefault();setCs('size',Math.max(6,size-1))}}
+                              style={TB(false,{width:24,height:26,borderRadius:5})}>−</button>
+                            <input type="number" min={6} max={120} value={size}
+                              onMouseDown={e=>e.stopPropagation()} onChange={e=>setCs('size',+e.target.value)}
+                              style={{width:34,height:26,background:'rgba(255,255,255,0.07)',
+                                border:'1px solid rgba(255,255,255,0.12)',borderRadius:5,
+                                color:'#ddd',fontSize:11,textAlign:'center',padding:0}}/>
+                            <button onMouseDown={e=>{e.preventDefault();setCs('size',Math.min(120,size+1))}}
+                              style={TB(false,{width:24,height:26,borderRadius:5})}>+</button>
+                          </div>
 
-                      {/* Bold / Italic */}
-                      {[['B','bold',{fontWeight:'bold'}],['I','italic',{fontStyle:'italic'}]].map(([lbl,key,sty])=>(
-                        <button key={key}
-                          onMouseDown={e=>{ e.preventDefault(); setCs(key, !cs[key]) }}
-                          style={{width:22,height:22,border:'1px solid rgba(255,255,255,0.15)',borderRadius:3,
-                            cursor:'pointer',fontSize:11,...sty,
-                            background:cs[key]?'rgba(212,170,90,0.35)':'rgba(255,255,255,0.08)',
-                            color:cs[key]?'#f0c040':'#ccc'}}>{lbl}</button>
-                      ))}
+                          <div style={SEP}/>
 
-                      {/* Text align */}
-                      {[['←','left'],['↔','center'],['→','right']].map(([icon,v])=>(
-                        <button key={v}
-                          onMouseDown={e=>{ e.preventDefault(); setCs('align',v) }}
-                          style={{width:22,height:22,border:'1px solid rgba(255,255,255,0.15)',borderRadius:3,
-                            cursor:'pointer',fontSize:12,
-                            background:align===v?'rgba(212,170,90,0.35)':'rgba(255,255,255,0.08)',
-                            color:align===v?'#f0c040':'#ccc'}}>{icon}</button>
-                      ))}
+                          {/* B I U */}
+                          <button onMouseDown={e=>{e.preventDefault();setCs('bold',!bold)}}
+                            style={TB(bold,{width:26,height:26,borderRadius:5,fontSize:13})}><b>B</b></button>
+                          <button onMouseDown={e=>{e.preventDefault();setCs('italic',!italic)}}
+                            style={TB(italic,{width:26,height:26,borderRadius:5,fontSize:13})}><i>I</i></button>
+                          <button onMouseDown={e=>{e.preventDefault();setCs('underline',!underline)}}
+                            style={TB(underline,{width:26,height:26,borderRadius:5,fontSize:13,textDecoration:'underline'})}>U</button>
 
-                      {/* Vertical align */}
-                      {[['↑','flex-start'],['↕','center'],['↓','flex-end']].map(([icon,v])=>(
-                        <button key={v}
-                          onMouseDown={e=>{ e.preventDefault(); setCs('valign',v) }}
-                          style={{width:22,height:22,border:'1px solid rgba(255,255,255,0.15)',borderRadius:3,
-                            cursor:'pointer',fontSize:12,
-                            background:valign===v?'rgba(212,170,90,0.35)':'rgba(255,255,255,0.08)',
-                            color:valign===v?'#f0c040':'#ccc'}}>{icon}</button>
-                      ))}
+                          <div style={SEP}/>
 
-                      {/* Text color */}
-                      <div title="Colore testo" style={{position:'relative',display:'inline-block'}}>
-                        <input type="color" value={color}
-                          onMouseDown={e=>e.stopPropagation()}
-                          onChange={e=>setCs('color',e.target.value)}
-                          style={{width:22,height:22,padding:1,border:'1px solid rgba(255,255,255,0.15)',
-                            borderRadius:3,cursor:'pointer',background:'transparent'}}/>
-                      </div>
+                          {/* Text align */}
+                          {[['←','left'],['↔','center'],['→','right']].map(([icon,v])=>(
+                            <button key={v} onMouseDown={e=>{e.preventDefault();setCs('align',v)}}
+                              style={TB(align===v,{width:26,height:26,borderRadius:5,fontSize:14})} title={v}>{icon}</button>
+                          ))}
 
-                      {/* Bg color */}
-                      <div title="Colore sfondo" style={{position:'relative',display:'inline-block'}}>
-                        <input type="color" value={bg==='transparent'?'#000000':bg}
-                          onMouseDown={e=>e.stopPropagation()}
-                          onChange={e=>setCs('bg',e.target.value)}
-                          style={{width:22,height:22,padding:1,border:'1px solid rgba(255,255,255,0.15)',
-                            borderRadius:3,cursor:'pointer',background:'transparent'}}/>
-                      </div>
+                          <div style={SEP}/>
 
-                      {/* Sync to Immich */}
-                      {item.for_asset_id&&(
-                        <button
-                          onMouseDown={e=>{ e.preventDefault(); syncCaptionToImmich(slotIdx) }}
-                          title="Salva come descrizione in Immich"
-                          style={{marginLeft:'auto',height:22,padding:'0 6px',border:'1px solid rgba(255,255,255,0.15)',
-                            borderRadius:3,cursor:'pointer',fontSize:9,
-                            background:'rgba(212,170,90,0.2)',color:'#f0c040',whiteSpace:'nowrap'}}>
-                          ↑ Immich
-                        </button>
-                      )}
+                          {/* Text color swatches + picker */}
+                          <span style={{fontSize:9,color:'rgba(255,255,255,0.35)',flexShrink:0}}>T</span>
+                          {TEXT_PRESETS.map(c=>(
+                            <button key={c} onMouseDown={e=>{e.preventDefault();setCs('color',c)}} title={c}
+                              style={{width:18,height:18,flexShrink:0,borderRadius:4,background:c,cursor:'pointer',padding:0,
+                                border:color===c?'2px solid #f0c040':'1px solid rgba(255,255,255,0.18)'}}/>
+                          ))}
+                          <input type="color" value={color} onMouseDown={e=>e.stopPropagation()}
+                            onChange={e=>setCs('color',e.target.value)}
+                            style={{width:22,height:22,flexShrink:0,padding:1,
+                              border:'1px solid rgba(255,255,255,0.12)',borderRadius:5,cursor:'pointer',background:'transparent'}}/>
 
-                      {/* Done — unico che deve chiudere l'editor */}
-                      <button
-                        onMouseDown={e=>{ e.preventDefault(); syncCaptionToImmich(slotIdx); setEditCaptionIdx(null) }}
-                        title="Chiudi editor"
-                        style={{height:22,padding:'0 6px',border:'1px solid rgba(255,255,255,0.15)',
-                          borderRadius:3,cursor:'pointer',fontSize:9,
-                          background:'rgba(255,255,255,0.08)',color:'#ccc'}}>✓</button>
+                          <div style={SEP}/>
+
+                          {/* Ω Simboli */}
+                          <button onMouseDown={e=>{e.preventDefault();setShowSymbols(p=>!p);setCaptionToolbarMore(false)}}
+                            style={TB(showSymbols,{width:28,height:26,borderRadius:5,fontSize:14})} title="Inserisci simbolo">Ω</button>
+
+                          {/* ⋯ More */}
+                          <button onMouseDown={e=>{e.preventDefault();setCaptionToolbarMore(p=>!p);setShowSymbols(false)}}
+                            style={TB(captionToolbarMore,{width:28,height:26,borderRadius:5,fontSize:16})} title="Più opzioni">⋯</button>
+
+                          {/* Push right */}
+                          <div style={{marginLeft:'auto',display:'flex',gap:5,flexShrink:0,alignItems:'center'}}>
+                            {/* Immich sync toggle */}
+                            <button
+                              onMouseDown={e=>{e.preventDefault();if(item.for_asset_id) setSyncToImmich(p=>!p)}}
+                              title={item.for_asset_id ? (syncToImmich?'Sincronizzazione Immich attiva':'Sincronizzazione Immich disattivata') : 'Nessuna foto abbinata'}
+                              style={TB(syncToImmich&&!!item.for_asset_id,{padding:'0 8px',width:'auto',height:26,fontSize:9,
+                                whiteSpace:'nowrap',borderRadius:5,
+                                opacity:item.for_asset_id?1:0.35,cursor:item.for_asset_id?'pointer':'default'})}>
+                              {syncToImmich&&item.for_asset_id?'↑ Immich':'○ Immich'}
+                            </button>
+                            <button onMouseDown={e=>{e.preventDefault();if(syncToImmich) syncCaptionToImmich(slotIdx);setEditCaptionIdx(null)}}
+                              style={{...TB(false),width:30,height:30,background:'rgba(212,170,90,0.2)',
+                                color:'#f0c040',border:'1px solid rgba(212,170,90,0.4)',
+                                fontSize:16,borderRadius:8}} title="Fine (Esc)">✓</button>
+                          </div>
+                        </div>
+
+                        {/* ── Symbol picker row ── */}
+                        {showSymbols&&(
+                          <div onMouseDown={e=>e.preventDefault()} style={{
+                            display:'flex', gap:2, padding:'6px 10px', alignItems:'center', flexWrap:'wrap',
+                            background:'rgba(4,4,10,0.65)',
+                            borderTop:'1px solid rgba(255,255,255,0.07)',
+                          }}>
+                            {['©','®','™','—','–','•','…','°','×','÷','±','√','≈','≠','≤','≥',
+                              '←','→','↑','↓','↔','↕','«','»','„','"','"','\'','\'','‰','€','£','¥','¢',
+                              '½','¼','¾','¹','²','³','α','β','γ','δ','∞','♥','★','☆','✓','✗'].map(sym=>(
+                              <button key={sym} onMouseDown={e=>{e.preventDefault();insertSymbol(sym)}}
+                                style={{width:26,height:26,flexShrink:0,borderRadius:4,cursor:'pointer',padding:0,
+                                  background:'rgba(255,255,255,0.07)',border:'1px solid rgba(255,255,255,0.12)',
+                                  color:'#ddd',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                                {sym}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* ── Extended row ── */}
+                        {captionToolbarMore&&(
+                          <div onMouseDown={e=>e.preventDefault()} style={{
+                            display:'flex', gap:3, padding:'6px 10px', alignItems:'center', flexWrap:'wrap',
+                            background:'rgba(4,4,10,0.65)',
+                            borderTop:'1px solid rgba(255,255,255,0.07)',
+                          }}>
+                            {/* Vertical align */}
+                            <span style={{fontSize:9,color:'rgba(255,255,255,0.35)',flexShrink:0}}>V-align</span>
+                            {[['↑','flex-start'],['↕','center'],['↓','flex-end']].map(([icon,v])=>(
+                              <button key={v} onMouseDown={e=>{e.preventDefault();setCs('valign',v)}}
+                                style={TB(valign===v,{width:26,height:26,borderRadius:5})}>{icon}</button>
+                            ))}
+
+                            <div style={SEP}/>
+
+                            {/* Bg color */}
+                            <span style={{fontSize:9,color:'rgba(255,255,255,0.35)',flexShrink:0}}>BG</span>
+                            {BG_PRESETS.map(c=>(
+                              <button key={c} onMouseDown={e=>{e.preventDefault();setCs('bg',c)}} title={c==='transparent'?'Trasparente':c}
+                                style={{width:18,height:18,flexShrink:0,borderRadius:4,cursor:'pointer',padding:0,
+                                  background:c==='transparent'?'none':c,
+                                  border:bg===c?'2px solid #f0c040':c==='transparent'?'1px dashed rgba(255,255,255,0.3)':'1px solid rgba(255,255,255,0.18)'}}/>
+                            ))}
+                            <input type="color" value={bg==='transparent'?'#000000':bg} onMouseDown={e=>e.stopPropagation()}
+                              onChange={e=>setCs('bg',e.target.value)}
+                              style={{width:22,height:22,flexShrink:0,padding:1,
+                                border:'1px solid rgba(255,255,255,0.12)',borderRadius:5,cursor:'pointer',background:'transparent'}}/>
+
+                            <div style={SEP}/>
+
+                            {/* Line height */}
+                            <span style={{fontSize:9,color:'rgba(255,255,255,0.35)',flexShrink:0,whiteSpace:'nowrap'}}>↕ interlinea</span>
+                            <input type="range" min={0.9} max={3} step={0.05} value={lineHeight}
+                              onMouseDown={e=>e.stopPropagation()} onChange={e=>setCs('lineHeight',parseFloat(e.target.value))}
+                              style={{width:80,accentColor:'#d4aa5a',flexShrink:0}}/>
+                            <span style={{fontSize:10,color:'#bbb',width:30,textAlign:'right',flexShrink:0}}>{lineHeight.toFixed(2)}</span>
+
+                            <div style={SEP}/>
+
+                            {/* Letter spacing */}
+                            <span style={{fontSize:9,color:'rgba(255,255,255,0.35)',flexShrink:0,whiteSpace:'nowrap'}}>↔ spaziatura</span>
+                            <input type="range" min={-2} max={10} step={0.5} value={letterSpacing}
+                              onMouseDown={e=>e.stopPropagation()} onChange={e=>setCs('letterSpacing',parseFloat(e.target.value))}
+                              style={{width:80,accentColor:'#d4aa5a',flexShrink:0}}/>
+                            <span style={{fontSize:10,color:'#bbb',width:30,textAlign:'right',flexShrink:0}}>{letterSpacing}px</span>
+                          </div>
+                        )}
+                      </div>,
+                      document.body
+                    )}
+
+                    {/* Slot content — full-height textarea, gold outline shows active state */}
+                    <div style={{width:'100%',height:'100%',background:bg,
+                      outline:'2px solid rgba(212,170,90,0.55)',outlineOffset:'-2px'}}>
+                      <textarea ref={textareaRef} autoFocus value={item.text||''}
+                        onChange={e=>updateCaption(slotIdx, e.target.value)}
+                        onKeyDown={e=>{ if(e.key==='Escape'){ if(syncToImmich) syncCaptionToImmich(slotIdx); setEditCaptionIdx(null) } }}
+                        style={{
+                          width:'100%', height:'100%', background:'transparent',
+                          border:'none', outline:'none', resize:'none', boxSizing:'border-box',
+                          color, fontFamily:font, fontStyle:italic?'italic':'normal',
+                          fontWeight:bold?'bold':'normal',
+                          textDecoration:underline?'underline':'none',
+                          fontSize:size, lineHeight, letterSpacing:letterSpacing?`${letterSpacing}px`:undefined,
+                          padding:Math.max(6,r.w*0.04), textAlign:align,
+                        }}/>
                     </div>
-
-                    <textarea autoFocus value={item.text||''}
-                      onChange={e=>updateCaption(slotIdx, e.target.value)}
-                      onKeyDown={e=>{
-                        if(e.key==='Escape'){ syncCaptionToImmich(slotIdx); setEditCaptionIdx(null) }
-                      }}
-                      style={{flex:1,background:'transparent',border:'none',
-                        outline:'none',color,fontFamily:font,fontStyle:italic?'italic':'normal',
-                        fontWeight:bold?'bold':'normal',fontSize:size,
-                        resize:'none',lineHeight:1.55,padding:Math.max(6,r.w*0.04),
-                        textAlign:align}}/>
-                  </div>
+                  </>
                 )
 
+                // View mode
                 return (
                   <div style={{width:'100%',height:'100%',background:bg,
-                    display:'flex',alignItems:valign,justifyContent:align==='left'?'flex-start':align==='right'?'flex-end':'center',
+                    display:'flex',alignItems:valign,
+                    justifyContent:align==='left'?'flex-start':align==='right'?'flex-end':'center',
                     padding:Math.max(8,r.w*0.05)}}>
                     <span style={{color,fontFamily:font,fontStyle:italic?'italic':'normal',
-                      fontWeight:bold?'bold':'normal',fontSize:size,
-                      textAlign:align,lineHeight:1.55,
+                      fontWeight:bold?'bold':'normal',
+                      textDecoration:underline?'underline':'none',
+                      fontSize:size,textAlign:align,lineHeight,
+                      letterSpacing:letterSpacing?`${letterSpacing}px`:undefined,
                       overflow:'hidden',display:'-webkit-box',
-                      WebkitLineClamp:Math.max(2,Math.floor(r.h/((size||13)*1.6))),
+                      WebkitLineClamp:Math.max(2,Math.floor(r.h/((size||13)*(lineHeight||1.6)))),
                       WebkitBoxOrient:'vertical'}}>
                       {item.text||<span style={{opacity:0.32}}>clicca per scrivere…</span>}
                     </span>
@@ -1246,8 +1707,41 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
           )
         })}
 
+        {/* Divider info banner — shown when all slots are empty */}
+        {isDivider && (() => {
+          const ai = page._album_info || {}
+          const ds = page._divider_style || {}
+          const accent = ds.accent_color || '#d4aa5a'
+          const textColor = ds.text_color || '#f0ede6'
+          const allEmpty = (page.items||[]).every(id => !id.item)
+          if (!allEmpty) return null
+          return (
+            <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',
+              alignItems:'center',justifyContent:'center',gap:Math.round(8*scale),
+              pointerEvents:'none',zIndex:0}}>
+              <div style={{width:'55%',height:1,background:accent+'88'}}/>
+              <p style={{fontFamily:'var(--font-display)',fontWeight:700,
+                fontSize:Math.round(16*scale*2),color:textColor,textAlign:'center',
+                padding:`0 ${Math.round(12*scale)}px`,margin:0}}>
+                {ai.albumName || 'Album'}
+              </p>
+              {ai.assetCount>0 && (
+                <p style={{fontSize:Math.round(8*scale*2),color:accent,
+                  fontFamily:'var(--font-mono)',margin:0}}>
+                  {ai.assetCount} foto{ai.dateRange ? ` · ${ai.dateRange}` : ''}
+                </p>
+              )}
+              <div style={{width:'55%',height:1,background:accent+'88'}}/>
+              <p style={{fontSize:Math.round(7*scale*2),color:textColor+'55',
+                fontFamily:'var(--font-mono)',fontStyle:'italic',margin:0}}>
+                trascina foto o clicca slot vuoto
+              </p>
+            </div>
+          )
+        })()}
+
         {/* Slot dividers */}
-        <SlotDividers items={page.items} pw={pw} ph={ph} profile={profile} scale={scale}
+        <SlotDividers items={page.items} pw={pw} ph={ph} profile={profile} scale={scale} pageNum={pageIdx+2}
           onUpdateItems={newItems=>onUpdatePage({...page,items:newItems,page_type_id:'custom',
             page_type:{id:'custom',label:'Custom',slots:newItems.map(i=>i.slot)}})}/>
       </div>
@@ -1323,17 +1817,32 @@ function ExportPanel({ layout, onExport, exporting }) {
       {open && !exporting && (
         <div style={{ marginTop:8, background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:8, padding:12 }}>
           {/* Profile info */}
-          {[['📐 Formato', tp.exportFormat(p.page_size, p.orientation==='landscape'?tp.exportLandscape:tp.exportPortrait)],
-            ['📏 Margini', `${p.margin_mm}mm`],
-            ['✂ Abbondanza', p.bleed ? `${p.bleed_mm}mm` : tp.exportNo],
-            ['📄 Pagine', `${(layout?.pages?.length||0)+1}`],
-          ].map(([k,v]) => (
-            <div key={k} style={{ fontSize:11, fontFamily:'var(--font-mono)', color:'var(--text2)',
-              display:'flex', justifyContent:'space-between', padding:'2px 0',
-              borderBottom:'1px solid var(--border)' }}>
-              <span>{k}</span><strong style={{ color:'var(--text)' }}>{v}</strong>
-            </div>
-          ))}
+          {(()=>{
+            const base2 = p.margin_mm || 5
+            const mTop    = p.margin_top    ?? base2
+            const mBot    = p.margin_bottom ?? base2
+            const mEst    = p.margin_left   ?? base2   // ← Esterno
+            const mInt    = p.margin_right  ?? base2   // Interno →
+            const rows = [
+              ['📐 Formato', tp.exportFormat(p.page_size, p.orientation==='landscape'?tp.exportLandscape:tp.exportPortrait)],
+              ['📐 Orientamento', p.orientation==='landscape' ? tp.exportLandscape : tp.exportPortrait],
+              ['↑ Alto', `${mTop}mm`],
+              ['↓ Basso', `${mBot}mm`],
+              ['← Esterno', `${mEst}mm`],
+              ['→ Interno', `${mInt}mm`],
+              ['↔ Spazio foto', `${p.gap_mm ?? 3}mm`],
+              p.bleed ? ['✂ Abbondanza', `${p.bleed_mm}mm`] : null,
+              p.crop_marks ? ['✂ Crocini', 'Sì'] : null,
+              ['📄 Pagine', `${(layout?.pages?.length||0)+1}`],
+            ].filter(Boolean)
+            return rows.map(([k,v]) => (
+              <div key={k} style={{ fontSize:11, fontFamily:'var(--font-mono)', color:'var(--text2)',
+                display:'flex', justifyContent:'space-between', padding:'2px 0',
+                borderBottom:'1px solid var(--border)' }}>
+                <span>{k}</span><strong style={{ color:'var(--text)', maxWidth:'60%', textAlign:'right', wordBreak:'break-word' }}>{v}</strong>
+              </div>
+            ))
+          })()}
 
           {/* Quality toggle */}
           <div style={{ marginTop:10, display:'flex', gap:4, padding:'6px 0' }}>
@@ -1743,8 +2252,10 @@ export default function PreviewPage() {
   const [currentPage,setCurrentPage]=useState(-1)
   const [photoAspects,setPhotoAspects]=useState({})
   const [photoTransforms,setPhotoTransforms]=useState({})  // key → {x,y,zoom}
+  const originalTransformsRef = useRef({})  // immutable copy of algo-computed transforms
   const [photoPicker,setPhotoPicker]=useState(null)
   const [albumAssets,setAlbumAssets]=useState([])
+  const [allAlbumAssets,setAllAlbumAssets]=useState([])
   const [mapUrl,setMapUrl]=useState(null)
   const [exporting,setExporting]=useState(false)
   const [recalculating,setRecalculating]=useState(false)
@@ -1770,14 +2281,28 @@ export default function PreviewPage() {
     // Load face-aware transforms from smart layout (if any)
     const storedTransforms = sessionStorage.getItem('photobook_transforms')
     if (storedTransforms) {
-      try { setPhotoTransforms(JSON.parse(storedTransforms)) } catch {}
+      try {
+        const t = JSON.parse(storedTransforms)
+        setPhotoTransforms(t)
+        // Snapshot the algorithm-computed transforms — used by "ripristina" button
+        originalTransformsRef.current = t
+      } catch {}
     }
     if (data.locations?.length)
       axios.post('/api/map',{locations:data.locations},{responseType:'blob'})
         .then(r=>setMapUrl(URL.createObjectURL(r.data))).catch(()=>{})
-    if (data.album?.id)
+    const sortAssets = arr => [...(arr||[])].sort((a,b)=>(a.localDateTime||'').localeCompare(b.localDateTime||''))
+    if (data._multi_album && data._album_ids?.length) {
+      Promise.all(data._album_ids.map(id=>axios.get(`/api/albums/${id}`)))
+        .then(results=>{
+          const perAlbum = results.map(r=>sortAssets(r.data.assets))
+          setAllAlbumAssets(perAlbum)
+          setAlbumAssets(perAlbum.flat())
+        }).catch(()=>{})
+    } else if (data.album?.id) {
       axios.get(`/api/albums/${data.album.id}`)
-        .then(r=>setAlbumAssets([...(r.data.assets||[])].sort((a,b)=>(a.localDateTime||'').localeCompare(b.localDateTime||'')))).catch(()=>{})
+        .then(r=>{ const s=sortAssets(r.data.assets); setAlbumAssets(s); setAllAlbumAssets([s]) }).catch(()=>{})
+    }
   },[])
 
   // Detect aspect ratios
@@ -1790,7 +2315,7 @@ export default function PreviewPage() {
         seen.add(item.asset_id)
         const img=new Image()
         img.onload=()=>setPhotoAspects(prev=>({...prev,[item.asset_id]:img.naturalWidth/img.naturalHeight}))
-        img.src=`/api/thumb/${item.asset_id}?size=thumbnail`
+        img.src=`/api/thumb/${item.asset_id}?size=preview`
       }
     }))
   },[layout])
@@ -1876,10 +2401,47 @@ export default function PreviewPage() {
   }
 
   const onTransformChange=useCallback((panKey,t)=>{
-    setPhotoTransforms(prev=>({...prev,[panKey]:t}))
+    setPhotoTransforms(prev=>{
+      const next={...prev,[panKey]:t}
+      // Persist immediately so transforms survive navigation/refresh and are sent to PDF export
+      sessionStorage.setItem('photobook_transforms', JSON.stringify(next))
+      return next
+    })
   },[])
 
-  const openPicker=useCallback((pageIdx,slotIdx)=>setPhotoPicker({pageIdx,slotIdx}),[])
+  const openPicker=useCallback((pageIdx,slotIdx)=>{
+    const albumIdx=layout?.pages[pageIdx]?._album_idx ?? 0
+    setPhotoPicker({pageIdx,slotIdx,albumIdx})
+  },[layout])
+
+  const [mapPickerSlot, setMapPickerSlot] = useState(null)
+  const [mapNPages, setMapNPages]           = useState('all')
+
+  const doAddMap = useCallback(async(pageIdx, slotIdx, nPages) => {
+    const allLocations = layout?.locations || []
+    if (!allLocations.length) { alert('Nessun dato GPS disponibile per questo album'); return }
+    const locations = (nPages === 'all' || isNaN(parseInt(nPages)))
+      ? allLocations
+      : allLocations.slice(0, Math.max(1, Math.min(parseInt(nPages) * 5, allLocations.length)))
+    try {
+      const r = await axios.post('/api/map', { locations }, { responseType:'blob' })
+      const mapUrl = URL.createObjectURL(r.data)
+      const mapItem = { type:'map', _map_url: mapUrl, _n_pages: nPages }
+      setLayout(prev=>{
+        const pages = prev.pages.map((pg,pi)=>pi!==pageIdx?pg:{
+          ...pg, items: pg.items.map((id,si)=>si!==slotIdx?id:{...id, item:mapItem})
+        })
+        return persist({...prev, pages})
+      })
+      setHasChanges(true)
+    } catch(e) { alert('Errore generazione mappa: ' + e.message) }
+    setMapPickerSlot(null)
+  },[layout])
+
+  const addMapToSlot=useCallback((pageIdx,slotIdx)=>{
+    setMapPickerSlot({pageIdx,slotIdx})
+    setMapNPages('all')
+  },[])
 
   // Drop from album panel onto slot
   const handleDropFromPanel=useCallback((pageIdx,slotIdx,assetId)=>{
@@ -1911,16 +2473,21 @@ export default function PreviewPage() {
       const page=prev.pages[pageIdx]; const items=page.items
       const item=items[slotIdx].item
       const captionItem={type:'caption',text:'',for_asset_id:item?.asset_id||'',originalFileName:item?.originalFileName||''}
-      const emptyIdx=items.findIndex((id,i)=>i!==slotIdx&&!id.item)
       let newItems
-      if(emptyIdx>=0){
-        newItems=items.map((id,i)=>i===emptyIdx?{...id,item:captionItem}:id)
+      if(!item){
+        // Empty slot: convert it directly to caption
+        newItems=items.map((id,i)=>i===slotIdx?{...id,item:captionItem}:id)
       } else {
-        const slot=items[slotIdx].slot
-        const photoSlot={...slot,h:parseFloat((slot.h*0.68).toFixed(2))}
-        const capSlot={x:slot.x,y:parseFloat((slot.y+slot.h*0.68).toFixed(2)),w:slot.w,h:parseFloat((slot.h*0.32).toFixed(2))}
-        newItems=items.map((id,i)=>i===slotIdx?{slot:photoSlot,item:id.item}:id)
-        newItems.push({slot:capSlot,item:captionItem})
+        const emptyIdx=items.findIndex((id,i)=>i!==slotIdx&&!id.item)
+        if(emptyIdx>=0){
+          newItems=items.map((id,i)=>i===emptyIdx?{...id,item:captionItem}:id)
+        } else {
+          const slot=items[slotIdx].slot
+          const photoSlot={...slot,h:parseFloat((slot.h*0.68).toFixed(2))}
+          const capSlot={x:slot.x,y:parseFloat((slot.y+slot.h*0.68).toFixed(2)),w:slot.w,h:parseFloat((slot.h*0.32).toFixed(2))}
+          newItems=items.map((id,i)=>i===slotIdx?{slot:photoSlot,item:id.item}:id)
+          newItems.push({slot:capSlot,item:captionItem})
+        }
       }
       const newPages=prev.pages.map((pg,pi)=>pi!==pageIdx?pg:{
         ...pg,items:newItems,page_type_id:'custom',
@@ -2113,7 +2680,10 @@ export default function PreviewPage() {
       pages:     projectData.pages,
       locations: projectData.locations || [],
     })
-    if (projectData.photo_transforms) setPhotoTransforms(projectData.photo_transforms)
+    if (projectData.photo_transforms) {
+      setPhotoTransforms(projectData.photo_transforms)
+      originalTransformsRef.current = projectData.photo_transforms
+    }
     setCurrentPage(projectData.current_page ?? 0)
     setHasChanges(false)
     // reload album assets for the picker
@@ -2443,18 +3013,19 @@ export default function PreviewPage() {
                       page={leftPage} pageIdx={leftIdx}
                       profile={profile} allPageTypes={allPageTypes}
                       photoAspects={photoAspects} photoTransforms={photoTransforms}
+                      originalTransforms={originalTransformsRef.current}
                       onTransformChange={onTransformChange}
                       onUpdatePage={p=>updatePage(leftIdx,p)}
                       onOpenPicker={openPicker} onAddCaption={addCaption}
                       onDrop={handleDropFromPanel}
-                      onPhotoClick={aid=>{ setHighlightedAsset(aid); if(!panelOpen) setPanelOpen(true) }}/>
+                      onPhotoClick={aid=>{ setHighlightedAsset(aid); if(!panelOpen) setPanelOpen(true) }}
+                      onAddMap={addMapToSlot}/>
                   ) : (
-                    <div style={{width:'100%',aspectRatio:'1/1.4',background:'rgba(0,0,0,0.08)',borderRadius:2,
-                      display:'flex',alignItems:'center',justifyContent:'center'}}>
-                      <span style={{fontSize:11,color:'var(--text3)'}}>copertina/inizio</span>
-                    </div>
+                    <BlankPage profile={profile} allPageTypes={allPageTypes} label="pagina vuota"/>
                   )}
-                  {leftPage && <p className="text-xs text-muted mt-1">Pagina {leftIdx+1}</p>}
+                  {leftPage
+                    ? <p className="text-xs text-muted mt-1">Pagina {leftIdx+1}</p>
+                    : <p className="text-xs text-muted mt-1">Seconda di copertina</p>}
                 </div>
                 {/* Right page */}
                 <div style={{display:'flex',flexDirection:'column',alignItems:'center',flex:1,minWidth:0}}>
@@ -2463,18 +3034,19 @@ export default function PreviewPage() {
                       page={rightPage} pageIdx={rightIdx}
                       profile={profile} allPageTypes={allPageTypes}
                       photoAspects={photoAspects} photoTransforms={photoTransforms}
+                      originalTransforms={originalTransformsRef.current}
                       onTransformChange={onTransformChange}
                       onUpdatePage={p=>updatePage(rightIdx,p)}
                       onOpenPicker={openPicker} onAddCaption={addCaption}
                       onDrop={handleDropFromPanel}
-                      onPhotoClick={aid=>{ setHighlightedAsset(aid); if(!panelOpen) setPanelOpen(true) }}/>
+                      onPhotoClick={aid=>{ setHighlightedAsset(aid); if(!panelOpen) setPanelOpen(true) }}
+                      onAddMap={addMapToSlot}/>
                   ) : (
-                    <div style={{width:'100%',aspectRatio:'1/1.4',background:'rgba(0,0,0,0.08)',borderRadius:2,
-                      display:'flex',alignItems:'center',justifyContent:'center'}}>
-                      <span style={{fontSize:11,color:'var(--text3)'}}>fine album</span>
-                    </div>
+                    <BlankPage profile={profile} allPageTypes={allPageTypes} label="pagina vuota"/>
                   )}
-                  {rightPage && <p className="text-xs text-muted mt-1">Pagina {rightIdx+1}</p>}
+                  {rightPage
+                    ? <p className="text-xs text-muted mt-1">Pagina {rightIdx+1}</p>
+                    : <p className="text-xs text-muted mt-1">Terza di copertina</p>}
                 </div>
               </div>
             )
@@ -2493,6 +3065,7 @@ export default function PreviewPage() {
             onAddCaption={addCaption}
             onDrop={handleDropFromPanel}
             onPhotoClick={aid=>{ setHighlightedAsset(aid); if(!panelOpen) setPanelOpen(true) }}
+            onAddMap={addMapToSlot}
           />
         )}
         </div>{/* end canvas area */}
@@ -2501,6 +3074,7 @@ export default function PreviewPage() {
       {/* ── Right panel: album photos ── */}
       <AlbumPanel
         assets={albumAssets}
+        presorted={allAlbumAssets.length > 1}
         usageMap={usageMap}
         usagePages={usagePages}
         open={panelOpen}
@@ -2513,7 +3087,51 @@ export default function PreviewPage() {
 
       {photoPicker&&(
         <PhotoPickerModal assets={albumAssets} usageMap={usageMap}
+          allAlbumAssets={allAlbumAssets}
+          albumIdx={photoPicker?.albumIdx ?? 0}
+          albumNames={layout?._album_names}
           onSelect={onPhotoSelected} onClose={()=>setPhotoPicker(null)}/>
+      )}
+
+      {mapPickerSlot&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:1000,
+          display:'flex',alignItems:'center',justifyContent:'center'}}
+          onClick={()=>setMapPickerSlot(null)}>
+          <div style={{background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:10,
+            padding:24,minWidth:300,maxWidth:400,boxShadow:'0 8px 40px rgba(0,0,0,0.5)'}}
+            onClick={e=>e.stopPropagation()}>
+            <h3 style={{margin:'0 0 16px',fontSize:15}}>🗺 Inserisci mappa GPS</h3>
+            <label style={{fontSize:12,color:'var(--text2)',display:'block',marginBottom:10}}>
+              Pagine da coprire
+            </label>
+            <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:16}}>
+              <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}}>
+                <input type="radio" name="mapNPages" checked={mapNPages==='all'}
+                  onChange={()=>setMapNPages('all')}/>
+                Tutto l'album
+              </label>
+              <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}}>
+                <input type="radio" name="mapNPages" checked={mapNPages!=='all'}
+                  onChange={()=>setMapNPages(mapNPages==='all'?'10':mapNPages)}/>
+                Prime
+                <input type="number" min={1} max={999} value={mapNPages==='all'?'':mapNPages}
+                  disabled={mapNPages==='all'}
+                  onChange={e=>setMapNPages(e.target.value||'1')}
+                  onClick={()=>{ if(mapNPages==='all') setMapNPages('10') }}
+                  style={{width:60,padding:'2px 6px',background:'var(--bg3)',
+                    border:'1px solid var(--border)',color:'var(--text)',borderRadius:4,fontSize:13}}/>
+                pagine
+              </label>
+            </div>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+              <button className="btn" onClick={()=>setMapPickerSlot(null)}>Annulla</button>
+              <button className="btn btn-primary"
+                onClick={()=>doAddMap(mapPickerSlot.pageIdx,mapPickerSlot.slotIdx,mapNPages)}>
+                Inserisci mappa
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {projectModal && (

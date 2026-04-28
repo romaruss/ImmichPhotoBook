@@ -1,7 +1,9 @@
-import json, os, uuid, asyncio, logging
+import json, os, uuid, asyncio, logging, time, secrets
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Depends
+from fastapi.responses import JSONResponse
 from fastapi.responses import Response, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +23,48 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path("/data")
 PROFILES_DIR = DATA_DIR / "profiles"
 CONFIG_PATH  = DATA_DIR / "config.json"
+
+# ─── AUTH & RATE LIMITING ─────────────────────────────────────────────────────
+# Set PHOTOBOOK_TOKEN env var to enable auth. If unset, access is unrestricted.
+# Generate a token: python3 -c "import secrets; print(secrets.token_hex(32))"
+_AUTH_TOKEN   = os.environ.get("PHOTOBOOK_TOKEN", "").strip()
+_AUTH_ENABLED = bool(_AUTH_TOKEN)
+
+_rate_buckets: dict = defaultdict(lambda: {"tokens": 10.0, "last": time.time()})
+
+def _check_bucket(key: str, capacity: float, rate: float) -> bool:
+    now = time.time()
+    b = _rate_buckets[key]
+    b["tokens"] = min(capacity, b["tokens"] + (now - b["last"]) * rate)
+    b["last"] = now
+    if b["tokens"] >= 1:
+        b["tokens"] -= 1
+        return True
+    return False
+
+def _ip(req: Request) -> str:
+    xff = req.headers.get("x-forwarded-for", "")
+    return (xff.split(",")[0].strip() or (req.client.host if req.client else "?"))
+
+async def require_auth(req: Request):
+    if not _AUTH_ENABLED:
+        return
+    header = req.headers.get("authorization", "")
+    token  = header[7:].strip() if header.startswith("Bearer ") else req.cookies.get("pb_token", "")
+    if not token or not secrets.compare_digest(token, _AUTH_TOKEN):
+        raise HTTPException(401, "Autenticazione richiesta")
+
+def rl_export(req: Request):
+    if not _check_bucket(f"exp:{_ip(req)}", 4, 4/60):
+        raise HTTPException(429, "Troppe richieste export. Riprova tra qualche minuto.")
+
+def rl_generate(req: Request):
+    if not _check_bucket(f"gen:{_ip(req)}", 10, 10/60):
+        raise HTTPException(429, "Troppe richieste. Attendi un momento.")
+
+def rl_api(req: Request):
+    if not _check_bucket(f"api:{_ip(req)}", 120, 2.0):
+        raise HTTPException(429, "Troppo traffico. Riprova tra poco.")
 CACHE_DIR    = DATA_DIR / "cache"
 EXPORT_DIR   = DATA_DIR / "exports"
 PROJECTS_DIR = DATA_DIR / "projects"
@@ -47,7 +91,46 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
+
+# ── Auth middleware: blocks /api/* unless valid token provided ─────────────────
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    # Always allow: auth endpoints, static files, SPA fallback
+    if not path.startswith("/api/") or path.startswith("/api/auth"):
+        return await call_next(request)
+    if not _AUTH_ENABLED:
+        return await call_next(request)
+    header = request.headers.get("authorization", "")
+    token  = header[7:].strip() if header.startswith("Bearer ") else request.cookies.get("pb_token", "")
+    if token and secrets.compare_digest(token, _AUTH_TOKEN):
+        return await call_next(request)
+    return JSONResponse({"detail": "Autenticazione richiesta"}, status_code=401)
+
+# ── Auth endpoints (no auth required) ─────────────────────────────────────────
+@app.post("/api/auth/login")
+async def login(request: Request):
+    if not _AUTH_ENABLED:
+        return {"ok": True, "token": ""}
+    body = await request.json()
+    password = body.get("password", "")
+    if not password or not secrets.compare_digest(password, _AUTH_TOKEN):
+        raise HTTPException(401, "Password errata")
+    resp = JSONResponse({"ok": True, "token": _AUTH_TOKEN})
+    resp.set_cookie("pb_token", _AUTH_TOKEN, httponly=True, samesite="strict", max_age=60*60*24*30)
+    return resp
+
+@app.post("/api/auth/logout")
+async def logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie("pb_token")
+    return resp
+
+@app.get("/api/auth/status")
+async def auth_status():
+    return {"enabled": _AUTH_ENABLED}
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 
@@ -58,12 +141,29 @@ class ConfigModel(BaseModel):
 @app.get("/api/config")
 async def get_config():
     if CONFIG_PATH.exists():
-        return json.loads(CONFIG_PATH.read_text())
-    return {"immich_url": "", "api_key": ""}
+        data = json.loads(CONFIG_PATH.read_text())
+        # Never expose the real key to the frontend — return a masked version.
+        # The frontend only needs to know if a key is set (to show "configured").
+        key = data.get("api_key", "")
+        if key:
+            visible = key[:4] + "•" * max(0, len(key) - 8) + key[-4:] if len(key) > 8 else "•" * len(key)
+            data["api_key"] = visible
+            data["api_key_set"] = True
+        else:
+            data["api_key_set"] = False
+        return data
+    return {"immich_url": "", "api_key": "", "api_key_set": False}
 
 @app.post("/api/config")
 async def save_config(cfg: ConfigModel):
-    CONFIG_PATH.write_text(json.dumps(cfg.dict(), indent=2))
+    # If the frontend sends back a masked key (e.g. "sk-••••••1234"),
+    # keep the real existing key instead of overwriting with the masked one.
+    payload = cfg.dict()
+    if "•" in payload.get("api_key", ""):
+        if CONFIG_PATH.exists():
+            existing = json.loads(CONFIG_PATH.read_text())
+            payload["api_key"] = existing.get("api_key", "")
+    CONFIG_PATH.write_text(json.dumps(payload, indent=2))
     return {"ok": True}
 
 @app.get("/api/config/test")
@@ -129,8 +229,10 @@ class Profile(BaseModel):
         "bold": False,
     }
     cover_style: dict | None = None
+    divider_style: dict | None = None  # layout della pagina divisore album
     export_dpi: int = 300
     color_profile: str = "srgb"    # srgb | adobe_rgb | fogra39 | fogra51 | swop
+    crop_marks: bool = False        # stampa crocini di taglio agli angoli
 
 @app.post("/api/profiles/{pid}/duplicate")
 async def duplicate_profile(pid: str):
@@ -264,7 +366,7 @@ class GenerateRequest(BaseModel):
     config: dict = {}
 
 @app.post("/api/layout/generate")
-async def generate_layout_new(req: GenerateRequest):
+async def generate_layout_new(req: GenerateRequest, _rl: None = Depends(rl_generate)):
     """
     Unified layout generator — replaces /api/layout and /api/layout/smart.
     Uses the profile's page_types and the config options passed by the client.
@@ -495,51 +597,41 @@ async def export_progress():
 def _set_progress(pct: int, step: str):
     _export_progress.update({"pct": pct, "step": step, "done": False, "error": ""})
 
+# Max foto hi-res in RAM contemporaneamente (evita OOM)
+# 200 foto × ~4MB preview JPEG ≈ 800MB — limite ragionevole per un server entry-level
+_MAX_HIRES_PHOTOS = 300
+
 async def _fetch_photos(asset_ids: set, hires: bool = False) -> dict:
     """
-    Fetch photos for export.
-    hires=True  → original file from Immich (print quality)
-    hires=False → thumbnail JPEG (fast preview)
-    Batched to avoid overwhelming Immich.
+    Fetch photos for export using a shared HTTP client with connection pooling.
+    Limits concurrency via semaphore to avoid OOM and Immich overload.
     """
-    photo_cache: dict[str, bytes] = {}
-    ids    = list(asset_ids)
-    BATCH  = 5 if hires else 10
-    total  = len(ids)
-
-    async def fetch_one(aid: str):
-        try:
-            if hires:
-                data, _ = await ic.get_asset_original(aid)
-            else:
-                data = await ic.get_asset_thumbnail(aid, "thumbnail")
-            photo_cache[aid] = data
-        except Exception:
-            try:
-                data = await ic.get_asset_thumbnail(aid, "preview")
-                photo_cache[aid] = data
-            except Exception:
-                try:
-                    data = await ic.get_asset_thumbnail(aid, "thumbnail")
-                    photo_cache[aid] = data
-                except Exception as e:
-                    logger.warning(f"Could not fetch photo {aid}: {e}")
-
-    mode = "originali (hi-res)" if hires else "thumbnail (anteprima)"
+    ids   = list(asset_ids)
+    total = len(ids)
+    mode  = "preview hi-res" if hires else "thumbnail"
     logger.info(f"Fetching {total} photos [{mode}]")
-    for i in range(0, total, BATCH):
-        batch = ids[i:i + BATCH]
-        await asyncio.gather(*[fetch_one(aid) for aid in batch])
-        done_so_far = min(i + BATCH, total)
-        pct = 10 + int(done_so_far / total * 60)   # 10% → 70%
-        _set_progress(pct, f"Scaricamento foto {done_so_far}/{total}")
-        logger.info(f"  Fetch: {done_so_far}/{total}")
 
+    if hires and total > _MAX_HIRES_PHOTOS:
+        raise ValueError(
+            f"Troppo foto hi-res ({total} > {_MAX_HIRES_PHOTOS}). "
+            f"Usa la modalità 'Anteprima' oppure dividi l'album in parti più piccole."
+        )
+
+    def on_progress(done: int, tot: int):
+        pct = 10 + int(done / tot * 60)   # 10% → 70%
+        _set_progress(pct, f"Scaricamento foto {done}/{tot}")
+
+    photo_cache = await ic.fetch_assets_bulk(
+        ids,
+        hires=hires,
+        on_progress=on_progress,
+        max_concurrent=3 if hires else 8,
+    )
     logger.info(f"Fetch done: {len(photo_cache)}/{total}")
     return photo_cache
 
 @app.post("/api/export")
-async def export_book(req: ExportRequest):
+async def export_book(req: ExportRequest, _rl: None = Depends(rl_export)):
     _export_progress.update({"pct": 0, "step": "Avvio…", "done": False, "error": ""})
     try:
         _set_progress(2, "Caricamento album da Immich…")
@@ -595,23 +687,41 @@ async def export_book(req: ExportRequest):
                 headers={"Content-Disposition": f'attachment; filename="{album_slug}_svg.zip"'}
             )
 
-        # PDF
-        _set_progress(75, "Composizione PDF…")
+        # PDF — run in thread executor so async loop stays responsive
+        # Progress callback: called from worker thread, so use thread-safe update
+        n_pages = len(req.pages)
+        pdf_timeout = max(300, n_pages * 8)   # at least 8s per page, min 5min
+
+        def _pdf_progress(page_idx: int, total_pages: int):
+            pct = 75 + int(page_idx / max(total_pages, 1) * 22)  # 75% → 97%
+            _set_progress(pct, f"Composizione PDF pagina {page_idx}/{total_pages}…")
+
+        _set_progress(75, f"Composizione PDF ({n_pages} pagine)…")
         try:
+            import gc
             pdf_bytes = await asyncio.wait_for(
                 asyncio.get_event_loop().run_in_executor(
                     None,
                     lambda: generate_pdf(
                         album=album_info, pages=req.pages, profile=profile,
                         photo_cache=photo_cache, map_image=map_image,
+                        on_page_progress=_pdf_progress,
+                        pan_offsets=req.photo_transforms,
                     )
                 ),
-                timeout=300,
+                timeout=pdf_timeout,
             )
+            # Free photo cache memory immediately after PDF is built
+            photo_cache.clear()
+            gc.collect()
         except asyncio.TimeoutError:
-            logger.error("PDF timeout")
-            _export_progress.update({"pct": 0, "done": True, "error": "timeout"})
+            logger.error(f"PDF timeout after {pdf_timeout}s for {n_pages} pages")
+            _export_progress.update({"pct": 0, "done": True,
+                "error": f"Timeout ({pdf_timeout}s) — album troppo grande, prova con meno foto o qualità 'Anteprima'"})
             raise HTTPException(500, "PDF generation timed out")
+        except ValueError as e:
+            _export_progress.update({"pct": 0, "done": True, "error": str(e)})
+            raise HTTPException(400, str(e))
         except Exception as e:
             logger.exception("PDF generation failed")
             _export_progress.update({"pct": 0, "done": True, "error": str(e)})
@@ -628,43 +738,6 @@ async def export_book(req: ExportRequest):
     except Exception as e:
         _export_progress.update({"pct": 0, "done": True, "error": str(e)})
         raise
-    """
-    Fetch photos for export. hires=True fetches the original file (for PDF/SVG print quality).
-    Falls back to 'preview' then 'thumbnail' on error.
-    Batched in groups of 5 (originals are large).
-    """
-    photo_cache: dict[str, bytes] = {}
-    ids = list(asset_ids)
-    BATCH = 5 if hires else 10
-
-    async def fetch_one(aid: str):
-        try:
-            if hires:
-                data, _ = await ic.get_asset_original(aid)
-            else:
-                data = await ic.get_asset_thumbnail(aid, "thumbnail")
-            photo_cache[aid] = data
-        except Exception:
-            try:
-                data = await ic.get_asset_thumbnail(aid, "preview")
-                photo_cache[aid] = data
-            except Exception:
-                try:
-                    data = await ic.get_asset_thumbnail(aid, "thumbnail")
-                    photo_cache[aid] = data
-                except Exception as e:
-                    logger.warning(f"Could not fetch photo {aid}: {e}")
-
-    total = len(ids)
-    mode  = "original (hi-res)" if hires else "thumbnail"
-    logger.info(f"Fetching {total} photos for export [{mode}] — batches of {BATCH}")
-    for i in range(0, total, BATCH):
-        batch = ids[i:i + BATCH]
-        await asyncio.gather(*[fetch_one(aid) for aid in batch])
-        logger.info(f"  Photo fetch: {min(i+BATCH, total)}/{total}")
-
-    logger.info(f"Fetch complete: {len(photo_cache)}/{total} retrieved")
-    return photo_cache
 
 @app.get("/api/page-sizes")
 async def page_sizes():
@@ -674,7 +747,7 @@ async def page_sizes():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "1.0.0"}
+    return {"status": "ok", "version": "0.5.0"}
 
 # ─── PROJECTS (save / load / list / delete) ──────────────────────────────────
 
@@ -754,40 +827,13 @@ _frontend_candidates = [
 ]
 frontend_dist = next((p for p in _frontend_candidates if p.exists()), None)
 
-if frontend_dist:
-    logger.info(f"Serving frontend from {frontend_dist}")
-    # Mount static assets (JS, CSS, images) under /assets
-    _assets = frontend_dist / "assets"
-    if _assets.exists():
-        app.mount("/assets", StaticFiles(directory=str(_assets)), name="assets")
-    # Mount public files (icons, manifest, etc.) if any
-    _public = frontend_dist / "public"
-    if _public.exists():
-        app.mount("/public", StaticFiles(directory=str(_public)), name="public")
-
-    # SPA catch-all: serve index.html for every non-API, non-asset path
-    # This allows React Router to handle /preview, /profiles etc. on hard refresh
-    from fastapi.responses import FileResponse
-
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def spa_fallback(full_path: str):
-        # Serve real files that exist (favicon, icon.svg, etc.)
-        candidate = frontend_dist / full_path
-        if candidate.exists() and candidate.is_file():
-            return FileResponse(str(candidate))
-        # Everything else → index.html (React Router takes over)
-        return FileResponse(str(frontend_dist / "index.html"))
-else:
-    logger.warning("Frontend dist not found. Run 'npm run build' in frontend/")
-    @app.get("/")
-    async def root():
-        return {"status": "API running", "message": "Frontend not built. Run: cd frontend && npm run build"}
-
-# ─── DEBUG: Immich raw asset data ────────────────────────────────────────────
+# ─── DEBUG: Immich raw asset data ─────────────────────────────────────────────
+# Defined BEFORE the SPA catch-all so FastAPI matches these routes first.
 
 @app.get("/api/debug/asset/{asset_id}")
 async def debug_asset(asset_id: str):
     """Returns raw Immich data for a single asset — for debugging face/checksum fields."""
+    from album_generator import _display_dims, _get_all_faces
     try:
         async with __import__('httpx').AsyncClient(timeout=15) as client:
             r = await client.get(
@@ -796,21 +842,51 @@ async def debug_asset(asset_id: str):
             )
             r.raise_for_status()
             data = r.json()
-        # Return only the fields relevant to faces/dedup
-        relevant = {
-            "id":                data.get("id"),
-            "originalFileName":  data.get("originalFileName"),
-            "localDateTime":     data.get("localDateTime"),
-            "checksum":          data.get("checksum"),
-            "thumbhash":         data.get("thumbhash"),
-            "isFavorite":        data.get("isFavorite"),
-            "exifInfo_keys":     list((data.get("exifInfo") or {}).keys()),
-            "people":            data.get("people"),
-            "faces":             data.get("faces"),
-            "hasMetadata":       "people" in data or "faces" in data,
-            "_all_keys":         list(data.keys()),
+
+        exif = data.get("exifInfo") or {}
+        phys_w = exif.get("exifImageWidth") or exif.get("imageWidth") or 0
+        phys_h = exif.get("exifImageHeight") or exif.get("imageHeight") or 0
+        orientation = exif.get("orientation")
+        disp_w, disp_h = _display_dims(data)
+        normalized_faces = _get_all_faces(data)
+
+        raw_faces = []
+        for person in (data.get("people") or []):
+            for face in (person.get("faces") or []):
+                raw_faces.append({
+                    "person": person.get("name"),
+                    "x1": face.get("boundingBoxX1"),
+                    "y1": face.get("boundingBoxY1"),
+                    "x2": face.get("boundingBoxX2"),
+                    "y2": face.get("boundingBoxY2"),
+                    "face_imageW": face.get("imageWidth"),
+                    "face_imageH": face.get("imageHeight"),
+                })
+        if not raw_faces:
+            for face in (data.get("faces") or []):
+                raw_faces.append({
+                    "person": None,
+                    "x1": face.get("boundingBoxX1"),
+                    "y1": face.get("boundingBoxY1"),
+                    "x2": face.get("boundingBoxX2"),
+                    "y2": face.get("boundingBoxY2"),
+                    "face_imageW": face.get("imageWidth"),
+                    "face_imageH": face.get("imageHeight"),
+                })
+
+        return {
+            "id":               data.get("id"),
+            "originalFileName": data.get("originalFileName"),
+            "exif": {
+                "physicalW":    phys_w,
+                "physicalH":    phys_h,
+                "orientation":  orientation,
+                "displayW":     disp_w,
+                "displayH":     disp_h,
+            },
+            "raw_faces":        raw_faces,
+            "normalized_faces": normalized_faces,
         }
-        return relevant
     except Exception as e:
         raise HTTPException(502, f"Immich error: {e}")
 
@@ -835,15 +911,36 @@ async def debug_album_sample(album_id: str, n: int = 3):
                 results.append({
                     "from_album": {k: a.get(k) for k in ["id","originalFileName","localDateTime","checksum","thumbhash","isFavorite","people","faces"]},
                     "from_asset_api": {
-                        "id":               data.get("id"),
-                        "checksum":         data.get("checksum"),
-                        "thumbhash":        data.get("thumbhash"),
-                        "isFavorite":       data.get("isFavorite"),
-                        "people":           data.get("people"),
-                        "faces":            data.get("faces"),
-                        "_all_keys":        list(data.keys()),
+                        "id":       data.get("id"),
+                        "people":   data.get("people"),
+                        "faces":    data.get("faces"),
                     }
                 })
             except Exception as e:
                 results.append({"id": a.get("id"), "error": str(e)})
     return {"album_id": album_id, "n_total": len(album.get("assets",[])), "samples": results}
+
+# ─── SPA / static files ───────────────────────────────────────────────────────
+
+if frontend_dist:
+    logger.info(f"Serving frontend from {frontend_dist}")
+    _assets = frontend_dist / "assets"
+    if _assets.exists():
+        app.mount("/assets", StaticFiles(directory=str(_assets)), name="assets")
+    _public = frontend_dist / "public"
+    if _public.exists():
+        app.mount("/public", StaticFiles(directory=str(_public)), name="public")
+
+    from fastapi.responses import FileResponse
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        candidate = frontend_dist / full_path
+        if candidate.exists() and candidate.is_file():
+            return FileResponse(str(candidate))
+        return FileResponse(str(frontend_dist / "index.html"))
+else:
+    logger.warning("Frontend dist not found. Run 'npm run build' in frontend/")
+    @app.get("/")
+    async def root():
+        return {"status": "API running", "message": "Frontend not built. Run: cd frontend && npm run build"}

@@ -175,9 +175,14 @@ def _get_all_faces(photo: Photo) -> list[dict]:
     """
     img_w, img_h = _display_dims(photo)
 
-    def normalize_bbox(x1r, y1r, x2r, y2r):
-        if img_w > 1 and img_h > 1 and (x2r > 1.0 or y2r > 1.0):
-            x1, y1, x2, y2 = x1r/img_w, y1r/img_h, x2r/img_w, y2r/img_h
+    def normalize_bbox(x1r, y1r, x2r, y2r, face_w=None, face_h=None):
+        # Immich stores face detection image dims in face data (imageWidth/imageHeight).
+        # The bbox is in that preview space, NOT in the original full-res space.
+        # Use face_w/face_h when available; fall back to display dims of original.
+        w = face_w if (face_w and face_w > 1) else img_w
+        h = face_h if (face_h and face_h > 1) else img_h
+        if w > 1 and h > 1 and (x2r > 1.0 or y2r > 1.0):
+            x1, y1, x2, y2 = x1r/w, y1r/h, x2r/w, y2r/h
         else:
             x1, y1, x2, y2 = x1r, y1r, x2r, y2r
         x1, y1 = max(0.0, min(1.0, x1)), max(0.0, min(1.0, y1))
@@ -191,14 +196,20 @@ def _get_all_faces(photo: Photo) -> list[dict]:
     faces = []
     for person in (photo.get("people") or []):
         for face in (person.get("faces") or []):
-            f = normalize_bbox(face.get("boundingBoxX1",0), face.get("boundingBoxY1",0),
-                               face.get("boundingBoxX2",0), face.get("boundingBoxY2",0))
+            f = normalize_bbox(
+                face.get("boundingBoxX1", 0), face.get("boundingBoxY1", 0),
+                face.get("boundingBoxX2", 0), face.get("boundingBoxY2", 0),
+                face.get("imageWidth"), face.get("imageHeight"),
+            )
             if f:
                 faces.append(f)
     if not faces:
         for face in (photo.get("faces") or []):
-            f = normalize_bbox(face.get("boundingBoxX1",0), face.get("boundingBoxY1",0),
-                               face.get("boundingBoxX2",0), face.get("boundingBoxY2",0))
+            f = normalize_bbox(
+                face.get("boundingBoxX1", 0), face.get("boundingBoxY1", 0),
+                face.get("boundingBoxX2", 0), face.get("boundingBoxY2", 0),
+                face.get("imageWidth"), face.get("imageHeight"),
+            )
             if f:
                 faces.append(f)
     return faces

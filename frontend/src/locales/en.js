@@ -88,7 +88,9 @@ export default {
     gapHint:        'Gutter between photos on the same page',
     bleedLabel:     'Bleed (mm)',
     bleedActive:    'Enable',
-    bleedHint:      'Extra area that will be trimmed in print',
+    bleedHint:  'Extra area that will be trimmed in print',
+    cropMarksLabel: 'Crop marks',
+    cropMarksHint:  'Adds trimming marks at corners — only for professional print delivery. Requires bleed to be active.',
 
     exportCard:     'PDF export',
     exportDpiLabel: 'Photo resolution',

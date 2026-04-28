@@ -14,8 +14,11 @@ Features:
 """
 
 import io
+import gc
 import logging
 import os
+import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 from PIL import Image as PILImage, ExifTags, ImageCms
 from reportlab.lib.units import mm
@@ -111,46 +114,55 @@ def _prepare_image(
     slot_h_pt: float,
     dpi: int,
     color_profile: str,
+    pan_x: float = 50.0,
+    pan_y: float = 50.0,
+    zoom: float = 1.0,
 ) -> tuple[bytes, float, float, float, float]:
     """
-    Process an image for PDF embedding:
+    Process an image for PDF embedding.
     1. Fix EXIF orientation
-    2. Compute cover-crop scale (fill slot)
-    3. Resize to target DPI at the slot's physical size
-    4. Convert colour profile (ICC)
-    5. Re-encode as JPEG
+    2. Compute cover-crop scale (fill slot), then apply zoom
+    3. Apply pan offset (pan_x/pan_y 0-100)
+    4. Resize to target DPI
+    5. Convert colour profile (ICC)
+    6. Re-encode as JPEG
 
     Returns (jpeg_bytes, draw_x_offset, draw_y_offset, draw_w_pt, draw_h_pt)
-    where offsets position the image to cover the slot.
+    where offsets position the (full-size) image so the correct pan area
+    appears inside the slot when clipped.
     """
     pil = PILImage.open(io.BytesIO(img_bytes))
     pil = _fix_orientation(pil)
 
     iw, ih = pil.size
-    scale = max(slot_w_pt / iw, slot_h_pt / ih)
+    # Base scale: image just covers the slot (cover-crop)
+    base_scale = max(slot_w_pt / iw, slot_h_pt / ih)
+    # Apply zoom (zoom<1 → image smaller than slot → letterboxed, matches preview)
+    eff_zoom = max(0.01, float(zoom))
+    scale = base_scale * eff_zoom
     draw_w = iw * scale
     draw_h = ih * scale
-    ox = (draw_w - slot_w_pt) / 2
-    oy = (draw_h - slot_h_pt) / 2
+
+    # Pan offset: 0=top/left, 50=center, 100=bottom/right
+    # ReportLab is y-up; CSS is y-down → Y pan must be inverted (1-pan_fy)
+    pan_fx = pan_x / 100.0
+    pan_fy = pan_y / 100.0
+    ox = (draw_w - slot_w_pt) * pan_fx        if draw_w >= slot_w_pt else -(slot_w_pt - draw_w) / 2
+    oy = (draw_h - slot_h_pt) * (1.0 - pan_fy) if draw_h >= slot_h_pt else -(slot_h_pt - draw_h) / 2
 
     # ── Resize to target DPI ──────────────────────────────────────────────
-    # Physical slot size in inches
-    slot_w_in = slot_w_pt / 72
-    slot_h_in = slot_h_pt / 72
-    # Target pixel size for the full (scaled) image
     target_w_px = round(draw_w / 72 * dpi)
     target_h_px = round(draw_h / 72 * dpi)
     # Only downscale (never upscale originals)
     if target_w_px < iw or target_h_px < ih:
         pil = pil.resize((target_w_px, target_h_px), PILImage.LANCZOS)
-        draw_w = slot_w_pt + (ox / iw) * 2 * target_w_px / iw * 72 / dpi * iw
-        # Recompute with new pixel size
+        # Recompute draw dimensions from resized pixel size
         iw2, ih2 = pil.size
-        scale2 = max(slot_w_pt / iw2, slot_h_pt / ih2)
+        scale2 = max(slot_w_pt / iw2, slot_h_pt / ih2) * eff_zoom
         draw_w = iw2 * scale2
         draw_h = ih2 * scale2
-        ox = (draw_w - slot_w_pt) / 2
-        oy = (draw_h - slot_h_pt) / 2
+        ox = (draw_w - slot_w_pt) * pan_fx
+        oy = (draw_h - slot_h_pt) * (1.0 - pan_fy)
 
     # ── Colour profile conversion ─────────────────────────────────────────
     is_cmyk = color_profile in ("fogra39", "fogra51", "swop")
@@ -166,7 +178,10 @@ def _prepare_image(
             transform = ImageCms.buildTransform(
                 src_profile, dst_profile, "RGB", dst_mode,
                 renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC,
-                flags=ImageCms.FLAGS["BLACKPOINTCOMPENSATION"],
+                flags=(lambda: (
+        ImageCms.FLAGS.get("BLACKPOINTCOMPENSATION", 0)
+        if hasattr(ImageCms, "FLAGS") and isinstance(ImageCms.FLAGS, dict) else 0
+    ))(),
             )
             pil = ImageCms.applyTransform(pil_rgb, transform)
         except Exception as e:
@@ -179,10 +194,9 @@ def _prepare_image(
 
     # ── Re-encode ─────────────────────────────────────────────────────────
     buf = io.BytesIO()
-    pil.save(buf, format="JPEG", quality=92, optimize=True,
-             dpi=(dpi, dpi))
+    pil.save(buf, format="JPEG", quality=92, optimize=True, dpi=(dpi, dpi))
     buf.seek(0)
-    return buf, ox, oy, draw_w, draw_h
+    return buf.read(), ox, oy, draw_w, draw_h
 
 
 def _draw_cover_photo(c: canvas.Canvas, img_bytes: bytes,
@@ -208,9 +222,19 @@ def _draw_text_wrapped(c: canvas.Canvas, text: str,
                        x: float, y: float, max_w: float,
                        font: str, size: float, leading: float,
                        color: tuple = (0.95, 0.93, 0.88),
-                       max_lines: int = 20) -> float:
+                       max_lines: int = 20,
+                       align: str = "left") -> float:
     c.setFont(font, size)
     c.setFillColorRGB(*color)
+
+    def _emit(ln, cy):
+        if align == "center":
+            c.drawCentredString(x + max_w / 2, cy, ln)
+        elif align == "right":
+            c.drawRightString(x + max_w, cy, ln)
+        else:
+            c.drawString(x, cy, ln)
+
     words = text.split()
     line = ""
     cur_y = y
@@ -221,14 +245,14 @@ def _draw_text_wrapped(c: canvas.Canvas, text: str,
             line = test
         else:
             if line:
-                c.drawString(x, cur_y, line)
+                _emit(line, cur_y)
                 cur_y -= leading
                 lines_drawn += 1
                 if lines_drawn >= max_lines:
                     return cur_y
             line = word
     if line and lines_drawn < max_lines:
-        c.drawString(x, cur_y, line)
+        _emit(line, cur_y)
         cur_y -= leading
     return cur_y
 
@@ -251,15 +275,159 @@ def _draw_bleed_marks(c: canvas.Canvas, pw: float, ph: float, bleed: float) -> N
     c.restoreState()
 
 
+
+def _draw_divider_page(c: canvas.Canvas, page: dict,
+                       processed_cache: dict,
+                       pw: float, ph: float,
+                       ml: float, mr: float, mt: float, mb: float,
+                       gap: float, bleed: float,
+                       crop_marks: bool = False,
+                       pan_offsets: dict | None = None,
+                       page_idx: int = 0,
+                       profile_cs: dict | None = None) -> None:
+    """
+    Renders an album divider page.
+    Works like _draw_photo_page_fast but also handles dynamic content slots:
+      type == 'album_name'   → album name text
+      type == 'photo_count'  → photo count
+      type == 'year'         → year range from album
+      type == 'map'          → GPS map image (stored in item as base64 or bytes key)
+    """
+    cs = page.get("_divider_style") or {}
+    if bleed > 0 and crop_marks:
+        _draw_bleed_marks(c, pw, ph, bleed)
+
+    album_info = page.get("_album_info") or {}
+    album_name  = album_info.get("albumName", "")
+    asset_count = album_info.get("assetCount", 0)
+    date_range  = album_info.get("dateRange", "")
+    accent      = cs.get("accent_color", "#d4aa5a")
+    text_color  = cs.get("text_color", "#f0ede6")
+
+    ux = ml
+    uw = pw - ml - mr
+    uh = ph - mt - mb
+
+    items = page.get("items", [])
+    if not items:
+        # Default layout: centered album name
+        cx, cy = pw / 2, ph / 2
+        ar, ag, ab = _hex_to_rgb(accent)
+        c.setStrokeColorRGB(ar, ag, ab)
+        c.setLineWidth(0.6)
+        c.line(ml + _mm(10), cy, pw - mr - _mm(10), cy)
+        c.setFillColorRGB(*_hex_to_rgb(text_color))
+        c.setFont("Helvetica-Bold", _mm(14))
+        c.drawCentredString(pw / 2, cy + _mm(8), album_name or "Album")
+        if date_range:
+            c.setFont("Helvetica", _mm(6))
+            c.setFillColorRGB(ar, ag, ab)
+            c.drawCentredString(pw / 2, cy - _mm(10), date_range)
+        if asset_count:
+            c.setFont("Helvetica", _mm(5))
+            c.drawCentredString(pw / 2, cy - _mm(18), f"{asset_count} fotografie")
+        return
+
+    # Slot-based layout
+    for slot_idx, item_data in enumerate(items):
+        slot = item_data.get("slot", {"x":0,"y":0,"w":100,"h":100})
+        item = item_data.get("item")
+        le = slot["x"] < 0.5
+        te = slot["y"] < 0.5
+        re = (slot["x"] + slot["w"]) > 99.5
+        be = (slot["y"] + slot["h"]) > 99.5
+        sx     = ux + (slot["x"] / 100) * uw + (0 if le else gap / 2)
+        sy_top = (slot["y"] / 100) * uh       + (0 if te else gap / 2)
+        sw     = (slot["w"] / 100) * uw - (0 if le else gap/2) - (0 if re else gap/2)
+        sh     = (slot["h"] / 100) * uh - (0 if te else gap/2) - (0 if be else gap/2)
+        sy = ph - mt - sy_top - sh
+        if sw <= 0 or sh <= 0:
+            continue
+        if item is None:
+            continue
+        itype = item.get("type", "")
+        if itype == "photo":
+            aid = item.get("asset_id", "")
+            po    = (pan_offsets or {}).get(f"{page_idx}_{slot_idx}", {})
+            pan_x = po.get("x", item.get("_pan_x", 50.0))
+            pan_y = po.get("y", item.get("_pan_y", 50.0))
+            zoom  = float(po.get("zoom", 1.0))
+            key   = (aid, round(sw), round(sh), round(pan_x), round(pan_y), round(zoom*100))
+            pre = processed_cache.get(key)
+            if pre:
+                jpeg_bytes, ox, oy, draw_w, draw_h = pre
+                try:
+                    c.saveState()
+                    p = c.beginPath(); p.rect(sx, sy, sw, sh)
+                    c.clipPath(p, stroke=0)
+                    c.drawImage(ImageReader(io.BytesIO(jpeg_bytes)),
+                                sx - ox, sy - oy, width=draw_w, height=draw_h, mask="auto")
+                    c.restoreState()
+                except Exception as e:
+                    logger.warning(f"Divider photo draw error: {e}")
+        elif itype == "caption":
+            _render_caption_slot(c, item, sx, sy, sw, sh, profile_cs=profile_cs)
+        elif itype in ("album_name", "photo_count", "year", "date_range"):
+            # Dynamic text slot
+            ar, ag, ab = _hex_to_rgb(accent)
+            tr, tg, tb = _hex_to_rgb(text_color)
+            c.setFillColorRGB(*_hex_to_rgb(cs.get("bg", "#13141a")))
+            c.rect(sx, sy, sw, sh, fill=1, stroke=0)
+            if itype == "album_name":
+                fs = min(_mm(12), sw / max(len(album_name or "A"), 1) * 1.4)
+                fs = max(fs, _mm(5))
+                c.setFont("Helvetica-Bold", fs)
+                c.setFillColorRGB(tr, tg, tb)
+                c.drawCentredString(sx + sw/2, sy + sh/2 - fs/3, album_name or "Album")
+            elif itype == "photo_count":
+                text = f"{asset_count} fotografie"
+                c.setFont("Helvetica", _mm(7))
+                c.setFillColorRGB(ar, ag, ab)
+                c.drawCentredString(sx + sw/2, sy + sh/2 - _mm(3.5), text)
+            elif itype in ("year", "date_range"):
+                c.setFont("Helvetica", _mm(6))
+                c.setFillColorRGB(ar, ag, ab)
+                c.drawCentredString(sx + sw/2, sy + sh/2 - _mm(3), date_range or "")
+        elif itype == "map":
+            map_bytes = item.get("_map_bytes")
+            if map_bytes:
+                try:
+                    pil = PILImage.open(io.BytesIO(map_bytes)).convert("RGB")
+                    buf = io.BytesIO(); pil.save(buf, "JPEG", quality=88); buf.seek(0)
+                    iw, ih = pil.size
+                    scale = min(sw / iw, sh / ih)
+                    dw, dh = iw*scale, ih*scale
+                    c.saveState()
+                    p = c.beginPath(); p.rect(sx, sy, sw, sh)
+                    c.clipPath(p, stroke=0)
+                    c.drawImage(ImageReader(buf), sx + (sw-dw)/2, sy + (sh-dh)/2,
+                                width=dw, height=dh, mask="auto")
+                    c.restoreState()
+                except Exception as e:
+                    logger.warning(f"Divider map draw error: {e}")
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
+    """Convert #rrggbb to (r, g, b) floats 0-1."""
+    h = hex_color.lstrip("#")
+    if len(h) != 6:
+        return (0.08, 0.08, 0.10)
+    return tuple(int(h[i:i+2], 16) / 255 for i in (0, 2, 4))
+
 def _draw_title_page(c: canvas.Canvas, album: dict,
                      map_image: Optional[bytes],
                      pw: float, ph: float,
-                     margin: float, bleed: float) -> None:
-    # Dark background
-    c.setFillColorRGB(0.04, 0.04, 0.06)
-    c.rect(0, 0, pw, ph, fill=1, stroke=0)
+                     margin: float, bleed: float,
+                     crop_marks: bool = False,
+                     ml: float | None = None, mr: float | None = None,
+                     mt: float | None = None, mb: float | None = None) -> None:
+    # Use per-side margins if provided, otherwise fall back to symmetric margin
+    _ml = ml if ml is not None else margin
+    _mr = mr if mr is not None else margin
+    _mt = mt if mt is not None else margin
+    _mb = mb if mb is not None else margin
 
-    if bleed > 0:
+    if bleed > 0 and crop_marks:
         _draw_bleed_marks(c, pw, ph, bleed)
 
     content_h = ph - 2 * margin
@@ -308,10 +476,10 @@ def _draw_title_page(c: canvas.Canvas, album: dict,
         c.setFillColorRGB(0.94, 0.92, 0.86)
         font_size = min(_mm(14), (pw - 2 * margin) / max(len(title), 1) * 1.6)
         font_size = max(font_size, _mm(7))
-        max_title_w = pw - 2 * margin
+        max_title_w = pw - _ml - _mr
         c.setFont("Helvetica-Light" if "Helvetica-Light" in pdfmetrics.getRegisteredFontNames() else "Helvetica", font_size)
         title_y = line_y - _mm(12)
-        _draw_text_wrapped(c, title, margin, title_y, max_title_w,
+        _draw_text_wrapped(c, title, _ml, title_y, max_title_w,
                            "Helvetica", font_size, font_size * 1.3, (0.94, 0.92, 0.86), 3)
 
     # Description
@@ -334,37 +502,46 @@ def _draw_title_page(c: canvas.Canvas, album: dict,
     c.drawRightString(pw - margin, foot_y, f"{photo_count} fotografie")
 
 
+def _slot_geometry(slot, ux, uw, ph, mt, gap):
+    """Compute (sx, sy, sw, sh) for a slot dict within the page content area."""
+    left_edge  = slot["x"] < 0.5
+    top_edge   = slot["y"] < 0.5
+    right_edge = (slot["x"] + slot["w"]) > 99.5
+    bot_edge   = (slot["y"] + slot["h"]) > 99.5
+    sx     = ux + (slot["x"] / 100) * uw + (0 if left_edge  else gap / 2)
+    sy_top = (slot["y"] / 100) * (ph - mt) + (0 if top_edge else gap / 2)
+    sw     = (slot["w"] / 100) * uw - (0 if left_edge  else gap / 2) \
+                                     - (0 if right_edge else gap / 2)
+    sh     = (slot["h"] / 100) * (ph - mt) - (0 if top_edge else gap / 2) \
+                                            - (0 if bot_edge else gap / 2)
+    return sx, ph - mt - sy_top - sh, sw, sh
+
+
 def _draw_photo_page(c: canvas.Canvas, page: dict,
                      photo_cache: dict,
                      pw: float, ph: float,
                      ml: float, mr: float, mt: float, mb: float,
                      gap: float, bleed: float,
                      dpi: int = 300,
-                     color_profile: str = "srgb") -> None:
-    """Render a single photo page with independent per-side margins."""
-    c.setFillColorRGB(0.97, 0.96, 0.94)
-    c.rect(0, 0, pw, ph, fill=1, stroke=0)
-
-    if bleed > 0:
+                     color_profile: str = "srgb",
+                     crop_marks: bool = False,
+                     profile_cs: dict | None = None) -> None:
+    """Legacy: render page using raw photo_cache (for SmartLayout preview path)."""
+    if bleed > 0 and crop_marks:
         _draw_bleed_marks(c, pw, ph, bleed)
-
     items = page.get("items", [])
     if not items:
         return
-
     ux = ml
     uw = pw - ml - mr
     uh = ph - mt - mb
-
     for item_data in items:
-        slot = item_data.get("slot", {"x": 0, "y": 0, "w": 100, "h": 100})
+        slot = item_data.get("slot", {"x":0,"y":0,"w":100,"h":100})
         item = item_data.get("item")
-
         left_edge  = slot["x"] < 0.5
         top_edge   = slot["y"] < 0.5
         right_edge = (slot["x"] + slot["w"]) > 99.5
         bot_edge   = (slot["y"] + slot["h"]) > 99.5
-
         sx     = ux + (slot["x"] / 100) * uw + (0 if left_edge  else gap / 2)
         sy_top = (slot["y"] / 100) * uh       + (0 if top_edge   else gap / 2)
         sw     = (slot["w"] / 100) * uw        - (0 if left_edge  else gap / 2) \
@@ -372,17 +549,14 @@ def _draw_photo_page(c: canvas.Canvas, page: dict,
         sh     = (slot["h"] / 100) * uh        - (0 if top_edge   else gap / 2) \
                                                 - (0 if bot_edge   else gap / 2)
         sy = ph - mt - sy_top - sh
-
         if sw <= 0 or sh <= 0:
             continue
-
         if item is None:
             c.setFillColorRGB(0.87, 0.85, 0.82)
             c.rect(sx, sy, sw, sh, fill=1, stroke=0)
             continue
-
         if item["type"] == "caption":
-            _render_caption_slot(c, item, sx, sy, sw, sh)
+            _render_caption_slot(c, item, sx, sy, sw, sh, profile_cs=profile_cs)
         else:
             img_bytes = photo_cache.get(item.get("asset_id", ""))
             if img_bytes:
@@ -395,26 +569,130 @@ def _draw_photo_page(c: canvas.Canvas, page: dict,
                 c.drawCentredString(sx + sw / 2, sy + sh / 2 - _mm(2.5), "📷")
 
 
+def _draw_photo_page_fast(c: canvas.Canvas, page: dict,
+                          processed_cache: dict,
+                          pw: float, ph: float,
+                          ml: float, mr: float, mt: float, mb: float,
+                          gap: float, bleed: float,
+                          crop_marks: bool = False,
+                          pan_offsets: dict | None = None,
+                          page_idx: int = 0,
+                          profile_cs: dict | None = None) -> None:
+    """
+    Fast render: images already pre-processed (JPEG bytes, offsets pre-computed).
+    pan_offsets: {"pageIdx_slotIdx": {x, y, zoom}} from frontend editor.
+    page_idx: 0-based index into the pages list (matches frontend panKey).
+    """
+    if bleed > 0 and crop_marks:
+        _draw_bleed_marks(c, pw, ph, bleed)
+    items = page.get("items", [])
+    if not items:
+        return
+    ux = ml
+    uw = pw - ml - mr
+    uh = ph - mt - mb
+    for slot_idx, item_data in enumerate(items):
+        slot = item_data.get("slot", {"x":0,"y":0,"w":100,"h":100})
+        item = item_data.get("item")
+        left_edge  = slot["x"] < 0.5
+        top_edge   = slot["y"] < 0.5
+        right_edge = (slot["x"] + slot["w"]) > 99.5
+        bot_edge   = (slot["y"] + slot["h"]) > 99.5
+        sx     = ux + (slot["x"] / 100) * uw + (0 if left_edge  else gap / 2)
+        sy_top = (slot["y"] / 100) * uh       + (0 if top_edge   else gap / 2)
+        sw     = (slot["w"] / 100) * uw        - (0 if left_edge  else gap / 2) \
+                                                - (0 if right_edge else gap / 2)
+        sh     = (slot["h"] / 100) * uh        - (0 if top_edge   else gap / 2) \
+                                                - (0 if bot_edge   else gap / 2)
+        sy = ph - mt - sy_top - sh
+        if sw <= 0 or sh <= 0:
+            continue
+        if item is None:
+            c.setFillColorRGB(0.87, 0.85, 0.82)
+            c.rect(sx, sy, sw, sh, fill=1, stroke=0)
+            continue
+        if item["type"] == "caption":
+            _render_caption_slot(c, item, sx, sy, sw, sh, profile_cs=profile_cs)
+            continue
+        # Photo: look up pre-processed data using pan-inclusive key
+        aid = item.get("asset_id", "")
+        po    = (pan_offsets or {}).get(f"{page_idx}_{slot_idx}", {})
+        pan_x = po.get("x", item.get("_pan_x", 50.0))
+        pan_y = po.get("y", item.get("_pan_y", 50.0))
+        zoom  = float(po.get("zoom", 1.0))
+        key   = (aid, round(sw), round(sh), round(pan_x), round(pan_y), round(zoom*100))
+        pre = processed_cache.get(key)
+        if pre:
+            jpeg_bytes, ox, oy, draw_w, draw_h = pre
+            try:
+                c.saveState()
+                p = c.beginPath()
+                p.rect(sx, sy, sw, sh)
+                c.clipPath(p, stroke=0)
+                c.drawImage(ImageReader(io.BytesIO(jpeg_bytes)),
+                            sx - ox, sy - oy,
+                            width=draw_w, height=draw_h, mask="auto")
+                c.restoreState()
+            except Exception as e:
+                logger.warning(f"Draw error {aid}: {e}")
+                c.setFillColorRGB(0.80, 0.78, 0.75)
+                c.rect(sx, sy, sw, sh, fill=1, stroke=0)
+        else:
+            # Fallback: gray placeholder
+            c.setFillColorRGB(0.80, 0.78, 0.75)
+            c.rect(sx, sy, sw, sh, fill=1, stroke=0)
+            c.setFillColorRGB(0.55, 0.53, 0.50)
+            c.setFont("Helvetica", _mm(5))
+            c.drawCentredString(sx + sw / 2, sy + sh / 2 - _mm(2.5), "📷")
+
+
 def _render_caption_slot(c: canvas.Canvas, item: dict,
-                          x: float, y: float, w: float, h: float) -> None:
-    c.setFillColorRGB(0.10, 0.10, 0.13)
-    c.rect(x, y, w, h, fill=1, stroke=0)
+                          x: float, y: float, w: float, h: float,
+                          profile_cs: dict | None = None) -> None:
+    cs       = {**(profile_cs or {}), **(item.get("caption_style") or {})}
+    bg       = cs.get("bg", "#111116")
+    clr      = cs.get("color", "#e8e6e0")
+    size_px  = float(cs.get("size", 13) or 13)
+    italic   = cs.get("italic", True)
+    bold     = cs.get("bold", False)
+    align    = cs.get("align", "left")
+    lh_mult  = float(cs.get("lineHeight", 1.45) or 1.45)
+    font_str = (cs.get("font") or "Georgia").lower()
+
+    if "courier" in font_str or "mono" in font_str:
+        base = "Courier"
+    elif any(k in font_str for k in ("helvetica", "arial", "sans", "montserrat")):
+        base = "Helvetica"
+    else:
+        base = "Times"
+
+    if bold and italic:
+        font_name = "Times-BoldItalic" if base == "Times" else f"{base}-BoldOblique"
+    elif bold:
+        font_name = "Times-Bold" if base == "Times" else f"{base}-Bold"
+    elif italic:
+        font_name = "Times-Italic" if base == "Times" else f"{base}-Oblique"
+    else:
+        font_name = "Times-Roman" if base == "Times" else base
+
+    if bg and bg != "transparent":
+        c.setFillColorRGB(*_hex_to_rgb(bg))
+        c.rect(x, y, w, h, fill=1, stroke=0)
+
     text = (item.get("text") or "").strip()
     if not text:
         return
-    c.setFillColorRGB(0.83, 0.67, 0.35)
-    c.setFont("Helvetica-Bold", _mm(4))
-    c.drawString(x + _mm(5), y + h - _mm(8), "—")
+
+    font_size = min(_mm(size_px * 0.42), h / 5)
+    font_size = max(font_size, _mm(3))
+    leading   = font_size * lh_mult
     inner_x   = x + _mm(5)
     inner_w   = w - _mm(10)
-    start_y   = y + h - _mm(14)
-    font_size = min(_mm(5.5), h / 5)
-    font_size = max(font_size, _mm(3.5))
-    leading   = font_size * 1.45
-    max_lines = max(2, int((h - _mm(18)) / leading))
+    max_lines = max(2, int((h - _mm(8)) / leading))
+    start_y   = y + h - _mm(6) - font_size
     _draw_text_wrapped(c, text, inner_x, start_y, inner_w,
-                       "Helvetica-BoldOblique", font_size, leading,
-                       color=(0.94, 0.92, 0.86), max_lines=max_lines)
+                       font_name, font_size, leading,
+                       color=_hex_to_rgb(clr), max_lines=max_lines, align=align)
 
 
 def _date_range(assets: list) -> str:
@@ -433,6 +711,8 @@ def generate_pdf(
     profile: dict,
     photo_cache: dict[str, bytes],
     map_image: Optional[bytes] = None,
+    on_page_progress: "callable | None" = None,
+    pan_offsets: dict | None = None,
 ) -> bytes:
     """
     Generate the complete photobook PDF.
@@ -456,6 +736,7 @@ def generate_pdf(
     duplex    = profile.get("duplex",    False)
     dpi       = int(profile.get("export_dpi", 300) or 300)
     color_profile = str(profile.get("color_profile", "srgb") or "srgb").lower()
+    crop_marks = bool(profile.get("crop_marks", False))
 
     # Independent margins (fall back to margin_mm for all sides if not set)
     mt = float(profile.get("margin_top",    margin_mm) or margin_mm)
@@ -474,19 +755,29 @@ def generate_pdf(
 
     def margins_for_page(page_num: int):
         """
-        page_num: 1-based.
-        Duplex: odd pages = right-hand (left=inner/binding), even = left-hand (right=inner).
-        margin_left in profile = inner margin (binding side).
-        margin_right in profile = outer margin.
+        Calcola i margini per la pagina page_num (1-based).
+
+        Convenzione profilo (coerente con le label UI):
+          ml (margin_left)  = ESTERNO  ("← Esterno")
+          mr (margin_right) = INTERNO  ("Interno →", lato rilegatura)
+
+        duplex=False: esterno sempre a sinistra, interno sempre a destra.
+        duplex=True:  i margini alternano in base alla pagina:
+          pagine DISPARI = destra del libro → rilegatura a SINISTRA → interno a sx, esterno a dx
+          pagine PARI    = sinistra del libro → rilegatura a DESTRA → esterno a sx, interno a dx
         """
+        outer_val = ml   # margin_left  = ESTERNO
+        inner_val = mr   # margin_right = INTERNO / rilegatura
         if duplex:
-            inner, outer = ml, mr
-            if page_num % 2 == 0:          # even = left page → right is inner
-                m_l, m_r = outer, inner
-            else:                           # odd = right page → left is inner
-                m_l, m_r = inner, outer
+            if page_num % 2 == 0:
+                # Pagina PARI = destra del libro → rilegatura a SINISTRA
+                m_l, m_r = inner_val, outer_val
+            else:
+                # Pagina DISPARI = sinistra del libro → rilegatura a DESTRA
+                m_l, m_r = outer_val, inner_val
         else:
-            m_l, m_r = ml, mr
+            # Non duplex: esterno fisso a sx, interno fisso a dx
+            m_l, m_r = outer_val, inner_val
         return (
             _mm(m_l + bleed_mm),
             _mm(m_r + bleed_mm),
@@ -494,43 +785,165 @@ def generate_pdf(
             _mm(mb  + bleed_mm),
         )
 
-    buf = io.BytesIO()
-    cv  = canvas.Canvas(buf, pagesize=(pw, ph))
-    cv.setTitle(album.get("albumName", "Fotolibro"))
-    cv.setAuthor("PhotoBook Studio")
-    cv.setCreator("PhotoBook Studio")
-
-    # Title page
-    _draw_title_page(cv, album, map_image, pw, ph, margin, bleed)
-    cv.showPage()
-
-    page_counter = 2
-    if duplex:
-        cv.setFillColorRGB(0.97, 0.96, 0.94)
-        cv.rect(0, 0, pw, ph, fill=1, stroke=0)
-        cv.showPage()
-        page_counter += 1
-
-    for page in pages:
+    # ── Phase 1: Pre-process all unique images in parallel ───────────────────
+    # Collect (asset_id, slot_w_pt, slot_h_pt, pan_x, pan_y) for every photo slot.
+    # Use (asset_id, round(w), round(h)) as cache key — same photo, same slot size → reuse.
+    photo_jobs: list[tuple] = []  # (asset_id, w_pt, h_pt, pan_x, pan_y)
+    # Phase 1 must use per-page margins (same as Phase 2) so slot dimensions match.
+    # page_counter in Phase 2 starts at 2 (cover=1) + 1 if duplex blank page.
+    _p1_counter = 3 if duplex else 2
+    for page_idx, page in enumerate(pages):
         if page.get("_album_cover") or page.get("_album_separator"):
-            # Special multi-album divider pages — blank
-            cv.setFillColorRGB(0.97, 0.96, 0.94)
-            cv.rect(0, 0, pw, ph, fill=1, stroke=0)
+            _p1_counter += 1
+            continue
+        # Divider and regular pages both have slots — fall through
+        ml_pt1, mr_pt1, mt_pt1, mb_pt1 = margins_for_page(_p1_counter)
+        uw1 = pw - ml_pt1 - mr_pt1
+        uh1 = ph - mt_pt1 - mb_pt1
+        items = page.get("items", [])
+        for slot_idx, item_data in enumerate(items):
+            slot = item_data.get("slot", {})
+            item = item_data.get("item")
+            if not item or item.get("type") != "photo":
+                continue
+            aid = item.get("asset_id", "")
+            if not aid or aid not in photo_cache:
+                continue
+            # Apply the same edge + gap logic as _draw_photo_page_fast so the
+            # cache key (aid, round_w, round_h) matches exactly in Phase 2.
+            le = slot.get("x", 0) < 0.5
+            re = (slot.get("x", 0) + slot.get("w", 100)) > 99.5
+            te = slot.get("y", 0) < 0.5
+            be = (slot.get("y", 0) + slot.get("h", 100)) > 99.5
+            sw_pt = (slot.get("w", 100) / 100) * uw1 \
+                    - (0 if le else gap / 2) \
+                    - (0 if re else gap / 2)
+            sh_pt = (slot.get("h", 100) / 100) * uh1 \
+                    - (0 if te else gap / 2) \
+                    - (0 if be else gap / 2)
+            if sw_pt <= 0 or sh_pt <= 0:
+                continue
+            # pan_offsets (frontend editor) takes priority over _pan_x/_pan_y (face detection)
+            po = (pan_offsets or {}).get(f"{page_idx}_{slot_idx}", {})
+            pan_x = po.get("x", item.get("_pan_x", 50.0))
+            pan_y = po.get("y", item.get("_pan_y", 50.0))
+            zoom  = float(po.get("zoom", 1.0))
+            photo_jobs.append((aid, sw_pt, sh_pt, pan_x, pan_y, zoom))
+        _p1_counter += 1
+
+    # Deduplicate by cache key (includes pan+zoom so edits produce distinct cached images)
+    seen_keys: set = set()
+    unique_jobs: list[tuple] = []
+    for job in photo_jobs:
+        key = (job[0], round(job[1]), round(job[2]), round(job[3]), round(job[4]), round(job[5]*100))
+        if key not in seen_keys:
+            seen_keys.add(key)
+            unique_jobs.append(job)
+
+    logger.info(f"PDF pre-processing: {len(unique_jobs)} unique image jobs "
+                f"({len(photo_jobs)} total placements)")
+
+    # Processed image cache: (aid, round_w, round_h) → (jpeg_bytes, ox, oy, dw, dh)
+    processed_cache: dict[tuple, tuple] = {}
+    n_jobs = len(unique_jobs)
+    n_done = 0
+
+    def _process_one(job: tuple) -> tuple:
+        aid, sw_pt, sh_pt, pan_x, pan_y, zoom = job
+        raw = photo_cache.get(aid)
+        cache_key = (aid, round(sw_pt), round(sh_pt), round(pan_x), round(pan_y), round(zoom*100))
+        if not raw:
+            return cache_key, None
+        try:
+            result = _prepare_image(raw, sw_pt, sh_pt, dpi, color_profile, pan_x, pan_y, zoom)
+            return cache_key, result
+        except Exception as e:
+            logger.warning(f"Image pre-process failed for {aid}: {e}")
+            return cache_key, None
+
+    # Parallel processing: 4 workers (PIL releases GIL → real concurrency)
+    n_workers = min(4, max(1, n_jobs))
+    if n_jobs > 0:
+        if on_page_progress:
+            on_page_progress(0, n_jobs + len(pages))  # phase 1 starts
+
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            futures = {pool.submit(_process_one, job): job for job in unique_jobs}
+            for fut in as_completed(futures):
+                key, result = fut.result()
+                if result is not None:
+                    processed_cache[key] = result
+                n_done += 1
+                if on_page_progress:
+                    on_page_progress(n_done, n_jobs + len(pages))
+
+    # Raw cache no longer needed — free memory
+    photo_cache.clear()
+    gc.collect()
+    logger.info(f"Pre-processing done: {len(processed_cache)}/{n_jobs} images ready")
+
+    # ── Phase 2: PDF rendering (sequential, fast — no image decoding) ─────────
+    # Write to a temp file to avoid holding the whole PDF in RAM
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        cv  = canvas.Canvas(tmp_path, pagesize=(pw, ph))
+        cv.setTitle(album.get("albumName", "Fotolibro"))
+        cv.setAuthor("PhotoBook Studio")
+        cv.setCreator("PhotoBook Studio")
+
+        # Title page
+        _draw_title_page(cv, album, map_image, pw, ph, margin, bleed, crop_marks=crop_marks,
+                 ml=_mm(ml + bleed_mm), mr=_mm(mr + bleed_mm),
+                 mt=_mm(mt + bleed_mm), mb=_mm(mb + bleed_mm))
+        cv.showPage()
+
+        page_counter = 2
+        if duplex:
             cv.showPage()
             page_counter += 1
-            continue
 
-        ml_pt, mr_pt, mt_pt, mb_pt = margins_for_page(page_counter)
-        _draw_photo_page(cv, page, photo_cache, pw, ph,
-                         ml_pt, mr_pt, mt_pt, mb_pt, gap, bleed,
-                         dpi=dpi, color_profile=color_profile)
-        cv.showPage()
-        page_counter += 1
+        n_pages = len(pages)
+        for page_idx, page in enumerate(pages):
+            if on_page_progress:
+                on_page_progress(n_done + page_idx, n_jobs + n_pages)
 
-    if duplex and page_counter % 2 != 0:
-        cv.setFillColorRGB(0.97, 0.96, 0.94)
-        cv.rect(0, 0, pw, ph, fill=1, stroke=0)
-        cv.showPage()
+            if page.get("_album_cover") or page.get("_album_separator"):
+                cv.showPage()
+                page_counter += 1
+                continue
 
-    cv.save()
-    return buf.getvalue()
+            ml_pt, mr_pt, mt_pt, mb_pt = margins_for_page(page_counter)
+            profile_cs = profile.get("caption_style") or {}
+            if page.get("_album_divider"):
+                _draw_divider_page(cv, page, processed_cache, pw, ph,
+                                   ml_pt, mr_pt, mt_pt, mb_pt, gap, bleed,
+                                   crop_marks=crop_marks,
+                                   pan_offsets=pan_offsets,
+                                   page_idx=page_idx,
+                                   profile_cs=profile_cs)
+            else:
+                _draw_photo_page_fast(cv, page, processed_cache, pw, ph,
+                                      ml_pt, mr_pt, mt_pt, mb_pt, gap, bleed,
+                                      crop_marks=crop_marks,
+                                      pan_offsets=pan_offsets,
+                                      page_idx=page_idx,
+                                      profile_cs=profile_cs)
+            cv.showPage()
+            page_counter += 1
+
+        if duplex and page_counter % 2 != 0:
+            cv.showPage()
+
+        cv.save()
+        processed_cache.clear()
+        gc.collect()
+
+        with open(tmp_path, "rb") as f:
+            return f.read()
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass

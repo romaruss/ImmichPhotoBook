@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-ro
 import axios from 'axios'
 import { useT } from './i18n.jsx'
 import ConfigPage from './pages/ConfigPage'
+import HomePage from './pages/HomePage'
 import ProfilesPage from './pages/ProfilesPage'
 import AlbumsPage from './pages/AlbumsPage'
 import PreviewPage from './pages/PreviewPage'
@@ -21,13 +22,15 @@ function Shell() {
   }, [])
 
   const NAV = [
-    { path: '/config',   label: t.nav.config,   icon: '⚙️' },
-    { path: '/profiles', label: t.nav.profiles,  icon: '📐' },
-    { path: '/albums',   label: t.nav.albums,    icon: '🖼️' },
-    { path: '/preview',  label: t.nav.preview,   icon: '📖' },
+    { path: '/',         label: 'Home',           icon: '🏠' },
+    { path: '/config',   label: t.nav.config,     icon: '⚙️' },
+    { path: '/profiles', label: t.nav.profiles,   icon: '📐' },
+    { path: '/albums',   label: t.nav.albums,     icon: '🖼️' },
+    { path: '/preview',  label: t.nav.preview,    icon: '📖' },
   ]
 
   const currentPath = '/' + location.pathname.split('/')[1]
+  const isActive = (path) => path === '/' ? location.pathname === '/' : currentPath === path
 
   return (
     <div className="app-shell">
@@ -68,7 +71,7 @@ function Shell() {
         <nav className="sidebar-nav" style={{ paddingTop: navCollapsed ? 16 : 16 }}>
           {NAV.map(item => (
             <div key={item.path}
-              className={`nav-item${currentPath === item.path ? ' active' : ''}`}
+              className={`nav-item${isActive(item.path) ? ' active' : ''}`}
               onClick={() => navigate(item.path)}
               title={item.label}
               style={{
@@ -94,7 +97,7 @@ function Shell() {
       </aside>
       <main className="main-content">
         <Routes>
-          <Route path="/"         element={<ConfigPage />} />
+          <Route path="/"         element={<HomePage />} />
           <Route path="/config"   element={<ConfigPage />} />
           <Route path="/profiles" element={<ProfilesPage />} />
           <Route path="/profiles/:pid" element={<ProfilesPage />} />

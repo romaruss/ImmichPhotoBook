@@ -94,6 +94,96 @@ function CandidateRow({ cand, expanded, onToggle }) {
   )
 }
 
+// ── PhotoCropPreview ──────────────────────────────────────────────────────────
+function PhotoCropPreview({ assetId, photoAr, slotAr, transform, faces }) {
+  const tr   = transform || { x: 50, y: 50, zoom: 1 }
+  const pa   = parseFloat(photoAr) || 1
+  const sa   = parseFloat(slotAr)  || 1
+  const zoom = Math.max(1, parseFloat(tr.zoom) || 1)
+  const panX = (tr.x ?? 50) / 100
+  const panY = (tr.y ?? 50) / 100
+
+  // Visible portion of the photo covered by the slot (normalized 0..1)
+  let visW, visH
+  if (pa >= sa) {
+    visW = (sa / pa) / zoom
+    visH = 1 / zoom
+  } else {
+    visW = 1 / zoom
+    visH = (pa / sa) / zoom
+  }
+  visW = Math.min(1, visW)
+  visH = Math.min(1, visH)
+
+  const slotL = Math.max(0, Math.min(1 - visW, panX * (1 - visW)))
+  const slotT = Math.max(0, Math.min(1 - visH, panY * (1 - visH)))
+
+  const DIM        = 'rgba(0,0,0,0.58)'
+  const fb         = faces?.bbox
+  const faceColor  = faces?.would_clip ? C.red : C.green
+
+  // Fixed height, width = pa * height (capped by maxWidth via overflow)
+  const H = 130
+  return (
+    <div style={{ position:'relative', height:H, width:`${pa * H}px`, maxWidth:'100%',
+                  background:'#111', borderRadius:5, overflow:'hidden',
+                  border:`1px solid ${C.border}`, marginBottom:6, flexShrink:0 }}>
+      {/* Photo — preview size preserves full AR so bbox coords align correctly */}
+      <img src={`/api/thumb/${assetId}?size=preview`} alt=""
+           style={{ position:'absolute', inset:0, width:'100%', height:'100%',
+                    objectFit:'cover', display:'block' }} />
+
+      {/* Dimmed panels outside the slot crop window */}
+      <div style={{ position:'absolute', inset:0, pointerEvents:'none' }}>
+        {/* top */}
+        <div style={{ position:'absolute', left:0, top:0, right:0,
+                      height:`${slotT*100}%`, background:DIM }} />
+        {/* bottom */}
+        <div style={{ position:'absolute', left:0, right:0, bottom:0,
+                      top:`${(slotT+visH)*100}%`, background:DIM }} />
+        {/* left */}
+        <div style={{ position:'absolute', top:`${slotT*100}%`, left:0,
+                      width:`${slotL*100}%`, height:`${visH*100}%`, background:DIM }} />
+        {/* right */}
+        <div style={{ position:'absolute', top:`${slotT*100}%`, right:0,
+                      left:`${(slotL+visW)*100}%`, height:`${visH*100}%`, background:DIM }} />
+      </div>
+
+      {/* Slot window border */}
+      <div style={{ position:'absolute', pointerEvents:'none',
+        left:`${slotL*100}%`, top:`${slotT*100}%`,
+        width:`${visW*100}%`, height:`${visH*100}%`,
+        border:`2px solid ${C.gold}`,
+        boxShadow:`inset 0 0 0 1px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,0,0,0.4)` }}>
+        <span style={{ position:'absolute', bottom:2, right:3, fontSize:7,
+          color:C.gold, fontFamily:C.mono, background:'rgba(0,0,0,0.75)',
+          padding:'1px 3px', borderRadius:2, lineHeight:1.5 }}>slot</span>
+      </div>
+
+      {/* Face bounding box */}
+      {fb && (
+        <div style={{ position:'absolute', pointerEvents:'none',
+          left:`${fb[0]*100}%`, top:`${fb[1]*100}%`,
+          width:`${(fb[2]-fb[0])*100}%`, height:`${(fb[3]-fb[1])*100}%`,
+          border:`1.5px solid ${faceColor}`,
+          background:`${faceColor}1a`, borderRadius:2 }}>
+          <span style={{ position:'absolute', top:1, left:2, fontSize:8,
+            color:faceColor, fontFamily:C.mono, background:'rgba(0,0,0,0.75)',
+            padding:'0 2px', borderRadius:2, lineHeight:1.6 }}>👤</span>
+        </div>
+      )}
+
+      {/* Legend */}
+      <div style={{ position:'absolute', top:3, left:3, display:'flex', gap:4, pointerEvents:'none' }}>
+        <span style={{ fontSize:7, fontFamily:C.mono, color:C.gold,
+          background:'rgba(0,0,0,0.75)', padding:'1px 4px', borderRadius:2 }}>▪ slot</span>
+        {fb && <span style={{ fontSize:7, fontFamily:C.mono, color:faceColor,
+          background:'rgba(0,0,0,0.75)', padding:'1px 4px', borderRadius:2 }}>▪ volto</span>}
+      </div>
+    </div>
+  )
+}
+
 // ── SlotCard ─────────────────────────────────────────────────────────────────
 function SlotCard({ slot }) {
   const isCaption = slot.slot_type==='caption'
@@ -126,12 +216,9 @@ function SlotCard({ slot }) {
   return (
     <div style={{border:`1px solid ${ok?C.green+'44':C.red+'66'}`,borderRadius:6,
       background:ok?C.greenDim:C.redDim,padding:10,marginBottom:6}}>
-      {/* Header */}
+
+      {/* Header: filename + tags */}
       <div style={{display:'flex',gap:9,alignItems:'flex-start',marginBottom:8}}>
-        <div style={{width:42,height:42,borderRadius:4,overflow:'hidden',background:C.bg3,flexShrink:0,
-          border:`1px solid ${C.border}`}}>
-          {slot.asset_id && <img src={`/api/thumb/${slot.asset_id}`} alt="" style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>}
-        </div>
         <div style={{flex:1,minWidth:0}}>
           <div style={{fontSize:11,fontFamily:C.mono,color:C.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
             {slot.filename||slot.asset_id}
@@ -147,58 +234,43 @@ function SlotCard({ slot }) {
         </div>
       </div>
 
-      {/* AR */}
+      {/* AR info */}
       <div style={{display:'flex',gap:12,marginBottom:8}}>
         <span style={{fontSize:10,fontFamily:C.mono,color:C.text3}}>AR foto: <span style={{color:C.text2}}>{slot.photo_ar}</span></span>
         <span style={{fontSize:10,fontFamily:C.mono,color:C.text3}}>AR slot: <span style={{color:C.text2}}>{slot.slot_ar}</span></span>
+        <span style={{fontSize:10,fontFamily:C.mono,color:C.text3}}>
+          Pan: <span style={{color:C.cyan}}>x={tr.x}% y={tr.y}%</span>
+          {tr.zoom!==1 && <> · zoom=<span style={{color:C.cyan}}>{tr.zoom}×</span></>}
+        </span>
       </div>
 
-      {/* Faces */}
+      {/* Crop + face preview */}
+      {slot.asset_id && (
+        <PhotoCropPreview
+          assetId={slot.asset_id}
+          photoAr={slot.photo_ar}
+          slotAr={slot.slot_ar}
+          transform={tr}
+          faces={faces}
+        />
+      )}
+
+      {/* Face detection summary */}
       {faces && (
-        <div style={{background:C.bg3,borderRadius:5,padding:8,marginBottom:8,
+        <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:6,
+          padding:'5px 8px',background:C.bg3,borderRadius:4,
           border:`1px solid ${faces.would_clip?C.red+'44':C.border}`}}>
-          <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:5}}>
-            <span style={{fontSize:11}}>👤</span>
-            <span style={{fontSize:11,fontWeight:600,color:C.text,fontFamily:C.mono}}>
-              {faces.count} volt{faces.count===1?'o':'i'}
-              {faces.prominent>0&&` (${faces.prominent} in primo piano)`}
-            </span>
-            {faces.would_clip ? <Tag color={C.red}>⚠ tagliato</Tag> : <Tag color={C.green}>✓ visibile</Tag>}
-          </div>
+          <span style={{fontSize:11}}>👤</span>
+          <span style={{fontSize:11,fontWeight:600,color:C.text,fontFamily:C.mono}}>
+            {faces.count} volt{faces.count===1?'o':'i'}
+            {faces.prominent>0&&` (${faces.prominent} in primo piano)`}
+          </span>
+          {faces.would_clip ? <Tag color={C.red}>⚠ tagliato</Tag> : <Tag color={C.green}>✓ visibile</Tag>}
           {faces.bbox && (
-            <div style={{fontSize:9,color:C.text3,fontFamily:C.mono,marginBottom:6}}>
-              bbox: [{faces.bbox.map(v=>v.toFixed(2)).join(', ')}]
-            </div>
+            <span style={{fontSize:9,color:C.text3,fontFamily:C.mono,marginLeft:'auto'}}>
+              [{faces.bbox.map(v=>v.toFixed(2)).join(', ')}]
+            </span>
           )}
-          {/* Mini bbox visualizer */}
-          {faces.bbox && (() => {
-            const [x1,y1,x2,y2] = faces.bbox
-            return (
-              <div style={{position:'relative',width:96,height:64,background:C.bg,
-                borderRadius:3,border:`1px solid ${C.border}`,overflow:'hidden',marginBottom:6}}>
-                <div style={{position:'absolute',
-                  left:`${x1*100}%`,top:`${y1*100}%`,
-                  width:`${(x2-x1)*100}%`,height:`${(y2-y1)*100}%`,
-                  background:`${faces.would_clip?C.red:C.green}33`,
-                  border:`1px solid ${faces.would_clip?C.red:C.green}`,borderRadius:2}}/>
-                <div style={{position:'absolute',bottom:2,right:3,fontSize:7,color:C.text3,fontFamily:C.mono}}>bbox</div>
-              </div>
-            )
-          })()}
-          {/* Pan indicator */}
-          <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
-            <div style={{fontSize:10,fontFamily:C.mono,color:C.text3}}>
-              Pan: <span style={{color:C.cyan}}>x={tr.x}% y={tr.y}%</span>
-              {tr.zoom!==1 && <> zoom=<span style={{color:C.cyan}}>{tr.zoom}×</span></>}
-            </div>
-            <div style={{position:'relative',width:30,height:20,background:C.bg,
-              border:`1px solid ${C.border}`,borderRadius:3,flexShrink:0}}>
-              <div style={{position:'absolute',
-                left:`calc(${tr.x}% - 3px)`,top:`calc(${tr.y}% - 3px)`,
-                width:6,height:6,background:C.cyan,borderRadius:'50%',
-                boxShadow:`0 0 4px ${C.cyan}`}}/>
-            </div>
-          </div>
         </div>
       )}
 

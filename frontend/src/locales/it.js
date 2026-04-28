@@ -88,7 +88,9 @@ export default {
     gapHint:        'Spaziatura tra le foto nella stessa pagina',
     bleedLabel:     'Abbondanza (mm)',
     bleedActive:    'Attiva',
-    bleedHint:      'Area extra che verrà rifilata in stampa',
+    bleedHint:  'Area extra che verrà rifilata in stampa',
+    cropMarksLabel: 'Crocini di stampa (crop marks)',
+    cropMarksHint:  'Aggiunge i segni di taglio agli angoli — solo per consegna a tipografia professionale. Richiede abbondanza attiva.',
 
     exportCard:     'Esportazione PDF',
     exportDpiLabel: 'Risoluzione foto',

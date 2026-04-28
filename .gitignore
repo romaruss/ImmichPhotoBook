@@ -1,8 +1,31 @@
+# Dependencies
 frontend/node_modules/
 frontend/dist/
+
+# Python
 backend/__pycache__/
-backend/data/
-backend/frontend_dist/
+backend/*.pyc
+**/__pycache__/
 *.pyc
 *.pyo
+
+# Environment
 .env
+.env.local
+.env.*.local
+
+# Docker volumes / data
+data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude
+.claude/

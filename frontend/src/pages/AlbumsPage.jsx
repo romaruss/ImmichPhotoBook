@@ -211,6 +211,73 @@ function ConfigModal({ config, onChange, onClose }) {
 }
 
 // ── Main AlbumsPage ────────────────────────────────────────────────────────────
+// ── Minimal project list modal for AlbumsPage ────────────────────────────────
+function ProjectListModal({ onClose, onLoad }) {
+  const [projects, setProjects] = useState([])
+  const [loading, setLoading]   = useState(true)
+  useEffect(() => {
+    axios.get('/api/projects')
+      .then(r => setProjects(r.data || []))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const fmt = iso => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    return d.toLocaleDateString('it-IT') + ' ' + d.toLocaleTimeString('it-IT', { hour:'2-digit', minute:'2-digit' })
+  }
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.72)',
+      zIndex:9400, display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <div style={{ background:'var(--bg2)', border:'1px solid var(--border)',
+        borderRadius:12, padding:28, width:480, maxHeight:'80vh',
+        display:'flex', flexDirection:'column', boxShadow:'0 24px 80px rgba(0,0,0,0.7)' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:18 }}>
+          <h3 style={{ fontFamily:'var(--font-display)', fontWeight:300, fontSize:18 }}>
+            📂 Apri progetto salvato
+          </h3>
+          <button onClick={onClose}
+            style={{ background:'none', border:'1px solid var(--border)', color:'var(--text3)',
+              borderRadius:5, width:28, height:28, cursor:'pointer', fontSize:14 }}>✕</button>
+        </div>
+        <div style={{ flex:1, overflowY:'auto' }}>
+          {loading && <p style={{ color:'var(--text3)', fontSize:13, textAlign:'center', padding:20 }}>Caricamento…</p>}
+          {!loading && projects.length === 0 && (
+            <div style={{ textAlign:'center', padding:32 }}>
+              <p style={{ fontSize:13, color:'var(--text3)' }}>Nessun progetto salvato.</p>
+              <p style={{ fontSize:11, color:'var(--text3)', marginTop:6 }}>
+                Salva un progetto dall'anteprima di stampa con il pulsante 💾.
+              </p>
+            </div>
+          )}
+          {projects.map(proj => (
+            <div key={proj.id}
+              onClick={() => onLoad(proj.id)}
+              style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 12px',
+                borderRadius:7, cursor:'pointer', marginBottom:4,
+                border:'1px solid var(--border)', background:'var(--bg3)',
+                transition:'background 0.1s' }}
+              onMouseEnter={e => e.currentTarget.style.background='var(--bg)'}
+              onMouseLeave={e => e.currentTarget.style.background='var(--bg3)'}>
+              <div style={{ flex:1 }}>
+                <p style={{ fontWeight:600, fontSize:13, color:'var(--text)', marginBottom:2 }}>
+                  {proj.name || 'Progetto senza nome'}
+                </p>
+                <p style={{ fontSize:11, color:'var(--text3)', fontFamily:'var(--font-mono)' }}>
+                  {proj.album_name && `${proj.album_name} · `}{fmt(proj.updated_at || proj.created_at)}
+                </p>
+              </div>
+              <span style={{ fontSize:13, color:'var(--gold)' }}>→</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function AlbumsPage() {
   const navigate = useNavigate()
   const t = useT()
@@ -222,6 +289,9 @@ export default function AlbumsPage() {
   const [selectedAlbums, setSelectedAlbums] = useState([])
   const [selectedProfile, setSelectedProfile] = useState('')
   const [generating, setGenerating]       = useState(false)
+  const [cancelConfirm, setCancelConfirm]  = useState(false)  // show 'Sei sicuro?' inline
+  const [showProjects, setShowProjects]     = useState(false)  // open project list modal
+  const abortRef = useRef(null)  // AbortController for the current request
   const [error, setError]                 = useState(null)
   const [search, setSearch]               = useState('')
   const [showConfig, setShowConfig]       = useState(false)
@@ -242,96 +312,145 @@ export default function AlbumsPage() {
   const toggleAlbum = (id) =>
     setSelectedAlbums(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id])
 
+  const cancelGenerate = () => {
+    if (cancelConfirm) {
+      // Second click → actually abort
+      abortRef.current?.abort()
+      setGenerating(false)
+      setCancelConfirm(false)
+    } else {
+      // First click → show confirm
+      setCancelConfirm(true)
+      // Auto-reset after 4s if user doesn't confirm
+      setTimeout(() => setCancelConfirm(false), 4000)
+    }
+  }
+
   const generate = async () => {
     if (!selectedAlbums.length) return
     if (!selectedProfile) { alert(a.noProfileAlert); return }
+    const controller = new AbortController()
+    abortRef.current = controller
+    setCancelConfirm(false)
     setGenerating(true)
     try {
+      const BLANK_PAGE = { page_type_id:'__blank__', page_type:{id:'__blank__',label:a.blankPage,slots:[]}, items:[] }
+
+      // Build divider page using profile's divider_style.
+      // Default: one full-page slot when profile has none configured, so user can add title/map.
+      const makeDividerPage = (albumData, prof) => {
+        const ds = prof?.divider_style || {}
+        const slots = ds.slots?.length ? ds.slots : [{ x:0, y:0, w:100, h:100 }]
+        const items = slots.map((slot, idx) => ({
+          slot,
+          item: ds.items?.find(it => it._slot_idx === idx) || null
+        }))
+        return {
+          page_type_id: '__divider__',
+          page_type: { id:'__divider__', label:'Divisore album', slots },
+          items,
+          _album_divider: true,
+          _album_info: {
+            albumName:  albumData.albumName  || '',
+            assetCount: albumData.assetCount || 0,
+            dateRange:  albumData.dateRange  || '',
+          },
+          _divider_style: ds,
+        }
+      }
+
+      // Fetch profile to get divider_style (shared by single and multi-album paths)
+      let profile = null
+      try {
+        const pr = await axios.get(`/api/profiles/${selectedProfile}`)
+        profile = pr.data
+      } catch {}
+
       if (selectedAlbums.length === 1) {
         // ── Single album ────────────────────────────────────────────────────
         const r = await axios.post('/api/layout/generate', {
           album_id: selectedAlbums[0], profile_id: selectedProfile, config: genConfig,
+        }, { signal: controller.signal })
+        const { photo_transforms = {}, ...layoutData } = r.data
+        const albumData = r.data.album || {}
+
+        // Insert divider at index 0 (right-hand page of the "seconda di copertina" spread)
+        const divider = makeDividerPage(albumData, profile)
+        const pages = [divider, ...(layoutData.pages || [])]
+
+        // Shift all transform keys by 1 (divider now occupies index 0)
+        const shiftedTransforms = {}
+        Object.entries(photo_transforms).forEach(([key, val]) => {
+          const [pi, si] = key.split('_').map(Number)
+          shiftedTransforms[`${pi + 1}_${si}`] = val
         })
-        const { photo_transforms, ...layoutData } = r.data
-        sessionStorage.setItem('photobook_layout', JSON.stringify(layoutData))
-        if (photo_transforms && Object.keys(photo_transforms).length > 0)
-          sessionStorage.setItem('photobook_transforms', JSON.stringify(photo_transforms))
+
+        sessionStorage.setItem('photobook_layout', JSON.stringify({ ...layoutData, pages }))
+        if (Object.keys(shiftedTransforms).length > 0)
+          sessionStorage.setItem('photobook_transforms', JSON.stringify(shiftedTransforms))
         else
           sessionStorage.removeItem('photobook_transforms')
       } else {
-        // ── Multi-album: concatenate with cover pages ────────────────────────
-        // Generate each album separately, then merge
+        // ── Multi-album: concatenate with divider pages ────────────────────────
         const results = await Promise.all(
           selectedAlbums.map(id =>
             axios.post('/api/layout/generate', {
               album_id: id, profile_id: selectedProfile, config: genConfig,
-            })
+            }, { signal: controller.signal })
           )
         )
-        // Use first album's metadata as "root"
-        const first = results[0].data
-        const BLANK_PAGE = { page_type_id:'__blank__', page_type:{id:'__blank__',label:a.blankPage,slots:[]}, items:[] }
-        
-        // Build merged pages: for each album add cover-indicator + blank + pages
-        // (actual cover rendering is in PreviewPage; we mark album boundaries with a special flag)
+
         let allPages = []
         let allTransforms = {}
-        let pageOffset = 0
-        
+
+        // Spread view: index 0 = RIGHT page (seconda di copertina | pages[0])
+        //              index 1 = LEFT page of next spread, index 2 = RIGHT, ...
+        // Divider must be at EVEN index (0, 2, 4...) to appear on the right-hand page.
+        const ensureEvenIndex = () => {
+          if (allPages.length % 2 !== 0) {
+            allPages.push({...BLANK_PAGE, _album_separator: true})
+          }
+        }
+
         results.forEach((r, i) => {
           const { photo_transforms = {}, pages = [] } = r.data
-          
-          if (i > 0) {
-            // New album section: ensure it starts on an odd page (right-hand page)
-            // Add blank page if needed so next page is odd-numbered (1-based)
-            if ((allPages.length + 1) % 2 === 0) {
-              // current length is odd (0-indexed), next would be even (0-indexed = odd 1-based) → add blank
-              allPages.push({...BLANK_PAGE, _album_separator: true})
-              pageOffset++
-            }
-            // Insert an "album cover marker" page
-            allPages.push({
-              ...BLANK_PAGE,
-              _album_cover: true,
-              _album_info: { albumName: r.data.album.albumName, assetCount: r.data.album.assetCount },
-            })
-            pageOffset++
-            // Blank spacer after cover (before content)
-            allPages.push({...BLANK_PAGE, _album_separator: true})
-            pageOffset++
-          }
-          
-          // Remap transforms with correct page offset
+          const albumData = r.data.album || {}
+
+          ensureEvenIndex()
+          allPages.push({...makeDividerPage(albumData, profile), _album_idx: i})
+
+          const transformOffset = allPages.length
           Object.entries(photo_transforms).forEach(([key, val]) => {
             const [pi, si] = key.split('_').map(Number)
-            allTransforms[`${pi + pageOffset}_${si}`] = val
+            allTransforms[`${pi + transformOffset}_${si}`] = val
           })
-          
-          allPages = [...allPages, ...pages]
-          pageOffset += pages.length
+
+          allPages = [...allPages, ...pages.map(p => ({...p, _album_idx: i}))]
         })
-        
+
+        // Ensure last page lands on a left-hand (odd index) page for proper book closing.
+        if (allPages.length % 2 !== 0) {
+          allPages.push({...BLANK_PAGE, _album_separator: true})
+        }
+
         // Merge page_logs with corrected page numbers
         let allPageLogs = []
         let logOffset = 0
         results.forEach((r, i) => {
           const logs = r.data.page_logs || []
-          // For subsequent albums, add separator/cover page offsets
-          const extraPages = i === 0 ? 0 : (() => {
-            let x = 0
-            if ((allPages.length - (r.data.pages||[]).length + 1) % 2 === 0) x++
-            x += 2 // cover + spacer
-            return x
-          })()
-          logs.forEach(pl => allPageLogs.push({...pl, page_num: pl.page_num + logOffset + extraPages}))
-          logOffset += (r.data.pages||[]).length + (i===0?0:extraPages)
+          const dividerOffset = i === 0 ? 1 : 0
+          logs.forEach(pl => allPageLogs.push({...pl, page_num: pl.page_num + logOffset + dividerOffset}))
+          logOffset += (r.data.pages||[]).length + dividerOffset
         })
+
         const mergedLayout = {
-          ...first,
+          ...results[0].data,
           pages: allPages,
           page_logs: allPageLogs,
           _multi_album: true,
-          _album_count: selectedAlbums.length,
+          _album_count: results.length,
+          _album_ids:   results.map(r => r.data.album?.id).filter(Boolean),
+          _album_names: results.map(r => r.data.album?.albumName || ''),
         }
         sessionStorage.setItem('photobook_layout', JSON.stringify(mergedLayout))
         if (Object.keys(allTransforms).length > 0)
@@ -341,10 +460,40 @@ export default function AlbumsPage() {
       }
       navigate('/preview')
     } catch (e) {
-      alert(a.generateError(e.response?.data?.detail || e.message))
-    } finally { setGenerating(false) }
+      if (e.name === 'AbortError' || e.code === 'ERR_CANCELED') {
+        // User cancelled — silent
+      } else {
+        alert(a.generateError(e.response?.data?.detail || e.message))
+      }
+    } finally {
+      setGenerating(false)
+      setCancelConfirm(false)
+      abortRef.current = null
+    }
   }
 
+
+  const loadProject = async (pid) => {
+    try {
+      const r = await axios.get(`/api/projects/${pid}`)
+      const data = r.data
+      sessionStorage.setItem('photobook_layout', JSON.stringify({
+        album:     data.album,
+        profile:   data.profile,
+        pages:     data.pages,
+        locations: data.locations || [],
+        page_logs: data.page_logs || [],
+      }))
+      if (data.photo_transforms && Object.keys(data.photo_transforms).length > 0)
+        sessionStorage.setItem('photobook_transforms', JSON.stringify(data.photo_transforms))
+      else
+        sessionStorage.removeItem('photobook_transforms')
+      sessionStorage.setItem('photobook_project_id', pid)
+      navigate('/preview')
+    } catch (e) {
+      alert('Errore nel caricamento del progetto: ' + (e.response?.data?.detail || e.message))
+    }
+  }
 
   const filtered = albums.filter(al => al.albumName?.toLowerCase().includes(search.toLowerCase()))
 
@@ -410,11 +559,47 @@ export default function AlbumsPage() {
 
             {/* Generate + config */}
             <div style={{ alignSelf:'flex-end', display:'flex', gap:6, alignItems:'center' }}>
-              <button className="btn btn-primary btn-lg"
-                onClick={generate}
-                disabled={!selectedAlbums.length || generating || !selectedProfile}>
-                {generating ? <><span className="spinner" style={{ width:14, height:14 }}/> Generazione…</> : '📖 Genera album'}
-              </button>
+              {generating ? (
+                <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                  {/* Spinner + label */}
+                  <div style={{ display:'flex', alignItems:'center', gap:8,
+                    padding:'8px 14px', background:'var(--bg3)', border:'1px solid var(--border)',
+                    borderRadius:7, fontSize:13, color:'var(--text2)' }}>
+                    <span className="spinner" style={{ width:14, height:14, flexShrink:0 }}/>
+                    Generazione…
+                  </div>
+                  {/* Cancel button */}
+                  <button
+                    onClick={cancelGenerate}
+                    style={{
+                      padding:'8px 14px', fontSize:13, borderRadius:7, cursor:'pointer',
+                      border: cancelConfirm
+                        ? '1px solid var(--red,#e05050)'
+                        : '1px solid var(--border)',
+                      background: cancelConfirm
+                        ? 'rgba(224,80,80,0.13)'
+                        : 'var(--bg3)',
+                      color: cancelConfirm ? 'var(--red,#e05050)' : 'var(--text2)',
+                      transition: 'all 0.15s',
+                      fontWeight: cancelConfirm ? 600 : 400,
+                    }}>
+                    {cancelConfirm ? '⚠ Sei sicuro? Clicca ancora per annullare' : '✕ Annulla'}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                  <button className="btn btn-primary btn-lg"
+                    onClick={generate}
+                    disabled={!selectedAlbums.length || !selectedProfile}>
+                    📖 Genera album
+                  </button>
+                  <button className="btn btn-lg"
+                    onClick={() => setShowProjects(true)}
+                    title="Apri un layout di stampa già salvato">
+                    📂 Apri progetto
+                  </button>
+                </div>
+              )}
 
               {/* Gear icon with badge */}
               <div style={{ position:'relative' }}>
@@ -521,6 +706,11 @@ export default function AlbumsPage() {
           config={genConfig}
           onChange={setGenConfig}
           onClose={() => setShowConfig(false)}/>
+      )}
+      {showProjects && (
+        <ProjectListModal
+          onClose={() => setShowProjects(false)}
+          onLoad={loadProject}/>
       )}
     </>
   )

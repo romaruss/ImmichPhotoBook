@@ -157,7 +157,6 @@ def _build_page_svg(
     ET.register_namespace("inkscape", INKSCAPE_NS)
 
     root = ET.Element(f"{{{SVG_NS}}}svg")
-    root.set("xmlns:xlink", XLINK)
     root.set("width",  f"{total_w_mm}mm")
     root.set("height", f"{total_h_mm}mm")
     root.set("viewBox", f"0 0 {total_w_px:.2f} {total_h_px:.2f}")
@@ -174,16 +173,6 @@ def _build_page_svg(
     clip_rect.set("y", f"{bleed_px:.2f}")
     clip_rect.set("width",  f"{_mm(pw_mm):.2f}")
     clip_rect.set("height", f"{_mm(ph_mm):.2f}")
-
-    # ── Background layer ──────────────────────────────────────────────────────
-    bg_layer = ET.SubElement(root, f"{{{SVG_NS}}}g")
-    bg_layer.set("id", "background")
-    bg_layer.set(f"{{{INKSCAPE_NS}}}label", "Background")
-    bg_rect = ET.SubElement(bg_layer, f"{{{SVG_NS}}}rect")
-    bg_rect.set("x", "0"); bg_rect.set("y", "0")
-    bg_rect.set("width",  f"{total_w_px:.2f}")
-    bg_rect.set("height", f"{total_h_px:.2f}")
-    bg_rect.set("fill", "#0a0a0c" if is_title_page else "#f5f2ee")
 
     # ── Photos layer ──────────────────────────────────────────────────────────
     photo_layer = ET.SubElement(root, f"{{{SVG_NS}}}g")
@@ -271,7 +260,7 @@ def _build_page_svg(
                 uri = _img_to_data_uri(img_bytes, max_px=2400)
                 if uri:
                     # Compute pan/zoom
-                    pan_key = f"{page_num}_{si}"
+                    pan_key = f"{page_num - 1}_{si}"
                     transform = pan_offsets.get(pan_key, {"x": 50, "y": 50, "zoom": 1})
                     zoom = transform.get("zoom", 1)
                     pan_x = transform.get("x", 50) / 100
@@ -321,6 +310,7 @@ def _build_page_svg(
         text_layer.set("id", "captions")
         text_layer.set(f"{{{INKSCAPE_NS}}}label", "Didascalie")
 
+        profile_cs = profile.get("caption_style") or {}
         for si, item_data in enumerate(page.get("items", [])):
             item = item_data.get("item")
             if not item or item["type"] != "caption":
@@ -331,20 +321,79 @@ def _build_page_svg(
             ry = _mm(r["y"]) + bleed_px
             rw = _mm(r["w"]); rh = _mm(r["h"])
 
-            bg = ET.SubElement(text_layer, f"{{{SVG_NS}}}rect")
-            bg.set("x", f"{rx:.2f}"); bg.set("y", f"{ry:.2f}")
-            bg.set("width", f"{rw:.2f}"); bg.set("height", f"{rh:.2f}")
-            bg.set("fill", "#111116")
+            cs       = {**profile_cs, **(item.get("caption_style") or {})}
+            bg_color = cs.get("bg", "#111116")
+            clr      = cs.get("color", "#e8e6e0")
+            font_fam = cs.get("font", "Georgia, serif")
+            size_px  = float(cs.get("size", 13) or 13)
+            italic   = cs.get("italic", True)
+            bold     = cs.get("bold", False)
+            align    = cs.get("align", "left")
+            lh_mult  = float(cs.get("lineHeight", 1.45) or 1.45)
+
+            if bg_color and bg_color != "transparent":
+                bg_el = ET.SubElement(text_layer, f"{{{SVG_NS}}}rect")
+                bg_el.set("x", f"{rx:.2f}"); bg_el.set("y", f"{ry:.2f}")
+                bg_el.set("width", f"{rw:.2f}"); bg_el.set("height", f"{rh:.2f}")
+                bg_el.set("fill", bg_color)
+
+            text_content = (item.get("text") or "").strip()
+            if not text_content:
+                continue
+
+            # font-size in SVG units (1 CSS px = 1 SVG unit in this coord system)
+            font_size = max(8.0, min(size_px, rh / 5))
+            leading   = font_size * lh_mult
+            pad_x     = _mm(5)
+            pad_top   = _mm(5)
+            inner_x   = rx + pad_x
+            inner_w   = rw - 2 * pad_x
+
+            txt_anchor = "middle" if align == "center" else ("end" if align == "right" else "start")
+            txt_x = inner_x + inner_w / 2 if align == "center" else (rx + rw - pad_x if align == "right" else inner_x)
 
             txt = ET.SubElement(text_layer, f"{{{SVG_NS}}}text")
-            txt.set("x", f"{rx + _mm(5):.2f}"); txt.set("y", f"{ry + rh/2:.2f}")
-            txt.set("dominant-baseline", "middle")
-            txt.set("font-size", str(max(10, min(16, rw * 0.06))))
-            txt.set("fill", "#e8e6e0"); txt.set("font-family", "Georgia, serif")
-            txt.set("font-style", "italic")
-            txt.set("textLength", f"{rw - _mm(10):.2f}")
-            txt.set("lengthAdjust", "spacing")
-            txt.text = (item.get("text") or "").strip()
+            txt.set("x", f"{txt_x:.2f}")
+            txt.set("y", f"{ry + pad_top + font_size:.2f}")
+            txt.set("text-anchor", txt_anchor)
+            txt.set("font-size", f"{font_size:.1f}")
+            txt.set("fill", clr)
+            txt.set("font-family", font_fam)
+            if italic:
+                txt.set("font-style", "italic")
+            if bold:
+                txt.set("font-weight", "bold")
+
+            # Wrap lines naively by word count (SVG has no text-wrap)
+            words = text_content.split()
+            # Estimate chars-per-line from slot width and font size
+            chars_per_line = max(10, int(inner_w / (font_size * 0.55)))
+            lines = []
+            line = ""
+            for word in words:
+                if len(line) + len(word) + 1 <= chars_per_line:
+                    line = (line + " " + word).strip()
+                else:
+                    if line:
+                        lines.append(line)
+                    line = word
+            if line:
+                lines.append(line)
+            max_lines = max(1, int((rh - 2 * pad_top) / leading))
+            lines = lines[:max_lines]
+
+            if len(lines) == 1:
+                txt.text = lines[0]
+            else:
+                txt.text = None
+                for i, ln in enumerate(lines):
+                    tspan = ET.SubElement(txt, f"{{{SVG_NS}}}tspan")
+                    tspan.set("x", f"{txt_x:.2f}")
+                    if i == 0:
+                        tspan.set("dy", "0")
+                    else:
+                        tspan.set("dy", f"{leading:.1f}")
+                    tspan.text = ln
 
     # ── Crop marks layer ─────────────────────────────────────────────────────
     if bleed_mm > 0:
