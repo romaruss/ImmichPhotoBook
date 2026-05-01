@@ -19,11 +19,21 @@ const DEFAULTS = {
   fill_empty_with_map:  false,
 }
 
-const STORAGE_KEY = 'photobook_gen_config'
+const STORAGE_KEY  = 'photobook_gen_config'
+const PRESETS_KEY  = 'photobook_gen_presets'
 
 function loadConfig() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') } }
   catch { return { ...DEFAULTS } }
+}
+
+function loadPresets() {
+  try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]') }
+  catch { return [] }
+}
+
+function savePresetsStorage(presets) {
+  localStorage.setItem(PRESETS_KEY, JSON.stringify(presets))
 }
 
 // ── SliderInput — top-level so it never remounts on parent state change ────────
@@ -64,7 +74,12 @@ function SliderInput({ value, onChange, label, help, min, max, step, unit, disab
 
 // ── Config modal ───────────────────────────────────────────────────────────────
 function ConfigModal({ config, onChange, onClose }) {
-  const [local, setLocal] = useState({ ...config })
+  const [local, setLocal]               = useState({ ...config })
+  const [presets, setPresets]           = useState(loadPresets)
+  const [selectedPresetId, setSelectedPresetId] = useState('')
+  const [namingPreset, setNamingPreset] = useState(false)
+  const [presetName, setPresetName]     = useState('')
+
   const set = (k, v) => setLocal(p => ({ ...p, [k]: v }))
 
   const save = () => {
@@ -73,7 +88,31 @@ function ConfigModal({ config, onChange, onClose }) {
     onClose()
   }
 
-  const reset = () => setLocal({ ...DEFAULTS })
+  const reset = () => { setLocal({ ...DEFAULTS }); setSelectedPresetId('') }
+
+  const applyPreset = (id) => {
+    const p = presets.find(x => x.id === id)
+    if (p) { setLocal({ ...DEFAULTS, ...p.config }); setSelectedPresetId(id) }
+  }
+
+  const commitSavePreset = () => {
+    const name = presetName.trim()
+    if (!name) return
+    const id   = Date.now().toString()
+    const next = [...presets, { id, name, config: { ...local } }]
+    setPresets(next)
+    savePresetsStorage(next)
+    setSelectedPresetId(id)
+    setNamingPreset(false)
+    setPresetName('')
+  }
+
+  const deletePreset = () => {
+    const next = presets.filter(x => x.id !== selectedPresetId)
+    setPresets(next)
+    savePresetsStorage(next)
+    setSelectedPresetId('')
+  }
 
   const Section = ({ title }) => (
     <p style={{ fontSize:10, fontFamily:'var(--font-mono)', color:'var(--gold)',
@@ -136,6 +175,60 @@ function ConfigModal({ config, onChange, onClose }) {
           </div>
           <button onClick={onClose}
             style={{ background:'none', border:'none', color:'var(--text3)', fontSize:22, cursor:'pointer' }}>✕</button>
+        </div>
+
+        {/* Preset bar */}
+        <div style={{ padding:'10px 24px', borderBottom:'1px solid var(--border)',
+          background:'var(--bg)', display:'flex', alignItems:'center', gap:8, flexShrink:0 }}>
+          <span style={{ fontSize:11, color:'var(--text3)', whiteSpace:'nowrap', fontFamily:'var(--font-mono)' }}>Preset:</span>
+          <select
+            value={selectedPresetId}
+            onChange={e => applyPreset(e.target.value)}
+            style={{ flex:1, background:'var(--bg3)', border:'1px solid var(--border)',
+              color:'var(--text)', borderRadius:5, padding:'4px 8px', fontSize:12 }}>
+            <option value="">— nessun preset —</option>
+            {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+
+          {selectedPresetId && (
+            <button onClick={deletePreset} title="Elimina preset"
+              style={{ background:'none', border:'1px solid var(--border)', color:'var(--text3)',
+                borderRadius:5, padding:'4px 8px', fontSize:12, cursor:'pointer',
+                flexShrink:0 }}>
+              ✕
+            </button>
+          )}
+
+          {namingPreset ? (
+            <>
+              <input
+                autoFocus
+                value={presetName}
+                onChange={e => setPresetName(e.target.value)}
+                onKeyDown={e => { if (e.key==='Enter') commitSavePreset(); if (e.key==='Escape') { setNamingPreset(false); setPresetName('') } }}
+                placeholder="Nome preset…"
+                style={{ width:140, background:'var(--bg3)', border:'1px solid var(--gold)',
+                  color:'var(--text)', borderRadius:5, padding:'4px 8px', fontSize:12 }}/>
+              <button onClick={commitSavePreset}
+                style={{ background:'var(--gold)', border:'none', color:'#000',
+                  borderRadius:5, padding:'4px 10px', fontSize:12, cursor:'pointer', fontWeight:600, flexShrink:0 }}>
+                ✓
+              </button>
+              <button onClick={() => { setNamingPreset(false); setPresetName('') }}
+                style={{ background:'none', border:'1px solid var(--border)', color:'var(--text3)',
+                  borderRadius:5, padding:'4px 8px', fontSize:12, cursor:'pointer', flexShrink:0 }}>
+                Annulla
+              </button>
+            </>
+          ) : (
+            <button onClick={() => { setNamingPreset(true); setPresetName('') }}
+              title="Salva impostazioni correnti come preset"
+              style={{ background:'none', border:'1px solid var(--border)', color:'var(--text2)',
+                borderRadius:5, padding:'4px 10px', fontSize:12, cursor:'pointer',
+                whiteSpace:'nowrap', flexShrink:0 }}>
+              + Salva preset
+            </button>
+          )}
         </div>
 
         {/* Body */}
