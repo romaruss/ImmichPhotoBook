@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import { useT } from '../i18n.jsx'
 import PageTypeEditor from '../components/PageTypeEditor'
@@ -26,16 +26,28 @@ const TILE_STYLES = [
 ]
 
 const DEFAULT_MAP_STYLE = {
-  tile_style:   'alidade_smooth',
-  marker_color: '#d4aa5a',
-  marker_size:  10,
-  show_route:   true,
-  route_color:  '#b48a3a',
-  route_width:  2,
-  bg_color:     '#0d1117',
-  grid_color:   '#19202a',
-  label_color:  '#c8b994',
+  tile_style:    'alidade_smooth',
+  marker_color:  '#d4aa5a',
+  marker_size:   10,
+  marker_shape:  'circle',
+  show_route:    true,
+  route_color:   '#b48a3a',
+  route_width:   2,
+  bg_color:      '#0d1117',
+  grid_color:    '#19202a',
+  label_color:   '#c8b994',
 }
+
+const MARKER_SHAPES = [
+  { id: 'circle',  label: 'Cerchio',  icon: (c) =>
+    <svg width="28" height="28" viewBox="0 0 28 28"><circle cx="14" cy="14" r="9" fill={c} fillOpacity=".25"/><circle cx="14" cy="14" r="5" fill={c}/></svg> },
+  { id: 'square',  label: 'Quadrato', icon: (c) =>
+    <svg width="28" height="28" viewBox="0 0 28 28"><rect x="5" y="5" width="18" height="18" fill={c} fillOpacity=".25"/><rect x="9" y="9" width="10" height="10" fill={c}/></svg> },
+  { id: 'diamond', label: 'Rombo',    icon: (c) =>
+    <svg width="28" height="28" viewBox="0 0 28 28"><polygon points="14,3 25,14 14,25 3,14" fill={c} fillOpacity=".25"/><polygon points="14,8 20,14 14,20 8,14" fill={c}/></svg> },
+  { id: 'pin',     label: 'Pin',      icon: (c) =>
+    <svg width="28" height="28" viewBox="0 0 28 28"><circle cx="14" cy="10" r="8" fill={c} fillOpacity=".25"/><polygon points="10,14 18,14 14,25" fill={c} fillOpacity=".25"/><circle cx="14" cy="10" r="5" fill={c}/></svg> },
+]
 
 const DEFAULT_PROFILE = {
   name:'', page_size:'20x30', orientation:'portrait', duplex:false,
@@ -164,37 +176,42 @@ function MarginInput({ side, label, formValue, onCommit }) {
   )
 }
 
-// ── Map style mini-preview ────────────────────────────────────────────────────
-function MapStylePreview({ ms }) {
-  const bg     = ms.bg_color    || '#0d1117'
-  const marker = ms.marker_color || '#d4aa5a'
-  const route  = ms.route_color  || '#b48a3a'
-  const grid   = ms.grid_color   || '#19202a'
-  const pts = [[18,65],[40,45],[62,55],[82,35]]
+// ── Map live preview panel ────────────────────────────────────────────────────
+function MapPreviewPanel({ previewUrl, loading, onRefresh }) {
   return (
-    <div style={{ width:'100%', height:90, borderRadius:6, background:bg,
-      border:'1px solid var(--border)', overflow:'hidden', position:'relative' }}>
-      <svg width="100%" height="100%" viewBox="0 0 100 90" preserveAspectRatio="none">
-        {/* Grid */}
-        {[20,40,60,80].map(x => (
-          <line key={`gx${x}`} x1={x} y1={0} x2={x} y2={90} stroke={grid} strokeWidth="0.5"/>
-        ))}
-        {[22,44,66].map(y => (
-          <line key={`gy${y}`} x1={0} y1={y} x2={100} y2={y} stroke={grid} strokeWidth="0.5"/>
-        ))}
-        {/* Route */}
-        {ms.show_route !== false && pts.slice(0,-1).map((p,i) => (
-          <line key={i} x1={p[0]} y1={p[1]} x2={pts[i+1][0]} y2={pts[i+1][1]}
-            stroke={route} strokeWidth="1.5" strokeOpacity="0.6"/>
-        ))}
-        {/* Markers */}
-        {pts.map((p,i) => (
-          <g key={i}>
-            <circle cx={p[0]} cy={p[1]} r="5" fill={marker} fillOpacity="0.25"/>
-            <circle cx={p[0]} cy={p[1]} r="2.5" fill={marker}/>
-          </g>
-        ))}
-      </svg>
+    <div style={{ display:'flex', flexDirection:'column', gap:8, position:'sticky', top:20 }}>
+      <label className="form-label" style={{marginBottom:0}}>Anteprima live · Torino</label>
+      <div style={{
+        width:300, height:300, borderRadius:8, overflow:'hidden',
+        background:'var(--bg3)', border:'1px solid var(--border)',
+        display:'flex', alignItems:'center', justifyContent:'center',
+        position:'relative', flexShrink:0,
+      }}>
+        {loading && (
+          <div style={{
+            position:'absolute', inset:0, display:'flex', alignItems:'center',
+            justifyContent:'center', background:'rgba(0,0,0,.5)', zIndex:2,
+          }}>
+            <span style={{color:'var(--gold)', fontSize:24}}>⟳</span>
+          </div>
+        )}
+        {previewUrl
+          ? <img src={previewUrl} alt="map preview"
+              style={{width:'100%', height:'100%', objectFit:'cover', display:'block'}}/>
+          : !loading && (
+            <span style={{color:'var(--text3)', fontSize:12, textAlign:'center', padding:16}}>
+              Clicca "Aggiorna" per generare l'anteprima
+            </span>
+          )
+        }
+      </div>
+      <button className="btn btn-sm" onClick={onRefresh} disabled={loading}
+        style={{fontSize:11, opacity: loading ? 0.6 : 1}}>
+        {loading ? '⟳ Caricamento…' : '↺ Aggiorna anteprima'}
+      </button>
+      <p className="text-xs text-muted" style={{margin:0}}>
+        Usa il renderer PIL (fallback). Le tile online si vedono nell'album.
+      </p>
     </div>
   )
 }
@@ -211,6 +228,19 @@ export default function ProfilesPage() {
   const [showCustomSizeMgr, setShowCustomSizeMgr] = useState(false)
   const [ptKey, setPtKey]             = useState(0)
   const [marginLocked, setMarginLocked] = useState(true)
+  const [mapPreviewUrl, setMapPreviewUrl]   = useState(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const previewTimerRef = useRef(null)
+
+  const refreshMapPreview = async (style) => {
+    setPreviewLoading(true)
+    try {
+      const resp = await axios.post('/api/map-preview', { map_style: style }, { responseType: 'blob' })
+      const url = URL.createObjectURL(resp.data)
+      setMapPreviewUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+    } catch {}
+    finally { setPreviewLoading(false) }
+  }
 
   useEffect(() => {
     loadProfiles()
@@ -297,6 +327,17 @@ export default function ProfilesPage() {
   ]
 
   const selectedSizeObj = allSizes.find(s => s.id === form.page_size)
+
+  // ── Debounced map preview refresh when map_style changes ─────────────────────
+  const _mapStyleKey = JSON.stringify(form.map_style)
+  useEffect(() => {
+    if (!editing) return
+    if (previewTimerRef.current) clearTimeout(previewTimerRef.current)
+    previewTimerRef.current = setTimeout(() => {
+      refreshMapPreview({ ...DEFAULT_MAP_STYLE, ...(form.map_style || {}) })
+    }, 700)
+    return () => clearTimeout(previewTimerRef.current)
+  }, [_mapStyleKey, editing]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Editor view ───────────────────────────────────────────────────────────────
   if (editing) {
@@ -870,19 +911,17 @@ export default function ProfilesPage() {
               </button>
             </>}>
 
-            <p className="text-sm text-muted" style={{marginBottom:16}}>
-              Impostazioni per il rendering delle mappe GPS negli slot album. Usate per lo slot "Riempi vuoti con mappa" e per la mappa della copertina.
-            </p>
+            {/* Main grid: settings left, live preview right */}
+            <div style={{display:'grid', gridTemplateColumns:'1fr 316px', gap:28, alignItems:'start'}}>
 
-            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:24}}>
-              {/* Left column */}
-              <div style={{display:'flex',flexDirection:'column',gap:16}}>
+              {/* ── Settings column ── */}
+              <div style={{display:'flex', flexDirection:'column', gap:20}}>
 
                 {/* Tile style */}
-                <div className="form-group">
-                  <label className="form-label">Stile mappa (tiles online)</label>
+                <div className="form-group" style={{marginBottom:0}}>
+                  <label className="form-label">Stile tiles online (Stadia Maps)</label>
                   <p className="text-xs text-muted" style={{marginBottom:8}}>
-                    Richiede Stadia Maps API key. Se non disponibile viene usato il renderer PIL.
+                    Richiede API key. Senza key viene usato il renderer PIL (colori a destra).
                   </p>
                   <div style={{display:'flex',flexDirection:'column',gap:4}}>
                     {TILE_STYLES.map(ts => (
@@ -907,15 +946,32 @@ export default function ProfilesPage() {
                   </div>
                 </div>
 
-              </div>
-
-              {/* Right column */}
-              <div style={{display:'flex',flexDirection:'column',gap:16}}>
-
                 {/* Marker */}
-                <div className="form-group">
+                <div className="form-group" style={{marginBottom:0}}>
                   <label className="form-label">Marcatore posizione</label>
-                  <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
+
+                  {/* Shape selector */}
+                  <div style={{display:'flex', gap:8, marginBottom:12, flexWrap:'wrap'}}>
+                    {MARKER_SHAPES.map(sh => (
+                      <button key={sh.id}
+                        onClick={()=>setMs('marker_shape', sh.id)}
+                        title={sh.label}
+                        style={{
+                          display:'flex', flexDirection:'column', alignItems:'center', gap:4,
+                          padding:'8px 10px', borderRadius:6, cursor:'pointer', border:'none',
+                          background: ms.marker_shape===sh.id ? 'var(--gold-dim)' : 'var(--bg3)',
+                          outline: ms.marker_shape===sh.id ? '1.5px solid var(--gold)' : '1.5px solid var(--border)',
+                        }}>
+                        {sh.icon(ms.marker_color || '#d4aa5a')}
+                        <span style={{fontSize:10, color: ms.marker_shape===sh.id ? 'var(--gold)' : 'var(--text3)'}}>
+                          {sh.label}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Color + Size */}
+                  <div style={{display:'flex',gap:16,alignItems:'flex-end',flexWrap:'wrap'}}>
                     <div style={{display:'flex',flexDirection:'column',gap:4}}>
                       <span style={{fontSize:11,color:'var(--text3)'}}>Colore</span>
                       <div style={{display:'flex',gap:6,alignItems:'center'}}>
@@ -927,7 +983,7 @@ export default function ProfilesPage() {
                       </div>
                     </div>
                     <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                      <span style={{fontSize:11,color:'var(--text3)'}}>Dimensione (px)</span>
+                      <span style={{fontSize:11,color:'var(--text3)'}}>Dimensione px</span>
                       <input type="number" className="form-input" min={4} max={30} step={1}
                         value={ms.marker_size} onChange={e=>setMs('marker_size',+e.target.value)}
                         style={{width:70}}/>
@@ -936,7 +992,7 @@ export default function ProfilesPage() {
                 </div>
 
                 {/* Route */}
-                <div className="form-group">
+                <div className="form-group" style={{marginBottom:0}}>
                   <label className="form-label">Linea percorso</label>
                   <div style={{display:'flex',flexDirection:'column',gap:8}}>
                     <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
@@ -945,7 +1001,7 @@ export default function ProfilesPage() {
                         style={{accentColor:'var(--gold)'}}/>
                       <span style={{fontSize:12,color:'var(--text)'}}>Mostra linea di percorso</span>
                     </label>
-                    <div style={{display:'flex',gap:12,alignItems:'center',opacity:ms.show_route?1:0.4}}>
+                    <div style={{display:'flex',gap:16,alignItems:'flex-end',flexWrap:'wrap',opacity:ms.show_route?1:0.4}}>
                       <div style={{display:'flex',flexDirection:'column',gap:4}}>
                         <span style={{fontSize:11,color:'var(--text3)'}}>Colore</span>
                         <div style={{display:'flex',gap:6,alignItems:'center'}}>
@@ -959,7 +1015,7 @@ export default function ProfilesPage() {
                         </div>
                       </div>
                       <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                        <span style={{fontSize:11,color:'var(--text3)'}}>Spessore (px)</span>
+                        <span style={{fontSize:11,color:'var(--text3)'}}>Spessore px</span>
                         <input type="number" className="form-input" min={1} max={8} step={1}
                           value={ms.route_width} onChange={e=>setMs('route_width',+e.target.value)}
                           disabled={!ms.show_route} style={{width:70}}/>
@@ -969,10 +1025,10 @@ export default function ProfilesPage() {
                 </div>
 
                 {/* PIL fallback colors */}
-                <div className="form-group">
+                <div className="form-group" style={{marginBottom:0}}>
                   <label className="form-label">Colori renderer PIL (fallback)</label>
                   <p className="text-xs text-muted" style={{marginBottom:8}}>
-                    Usati quando le tiles online non sono disponibili.
+                    Sfondo, griglia ed etichette quando le tiles online non sono disponibili.
                   </p>
                   <div style={{display:'flex',flexDirection:'column',gap:8}}>
                     {[
@@ -993,12 +1049,14 @@ export default function ProfilesPage() {
                 </div>
 
               </div>
-            </div>
 
-            {/* Preview */}
-            <div style={{marginTop:16}}>
-              <label className="form-label">Anteprima stile PIL</label>
-              <MapStylePreview ms={ms}/>
+              {/* ── Live preview column ── */}
+              <MapPreviewPanel
+                previewUrl={mapPreviewUrl}
+                loading={previewLoading}
+                onRefresh={() => refreshMapPreview(ms)}
+              />
+
             </div>
 
           </CollapsibleCard>

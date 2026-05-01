@@ -650,6 +650,24 @@ async def get_map(req: MapRequest):
         return Response(img_bytes, media_type="image/png")
     raise HTTPException(404, "No locations")
 
+_TORINO_TEST = [
+    {"lat": 45.0703, "lon": 7.6869, "name": "Torino"},
+    {"lat": 45.0752, "lon": 7.6750, "name": "Porta Susa"},
+    {"lat": 45.0637, "lon": 7.6919, "name": "Gran Madre"},
+    {"lat": 45.0781, "lon": 7.6825, "name": "Lingotto"},
+    {"lat": 45.0710, "lon": 7.7024, "name": "Sassi"},
+]
+
+class MapPreviewRequest(BaseModel):
+    map_style: dict = {}
+
+@app.post("/api/map-preview")
+async def map_preview_endpoint(req: MapPreviewRequest):
+    img_bytes = generate_map_image(_TORINO_TEST, 400, 400, map_style=req.map_style)
+    if not img_bytes:
+        raise HTTPException(404, "Generation failed")
+    return Response(img_bytes, media_type="image/png")
+
 # ─── PDF + SVG EXPORT ────────────────────────────────────────────────────────
 
 class ExportRequest(BaseModel):

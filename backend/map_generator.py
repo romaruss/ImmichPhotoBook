@@ -34,15 +34,16 @@ def _hex_to_rgb(hex_str: str) -> tuple:
 
 
 DEFAULT_MAP_STYLE = {
-    "tile_style":   "alidade_smooth",
-    "marker_color": "#d4aa5a",
-    "marker_size":  10,
-    "show_route":   True,
-    "route_color":  "#b48a3a",
-    "route_width":  2,
-    "bg_color":     "#0d1117",
-    "grid_color":   "#19202a",
-    "label_color":  "#c8b994",
+    "tile_style":    "alidade_smooth",
+    "marker_color":  "#d4aa5a",
+    "marker_size":   10,
+    "marker_shape":  "circle",   # circle | square | diamond | pin
+    "show_route":    True,
+    "route_color":   "#b48a3a",
+    "route_width":   2,
+    "bg_color":      "#0d1117",
+    "grid_color":    "#19202a",
+    "label_color":   "#c8b994",
 }
 
 
@@ -108,6 +109,7 @@ def _draw_minimal_map(
     show_route  = bool(s.get("show_route", True))
     route_w     = max(1, int(s.get("route_width", 2)))
     m_size      = max(3, int(s.get("marker_size", 10)))
+    m_shape     = s.get("marker_shape", "circle")
     r_inner     = max(2, m_size // 2)
     r_outer     = r_inner + max(3, m_size // 2)
 
@@ -161,12 +163,27 @@ def _draw_minimal_map(
         img = Image.alpha_composite(img, route_img)
         draw = ImageDraw.Draw(img, "RGBA")
 
+    def _draw_marker(drw, px, py):
+        if m_shape == "square":
+            drw.rectangle([(px-r_outer, py-r_outer), (px+r_outer, py+r_outer)], fill=DOT_RING)
+            drw.rectangle([(px-r_inner, py-r_inner), (px+r_inner, py+r_inner)], fill=DOT_IN + (255,))
+        elif m_shape == "diamond":
+            drw.polygon([(px, py-r_outer), (px+r_outer, py), (px, py+r_outer), (px-r_outer, py)], fill=DOT_RING)
+            drw.polygon([(px, py-r_inner), (px+r_inner, py), (px, py+r_inner), (px-r_inner, py)], fill=DOT_IN + (255,))
+        elif m_shape == "pin":
+            cy = py - r_inner  # circle centre offset upward
+            drw.ellipse([(px-r_outer, cy-r_outer), (px+r_outer, cy+r_outer)], fill=DOT_RING)
+            drw.polygon([(px-r_inner, cy), (px+r_inner, cy), (px, py+r_inner)], fill=DOT_RING)
+            drw.ellipse([(px-r_inner, cy-r_inner), (px+r_inner, cy+r_inner)], fill=DOT_IN + (255,))
+        else:  # circle (default)
+            drw.ellipse([(px-r_outer, py-r_outer), (px+r_outer, py+r_outer)], fill=DOT_RING)
+            drw.ellipse([(px-r_inner, py-r_inner), (px+r_inner, py+r_inner)], fill=DOT_IN + (255,))
+
     # Markers
     seen_labels: set[str] = set()
     for loc in locations:
         px, py = to_px(loc["lat"], loc["lon"])
-        draw.ellipse([(px-r_outer, py-r_outer), (px+r_outer, py+r_outer)], fill=DOT_RING)
-        draw.ellipse([(px-r_inner, py-r_inner), (px+r_inner, py+r_inner)], fill=DOT_IN + (255,))
+        _draw_marker(draw, px, py)
 
         name = (loc.get("name") or "").strip()
         if name and name not in seen_labels:
