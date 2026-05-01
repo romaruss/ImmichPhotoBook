@@ -450,6 +450,7 @@ async def generate_layout_new(req: GenerateRequest, _rl: None = Depends(rl_gener
     # Post-process map items: generate PNG, save to cache, replace locations with map_key
     if cfg.get("fill_empty_with_map"):
         import hashlib as _hl
+        _map_style = profile.get("map_style") or {}
         # Build page_num → slot_idx → slot_log lookup for back-filling map_key
         plog_index: dict[int, dict[int, dict]] = {}
         for pl in page_logs:
@@ -461,12 +462,13 @@ async def generate_layout_new(req: GenerateRequest, _rl: None = Depends(rl_gener
                 if item and item.get("type") == "map":
                     locs = item.pop("locations", [])
                     if locs:
+                        # Include map_style in cache key so style changes invalidate cache
                         key = "map_" + _hl.md5(
-                            json.dumps(locs, sort_keys=True).encode()
+                            json.dumps({"locs": locs, "style": _map_style}, sort_keys=True).encode()
                         ).hexdigest()[:12]
                         cache_path = CACHE_DIR / f"{key}.png"
                         if not cache_path.exists():
-                            img_bytes = generate_map_image(locs, 800, 500)
+                            img_bytes = generate_map_image(locs, 800, 500, map_style=_map_style)
                             if img_bytes:
                                 cache_path.write_bytes(img_bytes)
                         item["map_key"] = key
@@ -732,7 +734,7 @@ async def export_book(req: ExportRequest, _rl: None = Depends(rl_export)):
         _set_progress(72, "Generazione mappa GPS…")
         map_image = None
         if req.locations:
-            map_image = generate_map_image(req.locations, 800, 400)
+            map_image = generate_map_image(req.locations, 800, 400, map_style=profile.get("map_style"))
 
         album_info = {
             "albumName":   album.get("albumName", ""),

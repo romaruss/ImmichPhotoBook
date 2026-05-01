@@ -16,6 +16,27 @@ const STANDARD_SIZES = [
   { id:'Letter', name:'Letter', w:216, h:279 },
 ]
 
+const TILE_STYLES = [
+  { id:'alidade_smooth',      label:'Alidade Smooth',       desc:'Scuro minimalista (default)' },
+  { id:'alidade_smooth_dark', label:'Alidade Dark',          desc:'Molto scuro, alto contrasto' },
+  { id:'stamen_terrain',      label:'Terrain',              desc:'Rilievi e contorni naturali' },
+  { id:'stamen_toner',        label:'Toner',                desc:'Bianco e nero ad alto contrasto' },
+  { id:'osm_bright',          label:'OSM Bright',           desc:'Classico OpenStreetMap chiaro' },
+  { id:'outdoors',            label:'Outdoors',             desc:'Stile escursionistico/outdoor' },
+]
+
+const DEFAULT_MAP_STYLE = {
+  tile_style:   'alidade_smooth',
+  marker_color: '#d4aa5a',
+  marker_size:  10,
+  show_route:   true,
+  route_color:  '#b48a3a',
+  route_width:  2,
+  bg_color:     '#0d1117',
+  grid_color:   '#19202a',
+  label_color:  '#c8b994',
+}
+
 const DEFAULT_PROFILE = {
   name:'', page_size:'20x30', orientation:'portrait', duplex:false,
   margin_mm:5, margin_top:5, margin_right:5, margin_bottom:5, margin_left:5,
@@ -24,6 +45,38 @@ const DEFAULT_PROFILE = {
   color_profile: 'srgb',
   caption_style:{ font:'Georgia, serif', size:13, color:'#e8e6e0', align:'center', valign:'center', bg:'#111116', italic:true, bold:false },
   cover_style: { ...DEFAULT_COVER },
+  map_style: { ...DEFAULT_MAP_STYLE },
+}
+
+// ── Collapsible card ──────────────────────────────────────────────────────────
+function CollapsibleCard({ title, defaultOpen = true, actions, children }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="card" style={{ padding:0, overflow:'hidden' }}>
+      <div
+        style={{
+          display:'flex', alignItems:'center', gap:8,
+          padding:'12px 20px', cursor:'pointer',
+          borderBottom: open ? '1px solid var(--border)' : 'none',
+          background:'var(--bg3)', userSelect:'none',
+        }}
+        onClick={() => setOpen(o => !o)}
+      >
+        <span style={{
+          fontSize:9, color:'var(--text3)', display:'inline-block', flexShrink:0,
+          transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+          transition:'transform 0.15s',
+        }}>▶</span>
+        <span className="card-title" style={{ margin:0, flex:1 }}>{title}</span>
+        {actions && (
+          <div onClick={e => e.stopPropagation()} style={{ display:'flex', gap:6 }}>
+            {actions}
+          </div>
+        )}
+      </div>
+      {open && <div style={{ padding:'16px 20px' }}>{children}</div>}
+    </div>
+  )
 }
 
 // ── Custom size manager panel ─────────────────────────────────────────────────
@@ -89,12 +142,9 @@ function CustomSizeManager({ customSizes, onAdd, onDelete }) {
   )
 }
 
-// ── Main ProfilesPage ─────────────────────────────────────────────────────────
-
 // ── Margin input: uncontrolled locally to avoid focus loss ────────────────────
 function MarginInput({ side, label, formValue, onCommit }) {
   const [txt, setTxt] = useState(String(formValue ?? 5))
-  // Sync when parent resets form (e.g. loading different profile)
   useEffect(() => { setTxt(String(formValue ?? 5)) }, [formValue])
   const commit = (raw) => {
     const v = parseFloat(raw)
@@ -106,10 +156,45 @@ function MarginInput({ side, label, formValue, onCommit }) {
       <input type="number" className="form-input" min={0} max={50} step={0.5}
         value={txt}
         onChange={e => setTxt(e.target.value)}
-        onBlur={e => { commit(e.target.value); }}
+        onBlur={e => { commit(e.target.value) }}
         onKeyDown={e => { if(e.key==='Enter') { commit(e.target.value); e.target.blur() } }}
         style={{width:64,textAlign:'center'}}/>
       <span style={{fontSize:9,color:'var(--text3)'}}>mm</span>
+    </div>
+  )
+}
+
+// ── Map style mini-preview ────────────────────────────────────────────────────
+function MapStylePreview({ ms }) {
+  const bg     = ms.bg_color    || '#0d1117'
+  const marker = ms.marker_color || '#d4aa5a'
+  const route  = ms.route_color  || '#b48a3a'
+  const grid   = ms.grid_color   || '#19202a'
+  const pts = [[18,65],[40,45],[62,55],[82,35]]
+  return (
+    <div style={{ width:'100%', height:90, borderRadius:6, background:bg,
+      border:'1px solid var(--border)', overflow:'hidden', position:'relative' }}>
+      <svg width="100%" height="100%" viewBox="0 0 100 90" preserveAspectRatio="none">
+        {/* Grid */}
+        {[20,40,60,80].map(x => (
+          <line key={`gx${x}`} x1={x} y1={0} x2={x} y2={90} stroke={grid} strokeWidth="0.5"/>
+        ))}
+        {[22,44,66].map(y => (
+          <line key={`gy${y}`} x1={0} y1={y} x2={100} y2={y} stroke={grid} strokeWidth="0.5"/>
+        ))}
+        {/* Route */}
+        {ms.show_route !== false && pts.slice(0,-1).map((p,i) => (
+          <line key={i} x1={p[0]} y1={p[1]} x2={pts[i+1][0]} y2={pts[i+1][1]}
+            stroke={route} strokeWidth="1.5" strokeOpacity="0.6"/>
+        ))}
+        {/* Markers */}
+        {pts.map((p,i) => (
+          <g key={i}>
+            <circle cx={p[0]} cy={p[1]} r="5" fill={marker} fillOpacity="0.25"/>
+            <circle cx={p[0]} cy={p[1]} r="2.5" fill={marker}/>
+          </g>
+        ))}
+      </svg>
     </div>
   )
 }
@@ -124,7 +209,7 @@ export default function ProfilesPage() {
   const [saving, setSaving]           = useState(false)
   const [toast, setToast]             = useState(null)
   const [showCustomSizeMgr, setShowCustomSizeMgr] = useState(false)
-  const [ptKey, setPtKey]             = useState(0)  // bumped on import to force PageTypeEditor remount
+  const [ptKey, setPtKey]             = useState(0)
   const [marginLocked, setMarginLocked] = useState(true)
 
   useEffect(() => {
@@ -165,7 +250,7 @@ export default function ProfilesPage() {
 
   const startEdit = async (profile) => {
     const r = await axios.get(`/api/profiles/${profile.id}`)
-    setForm({ ...DEFAULT_PROFILE, ...r.data })  // merge so new fields have defaults
+    setForm({ ...DEFAULT_PROFILE, ...r.data })
     setPtKey(k => k + 1)
     setEditing(r.data)
   }
@@ -206,7 +291,6 @@ export default function ProfilesPage() {
 
   const set = (key, val) => setForm(prev => ({ ...prev, [key]: val }))
 
-  // All sizes: standard + custom, with mm dimensions
   const allSizes = [
     ...STANDARD_SIZES,
     ...customSizes.map(cs => ({ id: cs.id, name: cs.name, w: cs.w_mm, h: cs.h_mm, custom: true })),
@@ -216,6 +300,9 @@ export default function ProfilesPage() {
 
   // ── Editor view ───────────────────────────────────────────────────────────────
   if (editing) {
+    const ms    = { ...DEFAULT_MAP_STYLE, ...(form.map_style || {}) }
+    const setMs = (k, v) => set('map_style', { ...ms, [k]: v })
+
     return (
       <>
         <div className="page-header">
@@ -225,7 +312,6 @@ export default function ProfilesPage() {
               <span className="text-muted">{p.subtitle2}</span>
             </div>
             <div className="flex gap-2">
-              {/* Export / Import profilo integrale */}
               <button className="btn btn-sm" style={{fontSize:11}} title="Esporta profilo completo come JSON"
                 onClick={()=>{
                   const data={...form,_exported_from:'photobook-studio',_version:1,date:new Date().toISOString()}
@@ -242,11 +328,10 @@ export default function ProfilesPage() {
                   reader.onload=ev=>{
                     try{
                       const d=JSON.parse(ev.target.result)
-                      // Accept any object with at least page_size or page_types
                       if(d && (d.page_size || d.page_types)){
                         const imported={...DEFAULT_PROFILE,...d}
                         delete imported._exported_from; delete imported._version; delete imported.date
-                        delete imported.id  // never import the id (would conflict)
+                        delete imported.id
                         setForm(imported)
                         setPtKey(k => k + 1)
                         showToast(`✓ Profilo "${d.name||'?'}" importato`, 'success')
@@ -266,19 +351,17 @@ export default function ProfilesPage() {
         </div>
         <div className="page-body">
 
-          {/* General */}
-          <div className="card">
-            <div className="card-title">{p.generalCard}</div>
+          {/* ── General ─────────────────────────────────────────────────────── */}
+          <CollapsibleCard title={p.generalCard}>
             <div className="form-group">
               <label className="form-label">{p.nameLabel}</label>
               <input className="form-input" placeholder={p.namePlaceholder}
                 value={form.name} onChange={e=>set('name',e.target.value)}/>
             </div>
-          </div>
+          </CollapsibleCard>
 
-          {/* Format */}
-          <div className="card">
-            <div className="card-title">{p.formatCard}</div>
+          {/* ── Format ──────────────────────────────────────────────────────── */}
+          <CollapsibleCard title={p.formatCard}>
             <div className="form-row">
               <div className="form-group">
                 <label className="form-label" style={{ display:'flex', justifyContent:'space-between' }}>
@@ -296,13 +379,11 @@ export default function ProfilesPage() {
                     onDelete={deleteCustomSize}/>
                 )}
 
-                {/* Size selector grid */}
                 <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:4 }}>
                   {allSizes.map(sz => {
                     const active = form.page_size === sz.id
                     return (
-                      <button key={sz.id}
-                        onClick={()=>set('page_size', sz.id)}
+                      <button key={sz.id} onClick={()=>set('page_size', sz.id)}
                         style={{
                           padding:'6px 12px', borderRadius:5, cursor:'pointer', fontSize:12,
                           border:`2px solid ${active ? 'var(--gold)' : 'var(--border)'}`,
@@ -339,12 +420,10 @@ export default function ProfilesPage() {
                 {p.duplexLabel}
               </label>
             </div>
-          </div>
+          </CollapsibleCard>
 
-          {/* Margins */}
-          <div className="card">
-            <div className="card-title">{p.marginsCard}</div>
-            {/* Independent margins with lock — uses MarginInput to avoid focus loss */}
+          {/* ── Margins ─────────────────────────────────────────────────────── */}
+          <CollapsibleCard title={p.marginsCard}>
             {(()=>{
               const handleMargin = (side, v) => {
                 if (marginLocked) {
@@ -430,13 +509,11 @@ export default function ProfilesPage() {
                 </p>
               </div>
             </div>
-          </div>
+          </CollapsibleCard>
 
-          {/* Impostazioni esportazione PDF */}
-          <div className="card">
-            <div className="card-title">Esportazione PDF</div>
+          {/* ── PDF export ──────────────────────────────────────────────────── */}
+          <CollapsibleCard title="Esportazione PDF">
             <div className="form-row-3">
-              {/* DPI */}
               <div className="form-group">
                 <label className="form-label">Risoluzione foto</label>
                 <div style={{display:'flex',gap:6,alignItems:'center'}}>
@@ -450,18 +527,16 @@ export default function ProfilesPage() {
                 <p className="text-xs text-muted mt-1">{p.exportDpiHint}</p>
               </div>
 
-              {/* Color profile */}
               <div className="form-group" style={{gridColumn:'span 2'}}>
                 <label className="form-label">Profilo colore</label>
                 <div style={{display:'flex',flexDirection:'column',gap:6}}>
                   <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-                    {/* RGB group */}
                     <div style={{display:'flex',flexDirection:'column',gap:3}}>
                       <span style={{fontSize:9,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.06em'}}>RGB</span>
                       <div style={{display:'flex',gap:4}}>
                         {[
-                          ['srgb',      'sRGB IEC61966',    'Standard web e consumer. Compatibile con tutti i laboratori.'],
-                          ['adobe_rgb', 'Adobe RGB (1998)',  'Gamut più ampio. Per laboratori professionali che accettano AdobeRGB.'],
+                          ['srgb',      'sRGB IEC61966',   'Standard web e consumer.'],
+                          ['adobe_rgb', 'Adobe RGB (1998)', 'Gamut più ampio. Per laboratori professionali.'],
                         ].map(([v,lbl,hint])=>(
                           <button key={v} onClick={()=>set('color_profile',v)} title={hint}
                             style={{padding:'4px 8px',fontSize:10,borderRadius:5,cursor:'pointer',
@@ -473,14 +548,13 @@ export default function ProfilesPage() {
                         ))}
                       </div>
                     </div>
-                    {/* CMYK group */}
                     <div style={{display:'flex',flexDirection:'column',gap:3}}>
                       <span style={{fontSize:9,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.06em'}}>CMYK — per offset professionale</span>
                       <div style={{display:'flex',gap:4}}>
                         {[
-                          ['fogra39', 'FOGRA39',  'ISO Coated v2 — standard europeo per carta patinata. Tipografia offset.'],
-                          ['fogra51', 'FOGRA51',  'PSO Coated v3 — versione aggiornata. Richiede ICC FOGRA51 installato.'],
-                          ['swop',    'SWOP',     'US Web Coated — standard USA. Richiede ICC SWOP installato.'],
+                          ['fogra39', 'FOGRA39', 'ISO Coated v2 — standard europeo.'],
+                          ['fogra51', 'FOGRA51', 'PSO Coated v3 — versione aggiornata.'],
+                          ['swop',    'SWOP',    'US Web Coated — standard USA.'],
                         ].map(([v,lbl,hint])=>(
                           <button key={v} onClick={()=>set('color_profile',v)} title={hint}
                             style={{padding:'4px 8px',fontSize:10,borderRadius:5,cursor:'pointer',
@@ -495,25 +569,23 @@ export default function ProfilesPage() {
                   </div>
                   <p className="text-xs text-muted" style={{lineHeight:1.5}}>
                     {form.color_profile==='fogra39' && '✓ FOGRA39 (ISO Coated v2) — profilo disponibile sul sistema'}
-                    {form.color_profile==='fogra51' && '⚠ FOGRA51 — richiede ICC file installato sul server. Se non disponibile usa sRGB.'}
-                    {form.color_profile==='swop'    && '⚠ SWOP — richiede ICC file installato sul server. Se non disponibile usa sRGB.'}
-                    {form.color_profile==='adobe_rgb' && '⚠ Adobe RGB — la conversione usa sRGB come sorgente. Verifica con il laboratorio.'}
-                    {form.color_profile==='srgb'    && 'sRGB: profilo standard, compatibile con tutti i laboratori fotografici.'}
+                    {form.color_profile==='fogra51' && '⚠ FOGRA51 — richiede ICC file installato sul server.'}
+                    {form.color_profile==='swop'    && '⚠ SWOP — richiede ICC file installato sul server.'}
+                    {form.color_profile==='adobe_rgb' && '⚠ Adobe RGB — verifica con il laboratorio.'}
+                    {form.color_profile==='srgb'    && 'sRGB: profilo standard, compatibile con tutti i laboratori.'}
                   </p>
                 </div>
               </div>
             </div>
-          </div>
-          {/* ── Divisore di album ───────────────────────────────────────────── */}
-          <div className="card">
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-              <div className="card-title" style={{marginBottom:0}}>Divisore di album</div>
-              <p className="text-xs text-muted" style={{margin:0}}>
+          </CollapsibleCard>
+
+          {/* ── Divisore di album ────────────────────────────────────────────── */}
+          <CollapsibleCard title="Divisore di album"
+            actions={
+              <p className="text-xs text-muted" style={{margin:0,whiteSpace:'nowrap'}}>
                 Pagina separatrice tra album — sempre su pagina dispari (destra)
               </p>
-            </div>
-
-            {/* Divider color style */}
+            }>
             <div className="form-row-3" style={{marginBottom:16}}>
               <div className="form-group">
                 <label className="form-label">Sfondo</label>
@@ -547,7 +619,6 @@ export default function ProfilesPage() {
               </div>
             </div>
 
-            {/* Divider slot editor — same as PageTypeEditor */}
             <div style={{marginBottom:8}}>
               <p className="text-sm text-muted" style={{marginBottom:8}}>
                 Layout slots della pagina divisore. Oltre a foto e didascalie puoi inserire
@@ -565,14 +636,13 @@ export default function ProfilesPage() {
                   slots: pts[0]?.slots || [],
                 })}
                 extraItemTypes={[
-                  {type:'album_name',  label:'📛 Nome album',    icon:'📛'},
-                  {type:'photo_count', label:'🔢 Numero foto',   icon:'🔢'},
-                  {type:'year',        label:'📅 Anno',          icon:'📅'},
-                  {type:'map',         label:'🗺 Mappa GPS',     icon:'🗺'},
+                  {type:'album_name',  label:'📛 Nome album',   icon:'📛'},
+                  {type:'photo_count', label:'🔢 Numero foto',  icon:'🔢'},
+                  {type:'year',        label:'📅 Anno',         icon:'📅'},
+                  {type:'map',         label:'🗺 Mappa GPS',    icon:'🗺'},
                 ]}
               />
             </div>
-            {/* Anteprima divisore */}
             {(()=>{
               const ds = form.divider_style || {}
               const bg = ds.bg || '#13141a'
@@ -602,43 +672,40 @@ export default function ProfilesPage() {
                 </div>
               )
             })()}
-          </div>
+          </CollapsibleCard>
 
           <div style={{display:'flex',justifyContent:'flex-end',marginTop:-6,marginBottom:4}}>
             <button className="btn btn-sm btn-primary" style={{fontSize:10,padding:'3px 10px'}}
               onClick={save} disabled={saving}>{saving?p.saving:p.saveQuick}</button>
           </div>
 
-          {/* Page types — pass a stable key so PageTypeEditor doesn't reset on every onChange */}
-          <div className="card">
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-              <div className="card-title" style={{marginBottom:0}}>{p.pageTypesCard}</div>
-              <div style={{display:'flex',gap:6}}>
-                <button className="btn btn-sm" style={{fontSize:10}} title="Esporta layout pagine come JSON"
-                  onClick={()=>{
-                    const data={page_types:form.page_types,exported_from:form.name,date:new Date().toISOString()}
-                    const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(data,null,2))
-                    a.download=`layouts-${(form.name||'profilo').replace(/\s+/g,'_')}.json`;a.click()
-                  }}>⬇ Esporta layout</button>
-                <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}} title="Importa layout da JSON">
-                  ⬆ Importa layout
-                  <input type="file" accept=".json" style={{display:'none'}} onChange={e=>{
-                    const file=e.target.files?.[0]; if(!file) return
-                    const r=new FileReader(); r.onload=ev=>{
-                      try{
-                        const d=JSON.parse(ev.target.result)
-                        if(d.page_types&&Array.isArray(d.page_types)){
-                          set('page_types',d.page_types)
-                          setPtKey(k => k + 1)
-                          showToast(p.importLayoutsOk(d.page_types.length, d.exported_from), 'success')
-                        } else showToast(p.importLayoutsErr,'error')
-                      }catch{showToast(p.importJsonErr,'error')}
-                    }; r.readAsText(file)
-                    e.target.value=''
-                  }}/>
-                </label>
-              </div>
-            </div>
+          {/* ── Page types ──────────────────────────────────────────────────── */}
+          <CollapsibleCard title={p.pageTypesCard}
+            actions={<>
+              <button className="btn btn-sm" style={{fontSize:10}} title="Esporta layout pagine come JSON"
+                onClick={()=>{
+                  const data={page_types:form.page_types,exported_from:form.name,date:new Date().toISOString()}
+                  const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(data,null,2))
+                  a.download=`layouts-${(form.name||'profilo').replace(/\s+/g,'_')}.json`;a.click()
+                }}>⬇ Esporta layout</button>
+              <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}} title="Importa layout da JSON">
+                ⬆ Importa layout
+                <input type="file" accept=".json" style={{display:'none'}} onChange={e=>{
+                  const file=e.target.files?.[0]; if(!file) return
+                  const r=new FileReader(); r.onload=ev=>{
+                    try{
+                      const d=JSON.parse(ev.target.result)
+                      if(d.page_types&&Array.isArray(d.page_types)){
+                        set('page_types',d.page_types)
+                        setPtKey(k => k + 1)
+                        showToast(p.importLayoutsOk(d.page_types.length, d.exported_from), 'success')
+                      } else showToast(p.importLayoutsErr,'error')
+                    }catch{showToast(p.importJsonErr,'error')}
+                  }; r.readAsText(file)
+                  e.target.value=''
+                }}/>
+              </label>
+            </>}>
             <p className="text-sm text-muted mb-4">{p.pageTypesHint}</p>
             <PageTypeEditor
               key={`${editing === 'new' ? 'new' : editing.id}_${ptKey}`}
@@ -646,15 +713,15 @@ export default function ProfilesPage() {
               orientation={form.orientation}
               onChange={pt => set('page_types', pt)}
             />
-          </div>
+          </CollapsibleCard>
+
           <div style={{display:'flex',justifyContent:'flex-end',marginTop:-6,marginBottom:4}}>
             <button className="btn btn-sm btn-primary" style={{fontSize:10,padding:'3px 10px'}}
               onClick={save} disabled={saving}>{saving?p.saving:p.saveQuick}</button>
           </div>
 
-          {/* Caption style defaults */}
-          <div className="card">
-            <div className="card-title">Stile didascalie</div>
+          {/* ── Caption style ────────────────────────────────────────────────── */}
+          <CollapsibleCard title="Stile didascalie">
             <p className="text-sm text-muted mb-4">
               Stile di default per tutte le didascalie di questo profilo. Ogni didascalia può avere uno stile personalizzato.
             </p>
@@ -671,7 +738,6 @@ export default function ProfilesPage() {
               ]
               return (
                 <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-                  {/* Font */}
                   <div className="form-row">
                     <div className="form-group">
                       <label className="form-label">Font</label>
@@ -707,7 +773,6 @@ export default function ProfilesPage() {
                     </div>
                   </div>
 
-                  {/* Style toggles + alignment */}
                   <div style={{ display:'flex', gap:16, flexWrap:'wrap', alignItems:'flex-start' }}>
                     <div className="form-group">
                       <label className="form-label">Stile</label>
@@ -750,7 +815,6 @@ export default function ProfilesPage() {
                     </div>
                   </div>
 
-                  {/* Preview */}
                   <div>
                     <label className="form-label">Anteprima</label>
                     <div style={{
@@ -773,34 +837,195 @@ export default function ProfilesPage() {
                 </div>
               )
             })()}
-          </div>
-          {/* Cover editor */}
-          <div className="card">
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-              <div className="card-title" style={{marginBottom:0}}>Stile copertina</div>
-              <div style={{display:'flex',gap:6}}>
-                <button className="btn btn-sm" style={{fontSize:10}} title="Esporta stile copertina"
-                  onClick={()=>{
-                    const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(form.cover_style||{},null,2))
-                    a.download=`cover-style-${(form.name||'profilo').replace(/\s+/g,'_')}.json`;a.click()
-                  }}>⬇ Esporta stile</button>
-                <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}} title="Importa stile copertina">
-                  ⬆ Importa stile
-                  <input type="file" accept=".json" style={{display:'none'}} onChange={e=>{
-                    const file=e.target.files?.[0]; if(!file) return
-                    const r=new FileReader(); r.onload=ev=>{
-                      try{const d=JSON.parse(ev.target.result);set('cover_style',d);showToast(p.importCoverOk,'success')}
-                      catch{showToast(p.importCoverErr,'error')}
-                    };r.readAsText(file);e.target.value=''
-                  }}/>
-                </label>
+          </CollapsibleCard>
+
+          {/* ── GPS Map style ────────────────────────────────────────────────── */}
+          <CollapsibleCard title="🗺 Stile mappa GPS" defaultOpen={false}
+            actions={<>
+              <button className="btn btn-sm" style={{fontSize:10}}
+                title="Esporta impostazioni mappa come JSON"
+                onClick={()=>{
+                  const a=document.createElement('a')
+                  a.href='data:application/json,'+encodeURIComponent(JSON.stringify(ms,null,2))
+                  a.download=`map-style-${(form.name||'profilo').replace(/\s+/g,'_')}.json`
+                  a.click()
+                }}>⬇ Esporta</button>
+              <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}}
+                title="Importa impostazioni mappa da JSON">
+                ⬆ Importa
+                <input type="file" accept=".json" style={{display:'none'}} onChange={e=>{
+                  const file=e.target.files?.[0]; if(!file) return
+                  const r=new FileReader(); r.onload=ev=>{
+                    try{
+                      const d=JSON.parse(ev.target.result)
+                      set('map_style', {...DEFAULT_MAP_STYLE, ...d})
+                      showToast('✓ Stile mappa importato', 'success')
+                    }catch{ showToast('Errore nel leggere il file JSON', 'error') }
+                  }; r.readAsText(file); e.target.value=''
+                }}/>
+              </label>
+              <button className="btn btn-sm" style={{fontSize:10}}
+                onClick={()=>set('map_style', {...DEFAULT_MAP_STYLE})}>
+                ↺ Default
+              </button>
+            </>}>
+
+            <p className="text-sm text-muted" style={{marginBottom:16}}>
+              Impostazioni per il rendering delle mappe GPS negli slot album. Usate per lo slot "Riempi vuoti con mappa" e per la mappa della copertina.
+            </p>
+
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:24}}>
+              {/* Left column */}
+              <div style={{display:'flex',flexDirection:'column',gap:16}}>
+
+                {/* Tile style */}
+                <div className="form-group">
+                  <label className="form-label">Stile mappa (tiles online)</label>
+                  <p className="text-xs text-muted" style={{marginBottom:8}}>
+                    Richiede Stadia Maps API key. Se non disponibile viene usato il renderer PIL.
+                  </p>
+                  <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                    {TILE_STYLES.map(ts => (
+                      <label key={ts.id}
+                        style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',
+                          padding:'6px 10px',borderRadius:5,
+                          background: ms.tile_style===ts.id ? 'var(--gold-dim)' : 'var(--bg3)',
+                          border:`1px solid ${ms.tile_style===ts.id?'var(--gold)':'var(--border)'}`,
+                        }}>
+                        <input type="radio" name="tile_style" value={ts.id}
+                          checked={ms.tile_style===ts.id}
+                          onChange={()=>setMs('tile_style',ts.id)}
+                          style={{accentColor:'var(--gold)'}}/>
+                        <div>
+                          <div style={{fontSize:12,color:'var(--text)',fontWeight:ms.tile_style===ts.id?600:400}}>
+                            {ts.label}
+                          </div>
+                          <div style={{fontSize:10,color:'var(--text3)'}}>{ts.desc}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Right column */}
+              <div style={{display:'flex',flexDirection:'column',gap:16}}>
+
+                {/* Marker */}
+                <div className="form-group">
+                  <label className="form-label">Marcatore posizione</label>
+                  <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
+                    <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                      <span style={{fontSize:11,color:'var(--text3)'}}>Colore</span>
+                      <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                        <input type="color" value={ms.marker_color}
+                          onChange={e=>setMs('marker_color',e.target.value)}
+                          style={{width:36,height:36,border:'none',cursor:'pointer',borderRadius:4}}/>
+                        <input className="form-input" style={{width:80,fontFamily:'var(--font-mono)',fontSize:11}}
+                          value={ms.marker_color} onChange={e=>setMs('marker_color',e.target.value)}/>
+                      </div>
+                    </div>
+                    <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                      <span style={{fontSize:11,color:'var(--text3)'}}>Dimensione (px)</span>
+                      <input type="number" className="form-input" min={4} max={30} step={1}
+                        value={ms.marker_size} onChange={e=>setMs('marker_size',+e.target.value)}
+                        style={{width:70}}/>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Route */}
+                <div className="form-group">
+                  <label className="form-label">Linea percorso</label>
+                  <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                    <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
+                      <input type="checkbox" checked={ms.show_route}
+                        onChange={e=>setMs('show_route',e.target.checked)}
+                        style={{accentColor:'var(--gold)'}}/>
+                      <span style={{fontSize:12,color:'var(--text)'}}>Mostra linea di percorso</span>
+                    </label>
+                    <div style={{display:'flex',gap:12,alignItems:'center',opacity:ms.show_route?1:0.4}}>
+                      <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                        <span style={{fontSize:11,color:'var(--text3)'}}>Colore</span>
+                        <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                          <input type="color" value={ms.route_color}
+                            onChange={e=>setMs('route_color',e.target.value)}
+                            disabled={!ms.show_route}
+                            style={{width:36,height:36,border:'none',cursor:'pointer',borderRadius:4}}/>
+                          <input className="form-input" style={{width:80,fontFamily:'var(--font-mono)',fontSize:11}}
+                            value={ms.route_color} onChange={e=>setMs('route_color',e.target.value)}
+                            disabled={!ms.show_route}/>
+                        </div>
+                      </div>
+                      <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                        <span style={{fontSize:11,color:'var(--text3)'}}>Spessore (px)</span>
+                        <input type="number" className="form-input" min={1} max={8} step={1}
+                          value={ms.route_width} onChange={e=>setMs('route_width',+e.target.value)}
+                          disabled={!ms.show_route} style={{width:70}}/>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* PIL fallback colors */}
+                <div className="form-group">
+                  <label className="form-label">Colori renderer PIL (fallback)</label>
+                  <p className="text-xs text-muted" style={{marginBottom:8}}>
+                    Usati quando le tiles online non sono disponibili.
+                  </p>
+                  <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                    {[
+                      ['bg_color',    'Sfondo'],
+                      ['grid_color',  'Griglia'],
+                      ['label_color', 'Etichette'],
+                    ].map(([key, label]) => (
+                      <div key={key} style={{display:'flex',alignItems:'center',gap:8}}>
+                        <input type="color" value={ms[key]}
+                          onChange={e=>setMs(key,e.target.value)}
+                          style={{width:28,height:28,border:'none',cursor:'pointer',borderRadius:3}}/>
+                        <input className="form-input" style={{width:80,fontFamily:'var(--font-mono)',fontSize:11}}
+                          value={ms[key]} onChange={e=>setMs(key,e.target.value)}/>
+                        <span style={{fontSize:12,color:'var(--text3)'}}>{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
               </div>
             </div>
+
+            {/* Preview */}
+            <div style={{marginTop:16}}>
+              <label className="form-label">Anteprima stile PIL</label>
+              <MapStylePreview ms={ms}/>
+            </div>
+
+          </CollapsibleCard>
+
+          {/* ── Cover editor ────────────────────────────────────────────────── */}
+          <CollapsibleCard title="Stile copertina" defaultOpen={false}
+            actions={<>
+              <button className="btn btn-sm" style={{fontSize:10}} title="Esporta stile copertina"
+                onClick={()=>{
+                  const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(form.cover_style||{},null,2))
+                  a.download=`cover-style-${(form.name||'profilo').replace(/\s+/g,'_')}.json`;a.click()
+                }}>⬇ Esporta stile</button>
+              <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}} title="Importa stile copertina">
+                ⬆ Importa stile
+                <input type="file" accept=".json" style={{display:'none'}} onChange={e=>{
+                  const file=e.target.files?.[0]; if(!file) return
+                  const r=new FileReader(); r.onload=ev=>{
+                    try{const d=JSON.parse(ev.target.result);set('cover_style',d);showToast(p.importCoverOk,'success')}
+                    catch{showToast(p.importCoverErr,'error')}
+                  };r.readAsText(file);e.target.value=''
+                }}/>
+              </label>
+            </>}>
             <p className="text-sm text-muted mb-4">
               Imposta il layout visivo della copertina per questo profilo. Puoi salvare stili personalizzati riutilizzabili.
             </p>
             {(()=>{
-              // Compute preview size matching profile orientation
               const sizeEntry = allSizes.find(s => s.id === form.page_size) || {w:200,h:300}
               let [pw, ph] = [sizeEntry.w, sizeEntry.h]
               if (form.orientation === 'landscape') [pw, ph] = [ph, pw]
@@ -818,11 +1043,13 @@ export default function ProfilesPage() {
                   mapUrl={null}/>
               )
             })()}
-          </div>
+          </CollapsibleCard>
+
           <div style={{display:'flex',justifyContent:'flex-end',marginTop:-6,marginBottom:4}}>
             <button className="btn btn-sm btn-primary" style={{fontSize:10,padding:'3px 10px'}}
               onClick={save} disabled={saving}>{saving?p.saving:p.saveQuick}</button>
           </div>
+
         </div>
         {toast&&<div className={`toast ${toast.type}`}>{toast.msg}</div>}
       </>
