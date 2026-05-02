@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: photobook-studio
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: TZ
+        value: Europe/Rome
+      - key: STADIA_MAPS_API_KEY
+        value: ""
+      - key: PHOTOBOOK_TOKEN
+        value: ""
+    disk:
+      name: photobook-data
+      mountPath: /data
+      sizeGB: 1

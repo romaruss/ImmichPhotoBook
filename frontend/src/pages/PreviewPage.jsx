@@ -1686,7 +1686,9 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                   <div style={{width:'100%',height:'100%',background:bg,
                     display:'flex',alignItems:valign,
                     justifyContent:align==='left'?'flex-start':align==='right'?'flex-end':'center',
-                    padding:Math.max(8,r.w*0.05)}}>
+                    padding:Math.max(8,r.w*0.05),
+                    cursor:'text'}}
+                    onClick={()=>setEditCaptionIdx(slotIdx)}>
                     <span style={{color,fontFamily:font,fontStyle:italic?'italic':'normal',
                       fontWeight:bold?'bold':'normal',
                       textDecoration:underline?'underline':'none',
@@ -2346,7 +2348,7 @@ export default function PreviewPage() {
       } catch {}
     }
     if (data.locations?.length)
-      axios.post('/api/map',{locations:data.locations},{responseType:'blob'})
+      axios.post('/api/map',{locations:data.locations, map_style: data.profile?.map_style||{}},{responseType:'blob'})
         .then(r=>setMapUrl(URL.createObjectURL(r.data))).catch(()=>{})
     const sortAssets = arr => [...(arr||[])].sort((a,b)=>(a.localDateTime||'').localeCompare(b.localDateTime||''))
     if (data._multi_album && data._album_ids?.length) {
@@ -2506,7 +2508,7 @@ export default function PreviewPage() {
       ? allLocations
       : allLocations.slice(0, Math.max(1, Math.min(parseInt(nPages) * 5, allLocations.length)))
     try {
-      const r = await axios.post('/api/map', { locations }, { responseType:'blob' })
+      const r = await axios.post('/api/map', { locations, map_style: layout?.profile?.map_style || {} }, { responseType:'blob' })
       const mapUrl = URL.createObjectURL(r.data)
       const mapItem = { type:'map', _map_url: mapUrl, _n_pages: nPages }
       setLayout(prev=>{
@@ -2561,7 +2563,7 @@ export default function PreviewPage() {
     setLayout(prev=>{
       const page=prev.pages[pageIdx]; const items=page.items
       const item=items[slotIdx].item
-      const captionItem={type:'caption',text:'',for_asset_id:item?.asset_id||'',originalFileName:item?.originalFileName||''}
+      const captionItem={type:'caption',text:item?.description||'',for_asset_id:item?.asset_id||'',originalFileName:item?.originalFileName||''}
       let newItems
       if(!item){
         // Empty slot: convert it directly to caption

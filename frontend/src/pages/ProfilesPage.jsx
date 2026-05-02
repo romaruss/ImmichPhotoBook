@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, createContext, useContext } from 'react'
 import axios from 'axios'
 import { useT } from '../i18n.jsx'
 import PageTypeEditor from '../components/PageTypeEditor'
@@ -60,9 +60,20 @@ const DEFAULT_PROFILE = {
   map_style: { ...DEFAULT_MAP_STYLE },
 }
 
+// ── Section open/close state persisted in session ────────────────────────────
+const SectionOpenCtx = createContext(null)
+
 // ── Collapsible card ──────────────────────────────────────────────────────────
 function CollapsibleCard({ title, defaultOpen = true, actions, children }) {
-  const [open, setOpen] = useState(defaultOpen)
+  const openMap = useContext(SectionOpenCtx)
+  const [open, setOpen] = useState(() =>
+    openMap && title in openMap.current ? openMap.current[title] : defaultOpen
+  )
+  const toggle = () => {
+    const next = !open
+    setOpen(next)
+    if (openMap) openMap.current[title] = next
+  }
   return (
     <div className="card" style={{ padding:0, overflow:'hidden' }}>
       <div
@@ -72,7 +83,7 @@ function CollapsibleCard({ title, defaultOpen = true, actions, children }) {
           borderBottom: open ? '1px solid var(--border)' : 'none',
           background:'var(--bg3)', userSelect:'none',
         }}
-        onClick={() => setOpen(o => !o)}
+        onClick={toggle}
       >
         <span style={{
           fontSize:9, color:'var(--text3)', display:'inline-block', flexShrink:0,
@@ -230,7 +241,8 @@ export default function ProfilesPage() {
   const [marginLocked, setMarginLocked] = useState(true)
   const [mapPreviewUrl, setMapPreviewUrl]   = useState(null)
   const [previewLoading, setPreviewLoading] = useState(false)
-  const previewTimerRef = useRef(null)
+  const previewTimerRef  = useRef(null)
+  const sectionOpenRef   = useRef({})
 
   const refreshMapPreview = async (style) => {
     setPreviewLoading(true)
@@ -345,7 +357,7 @@ export default function ProfilesPage() {
     const setMs = (k, v) => set('map_style', { ...ms, [k]: v })
 
     return (
-      <>
+      <SectionOpenCtx.Provider value={sectionOpenRef}>
         <div className="page-header">
           <div className="flex items-center justify-between">
             <div>
@@ -1110,7 +1122,7 @@ export default function ProfilesPage() {
 
         </div>
         {toast&&<div className={`toast ${toast.type}`}>{toast.msg}</div>}
-      </>
+      </SectionOpenCtx.Provider>
     )
   }
 

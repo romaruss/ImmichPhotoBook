@@ -4,10 +4,9 @@ map_generator.py
 Genera un'immagine mappa per le posizioni GPS delle foto.
 
 Strategia:
-  1. Prova a scaricare tiles OpenStreetMap via staticmap (Stadia Maps)
-  2. Se fallisce, genera una mappa minimalista elegante con PIL
-
-Accetta un dizionario map_style con le opzioni di personalizzazione.
+  1. Prova tiles Stadia Maps via staticmap (solo sfondo, senza marcatori nativi)
+  2. Overlay PIL: route + marcatori con forma/colore dal map_style
+  3. Se tiles falliscono → renderer PIL minimalista completo
 """
 
 import io
@@ -23,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 
 def _hex_to_rgb(hex_str: str) -> tuple:
-    """Convert '#rrggbb' or '#rgb' to (r, g, b) tuple."""
     h = (hex_str or '#888888').lstrip('#')
     if len(h) == 3:
         h = h[0]*2 + h[1]*2 + h[2]*2
@@ -46,6 +44,76 @@ DEFAULT_MAP_STYLE = {
     "label_color":   "#c8b994",
 }
 
+# Mercator helpers (mirrors staticmap internals, avoids private import)
+def _lon_to_tx(lon: float, zoom: int) -> float:
+    return ((lon + 180.0) / 360.0) * (2 ** zoom)
+
+def _lat_to_ty(lat: float, zoom: int) -> float:
+    lat_r = math.radians(lat)
+    return (1 - math.log(math.tan(lat_r) + 1 / math.cos(lat_r)) / math.pi) / 2 * (2 ** zoom)
+
+
+def _overlay_on_tile(
+    tile_img: Image.Image,
+    locations: list[dict],
+    sm,          # StaticMap instance after render() — has .zoom, .x_center, .y_center, .tile_size
+    style: dict,
+) -> Image.Image:
+    """Draw route + custom-shaped markers on top of a staticmap tile image."""
+    s        = style
+    DOT_IN   = _hex_to_rgb(s.get("marker_color", "#d4aa5a"))
+    DOT_RING = DOT_IN + (80,)
+    ROUTE_C  = _hex_to_rgb(s.get("route_color", "#b48a3a")) + (100,)
+    m_shape  = s.get("marker_shape", "circle")
+    m_size   = max(3, int(s.get("marker_size", 10)))
+    r_inner  = max(2, m_size // 2)
+    r_outer  = r_inner + max(3, m_size // 2)
+    show_rt  = bool(s.get("show_route", True))
+    route_w  = max(1, int(s.get("route_width", 2)))
+
+    w, h     = tile_img.size
+    zoom     = sm.zoom
+    cx       = sm.x_center
+    cy       = sm.y_center
+    ts       = sm.tile_size
+
+    def to_px(lat, lon):
+        tx = _lon_to_tx(lon, zoom)
+        ty = _lat_to_ty(lat, zoom)
+        return int((tx - cx) * ts + w / 2), int((ty - cy) * ts + h / 2)
+
+    overlay = Image.new("RGBA", tile_img.size, (0, 0, 0, 0))
+    draw    = ImageDraw.Draw(overlay, "RGBA")
+    pts     = [to_px(loc["lat"], loc["lon"]) for loc in locations]
+
+    # Route
+    if show_rt and len(pts) > 1:
+        for i in range(len(pts) - 1):
+            draw.line([pts[i], pts[i + 1]], fill=ROUTE_C, width=route_w)
+
+    # Markers
+    def _marker(px, py):
+        if m_shape == "square":
+            draw.rectangle([(px-r_outer, py-r_outer), (px+r_outer, py+r_outer)], fill=DOT_RING)
+            draw.rectangle([(px-r_inner, py-r_inner), (px+r_inner, py+r_inner)], fill=DOT_IN + (255,))
+        elif m_shape == "diamond":
+            draw.polygon([(px, py-r_outer), (px+r_outer, py), (px, py+r_outer), (px-r_outer, py)], fill=DOT_RING)
+            draw.polygon([(px, py-r_inner), (px+r_inner, py), (px, py+r_inner), (px-r_inner, py)], fill=DOT_IN + (255,))
+        elif m_shape == "pin":
+            cy2 = py - r_inner
+            draw.ellipse([(px-r_outer, cy2-r_outer), (px+r_outer, cy2+r_outer)], fill=DOT_RING)
+            draw.polygon([(px-r_inner, cy2), (px+r_inner, cy2), (px, py+r_inner)], fill=DOT_RING)
+            draw.ellipse([(px-r_inner, cy2-r_inner), (px+r_inner, cy2+r_inner)], fill=DOT_IN + (255,))
+        else:  # circle
+            draw.ellipse([(px-r_outer, py-r_outer), (px+r_outer, py+r_outer)], fill=DOT_RING)
+            draw.ellipse([(px-r_inner, py-r_inner), (px+r_inner, py+r_inner)], fill=DOT_IN + (255,))
+
+    for px, py in pts:
+        _marker(px, py)
+
+    result = Image.alpha_composite(tile_img.convert("RGBA"), overlay)
+    return result.convert("RGB")
+
 
 def generate_map_image(
     locations: list[dict],
@@ -66,7 +134,6 @@ def generate_map_image(
 
     tile_style   = s.get("tile_style", "alidade_smooth")
     marker_color = s.get("marker_color", "#d4aa5a")
-    marker_size  = int(s.get("marker_size", 10))
 
     try:
         from staticmap import StaticMap, CircleMarker
@@ -76,12 +143,17 @@ def generate_map_image(
             url += f"?api_key={api_key}"
 
         m = StaticMap(width, height, url_template=url)
+        # Add 1 px markers only for bounding-box / zoom computation — not drawn visibly
         for loc in locations:
-            m.add_marker(CircleMarker((loc["lon"], loc["lat"]), marker_color, marker_size))
+            m.add_marker(CircleMarker((loc["lon"], loc["lat"]), marker_color, 1))
 
-        img = m.render()
+        tile_img = m.render()
+
+        # Overlay route + custom-shaped markers on top of tile background
+        final_img = _overlay_on_tile(tile_img, locations, m, s)
+
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
+        final_img.save(buf, format="PNG")
         data = buf.getvalue()
 
         if len(data) > 5000:
@@ -101,17 +173,17 @@ def _draw_minimal_map(
 ) -> bytes:
     s = {**DEFAULT_MAP_STYLE, **(style or {})}
 
-    BG          = _hex_to_rgb(s["bg_color"])
-    GRID        = _hex_to_rgb(s["grid_color"])
-    DOT_IN      = _hex_to_rgb(s["marker_color"])
-    LABEL       = _hex_to_rgb(s["label_color"])
-    ROUTE_C     = _hex_to_rgb(s["route_color"])
-    show_route  = bool(s.get("show_route", True))
-    route_w     = max(1, int(s.get("route_width", 2)))
-    m_size      = max(3, int(s.get("marker_size", 10)))
-    m_shape     = s.get("marker_shape", "circle")
-    r_inner     = max(2, m_size // 2)
-    r_outer     = r_inner + max(3, m_size // 2)
+    BG         = _hex_to_rgb(s["bg_color"])
+    GRID       = _hex_to_rgb(s["grid_color"])
+    DOT_IN     = _hex_to_rgb(s["marker_color"])
+    LABEL      = _hex_to_rgb(s["label_color"])
+    ROUTE_C    = _hex_to_rgb(s["route_color"])
+    show_route = bool(s.get("show_route", True))
+    route_w    = max(1, int(s.get("route_width", 2)))
+    m_size     = max(3, int(s.get("marker_size", 10)))
+    m_shape    = s.get("marker_shape", "circle")
+    r_inner    = max(2, m_size // 2)
+    r_outer    = r_inner + max(3, m_size // 2)
 
     DOT_RING = DOT_IN + (80,)
     ROUTE    = ROUTE_C + (80,)
@@ -171,15 +243,15 @@ def _draw_minimal_map(
             drw.polygon([(px, py-r_outer), (px+r_outer, py), (px, py+r_outer), (px-r_outer, py)], fill=DOT_RING)
             drw.polygon([(px, py-r_inner), (px+r_inner, py), (px, py+r_inner), (px-r_inner, py)], fill=DOT_IN + (255,))
         elif m_shape == "pin":
-            cy = py - r_inner  # circle centre offset upward
+            cy = py - r_inner
             drw.ellipse([(px-r_outer, cy-r_outer), (px+r_outer, cy+r_outer)], fill=DOT_RING)
             drw.polygon([(px-r_inner, cy), (px+r_inner, cy), (px, py+r_inner)], fill=DOT_RING)
             drw.ellipse([(px-r_inner, cy-r_inner), (px+r_inner, cy+r_inner)], fill=DOT_IN + (255,))
-        else:  # circle (default)
+        else:  # circle
             drw.ellipse([(px-r_outer, py-r_outer), (px+r_outer, py+r_outer)], fill=DOT_RING)
             drw.ellipse([(px-r_inner, py-r_inner), (px+r_inner, py+r_inner)], fill=DOT_IN + (255,))
 
-    # Markers
+    # Markers + labels
     seen_labels: set[str] = set()
     for loc in locations:
         px, py = to_px(loc["lat"], loc["lon"])

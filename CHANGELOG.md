@@ -4,6 +4,27 @@ All notable changes to PhotoBook Studio are documented here.
 
 ---
 
+## [0.7.0] - 2026-05-01
+
+### Added
+- **GPS map style editor** in print profile — tile style (6 Stadia Maps styles: Alidade Smooth/Dark, Terrain, Toner, OSM Bright, Outdoors), marker color/size/shape (circle, square, diamond, pin), route color/width/toggle, PIL fallback colors (background, grid, labels). Live 300×300 preview using Turin test coordinates, auto-refreshed with 700 ms debounce. Export/import standalone as JSON.
+- **Marker shapes on tile maps** — all four marker shapes (circle, square, diamond, pin) now render correctly on both Stadia Maps tile images (PIL overlay via Mercator projection) and PIL fallback renderer.
+- **Map style applied everywhere** — `map_style` from profile propagates to: fill-empty-with-map slots (cache key includes style hash), PDF/SVG export, manual map slot insertion from PreviewPage, initial cover map load.
+- **Preset manager for generation options** — save, rename, delete named presets of album generation settings (stored in `localStorage`). Applied instantly from a dropdown at the top of the options modal.
+- **Collapsible sections in print profile editor** — all profile editor sections (General, Format, Margins, PDF, Divider, Page Types, Caption Style, GPS Map, Cover) wrap in a CollapsibleCard. Open/closed state persists across editor open/close cycles within the session via React context + `useRef`.
+- **Auto-captions toggle** in generation options — when disabled, caption-slot layouts are excluded from selection and no Immich descriptions are auto-inserted (existing caption slot types in the profile are still available but never chosen). Default: enabled.
+- **Caption pre-fill from Immich** — clicking "Add caption" on a photo that has an Immich description pre-fills the caption text automatically (was always empty).
+- **Caption slot direct click to edit** — clicking anywhere in a caption slot (display mode) enters edit mode; the ⋮ context menu is still available via the button.
+- **Docker Hub image** — pre-built image `romaruss/immich-photobook:latest` published automatically on every push to `main` via GitHub Actions. Use `docker-compose.hub.yml` for a no-build installation.
+- **One-click deploy to Render** — `render.yaml` added; deploy button in README.
+
+### Fixed
+- **`map_style` not saved in profile** — `map_style` field was missing from the Pydantic `Profile` model; settings were silently discarded on save.
+- **Marker shape ignored on tile renderer** — Stadia Maps path always used `CircleMarker` (circle only). Now renders tiles as background and overlays PIL markers (correct shape + route) using Mercator projection.
+- **`/api/map` endpoint ignored map_style** — `MapRequest` model now accepts `map_style`; both PreviewPage calls (initial load and manual slot insertion) pass `map_style` from the current profile.
+
+---
+
 ## [0.6.0] - 2026-05-01
 
 ### Added

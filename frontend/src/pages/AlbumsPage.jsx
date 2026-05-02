@@ -17,6 +17,7 @@ const DEFAULTS = {
   rhythm_alternation:   true,
   density:              75,
   fill_empty_with_map:  false,
+  auto_captions:        true,
 }
 
 const STORAGE_KEY  = 'photobook_gen_config'
@@ -281,13 +282,18 @@ function ConfigModal({ config, onChange, onClose }) {
             disabled={!local.remove_duplicates}
             help={`Soglia: ${local.similarity_threshold.toFixed(2)}. Più alta = solo duplicati quasi identici. Più bassa = rimuove anche foto simili ma non identiche.`}/>
 
+          {/* Auto captions */}
+          <Section title="f) Didascalie automatiche"/>
+          <Toggle k="auto_captions" label="Inserisci didascalie automaticamente"
+            help="Se una foto ha una descrizione in Immich, la inserisce automaticamente nello slot didascalia durante la generazione. Disattiva per generare l'album senza didascalie, anche se presenti."/>
+
           {/* Map fill */}
-          <Section title="f) Slot vuoti"/>
+          <Section title="g) Slot vuoti"/>
           <Toggle k="fill_empty_with_map" label="Riempi slot vuoti con mappa GPS"
             help="Quando un layout ha più slot del numero di foto disponibili, inserisce una mappa con le posizioni GPS delle foto del gruppo."/>
 
           {/* Rhythm */}
-          <Section title="g) Ritmo visivo"/>
+          <Section title="h) Ritmo visivo"/>
           <Toggle k="rhythm_alternation" label="Alterna layout densi e minimali"
             help="Evita di mettere troppe pagine con 4-6 foto di fila — alterna con pagine più ariose."/>
 

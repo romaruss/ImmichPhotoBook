@@ -241,6 +241,7 @@ class Profile(BaseModel):
     }
     cover_style: dict | None = None
     divider_style: dict | None = None  # layout della pagina divisore album
+    map_style: dict | None = None
     export_dpi: int = 300
     color_profile: str = "srgb"    # srgb | adobe_rgb | fogra39 | fogra51 | swop
     crop_marks: bool = False        # stampa crocini di taglio agli angoli
@@ -642,10 +643,11 @@ async def smart_layout_endpoint(req: SmartLayoutRequest):
 
 class MapRequest(BaseModel):
     locations: list[dict]
+    map_style: dict = {}
 
 @app.post("/api/map")
 async def get_map(req: MapRequest):
-    img_bytes = generate_map_image(req.locations, 800, 400)
+    img_bytes = generate_map_image(req.locations, 800, 400, map_style=req.map_style or {})
     if img_bytes:
         return Response(img_bytes, media_type="image/png")
     raise HTTPException(404, "No locations")
@@ -839,7 +841,7 @@ async def page_sizes():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.5.0"}
+    return {"status": "ok", "version": "0.7.0"}
 
 # ─── PROJECTS (save / load / list / delete) ──────────────────────────────────
 

@@ -1,0 +1,25 @@
+services:
+  photobook:
+    image: ghcr.io/romaruss/immichphotobook:latest
+    container_name: photobook-studio
+    restart: unless-stopped
+    ports:
+      - "7180:8000"
+    volumes:
+      - photobook_data:/data
+    environment:
+      - TZ=Europe/Rome
+      - STADIA_MAPS_API_KEY=         # optional — register at https://client.stadiamaps.com
+      - PHOTOBOOK_TOKEN=             # optional — leave empty to disable auth
+                                     # generate: python3 -c "import secrets; print(secrets.token_hex(32))"
+    # Uncomment to connect to Immich's Docker network:
+    # networks:
+    #   - immich_net
+
+# networks:
+#   immich_net:
+#     name: immich_default     # replace with your Immich network name
+#     external: true
+
+volumes:
+  photobook_data:

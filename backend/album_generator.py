@@ -934,11 +934,16 @@ def _make_pages_from_group(
     if not photos:
         return []
 
-    density   = config.get("density", 75)
-    rhythm    = config.get("rhythm_alternation", True)
-    face_crop = config.get("face_crop", True)
-    favs_full = config.get("favorites_full_page", False)
-    fill_map  = config.get("fill_empty_with_map", False)
+    density      = config.get("density", 75)
+    rhythm       = config.get("rhythm_alternation", True)
+    face_crop    = config.get("face_crop", True)
+    favs_full    = config.get("favorites_full_page", False)
+    fill_map     = config.get("fill_empty_with_map", False)
+    auto_captions = config.get("auto_captions", True)
+
+    # Pre-filter page_types: when auto_captions=False, exclude layouts with caption slots
+    page_types_no_cap = [pt for pt in page_types if not any(s.get("slot_type") == "caption" for s in pt.get("slots", []))]
+    pt_pool = page_types if auto_captions else (page_types_no_cap or page_types)
 
     # GPS locations for the whole group (used to fill empty slots with a map)
     group_gps: list[dict] = _extract_gps(photos) if fill_map else []
@@ -973,9 +978,9 @@ def _make_pages_from_group(
                                f"impaginando solo {next_fav} foto prima")
 
             # Quante foto usare per questa pagina?
-            max_slots_all = max((len(pt.get("slots", [])) for pt in page_types), default=1)
+            max_slots_all = max((len(pt.get("slots", [])) for pt in pt_pool), default=1)
             pt, _page_candidates = _best_page_type(
-                page_types, effective, usage_counter, density, rhythm, prev_dense,
+                pt_pool, effective, usage_counter, density, rhythm, prev_dense,
                 page_ar, _return_candidates=True)
             slots_all = pt.get("slots", [])
             n_photo_sl, n_cap_sl = _count_slot_types(slots_all)
@@ -1028,7 +1033,7 @@ def _make_pages_from_group(
 
             # ── Caption slot → fill with text, never a photo ──────────────────
             if slot_type == "caption":
-                if descriptions_queue:
+                if auto_captions and descriptions_queue:
                     src_photo, desc_text = descriptions_queue.pop(0)
                     caption_item = {
                         "type":           "caption",
@@ -1039,9 +1044,9 @@ def _make_pages_from_group(
                     items.append({"slot": slot, "item": caption_item})
                     log.append(f"  [T] Slot {si+1} didascalia → '{desc_text[:40]}…' [{src_photo.get('originalFileName','')}]")
                 else:
-                    # No description available: leave slot empty
+                    reason = "auto_captions disattivato" if not auto_captions else "nessuna descrizione disponibile"
                     items.append({"slot": slot, "item": None})
-                    log.append(f"  [T] Slot {si+1} didascalia → vuoto (nessuna descrizione disponibile)")
+                    log.append(f"  [T] Slot {si+1} didascalia → vuoto ({reason})")
                 continue
 
             # ── Photo slot → fill with photo (or map if empty and fill_map=True) ──

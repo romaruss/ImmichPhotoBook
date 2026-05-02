@@ -4,7 +4,7 @@
 
 **A self-hosted web application for creating professional print-ready photobooks from your Immich library**
 
-[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](https://hub.docker.com)
+[![ghcr.io](https://img.shields.io/badge/ghcr.io-romaruss%2FImmichPhotoBook-2496ED?logo=docker&logoColor=white)](https://github.com/romaruss/ImmichPhotoBook/pkgs/container/immichphotobook)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://python.org)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)](https://react.dev)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
@@ -48,6 +48,8 @@
 - Duplex printing support
 - **Profile duplication** — clone any profile as a starting point
 - **Caption style defaults** — font, size, colour, alignment, background per profile
+- **Collapsible sections** — all editor sections are collapsible; open/closed state persists in session
+- **GPS map style** — per-profile settings for tile style (6 Stadia themes), marker shape (circle/square/diamond/pin), marker colour/size, route colour/width, PIL fallback colours; live preview on Turin test coordinates; export/import as JSON
 
 ### 🗂️ Page layout editor
 - Visual drag-to-resize slot editor, per-slot independent borders
@@ -69,6 +71,8 @@
   - **Immich sync toggle** — ON/OFF per caption; when ON, saving pushes the text back to Immich
   - **Session style persistence** — style settings carry over between captions in the same session
   - **Symbol picker (Ω)** — insert 40+ special characters at cursor position
+  - **Click-to-edit** — clicking anywhere in a caption slot enters edit mode directly
+  - **Auto pre-fill** — "Add caption" on a photo with an Immich description pre-fills the text
 - Right-side album browser: usage status, filter by status, drag to slot
 - **Unused photo overlay** — red semi-transparent highlight for photos not yet placed in the album (album panel + slot chooser dialog)
 
@@ -85,6 +89,13 @@
 - Reorder by date
 - Insert unused photos
 - Full reset (with confirmation)
+
+### ⚙️ Generation options
+- Duplicate removal with configurable dHash threshold and burst-shot detection (AND logic)
+- Quality filter, density target, face-awareness toggle
+- **Auto-captions toggle** — disable to skip caption-slot layouts entirely during generation
+- **Preset manager** — save, rename, delete named presets of generation settings; apply instantly from dropdown
+- GPS map auto-fill toggle — empty slots at end of each event cluster filled with static GPS map
 
 ### 📋 Generation log
 - Detailed per-page / per-slot breakdown of every layout decision
@@ -115,7 +126,19 @@
 - An Immich API key with **Asset: Read** and **Asset: Update** permissions  
   *(Account Settings → API Keys)*
 
-### 1 — Clone and start
+### Option A — Pre-built image from GitHub Container Registry (recommended)
+
+No build required. Multi-arch image (`amd64` + `arm64`) published automatically on every push to `main`.
+
+```bash
+curl -O https://raw.githubusercontent.com/romaruss/ImmichPhotoBook/main/docker-compose.hub.yml
+# edit environment variables inside the file
+docker compose -f docker-compose.hub.yml up -d
+```
+
+Image: `ghcr.io/romaruss/immichphotobook:latest`
+
+### Option B — Build from source
 
 ```bash
 git clone https://github.com/romaruss/ImmichPhotoBook.git
