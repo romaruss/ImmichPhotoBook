@@ -4,6 +4,23 @@ All notable changes to PhotoBook Studio are documented here.
 
 ---
 
+## [0.8.0] - 2026-05-03
+
+### Added
+- **Page type orientation** — each layout is tagged as portrait or landscape; layouts are only used by the auto-layout algorithm when their orientation matches the profile's page format
+- **Three-state page type markers** — active (● green), auto-off (○ grey, wrong orientation for current profile), manually disabled (✗ red, excluded regardless of orientation). Toggle button is locked for auto-off layouts
+- **Page type filter bar** — filter by format (portrait/landscape), status (active/disabled/auto-off), content type (photo only / with captions), and photo count
+- **Duplicate page type** — ⧉ button on each layout thumbnail
+- **Preset layout files** — `presets/portrait_page_types.json` and `presets/landscape_page_types.json`, 25 layouts each, importable via profile editor
+- **Import layouts: replace or add** — when importing a layout JSON, a dialog asks whether to add to existing layouts or replace them
+- **Section collapse state persisted in sessionStorage** — profile editor sections remember open/closed state across page navigation and browser refresh (not just within the same editor session)
+
+### Changed
+- Auto-layout algorithm excludes page types whose `orientation` field does not match the profile orientation, in addition to the existing `enabled` filter
+- Page type filter orientation chip auto-updates when profile orientation changes
+
+---
+
 ## [0.7.0] - 2026-05-01
 
 ### Added

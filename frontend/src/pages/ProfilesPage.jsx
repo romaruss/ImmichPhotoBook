@@ -72,7 +72,11 @@ function CollapsibleCard({ title, defaultOpen = true, actions, children }) {
   const toggle = () => {
     const next = !open
     setOpen(next)
-    if (openMap) openMap.current[title] = next
+    if (openMap) {
+      openMap.current[title] = next
+      try { sessionStorage.setItem('pb_profile_sections', JSON.stringify(openMap.current)) }
+      catch {}
+    }
   }
   return (
     <div className="card" style={{ padding:0, overflow:'hidden' }}>
@@ -242,7 +246,10 @@ export default function ProfilesPage() {
   const [mapPreviewUrl, setMapPreviewUrl]   = useState(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const previewTimerRef  = useRef(null)
-  const sectionOpenRef   = useRef({})
+  const sectionOpenRef   = useRef((() => {
+    try { return JSON.parse(sessionStorage.getItem('pb_profile_sections') || '{}') }
+    catch { return {} }
+  })())
 
   const refreshMapPreview = async (style) => {
     setPreviewLoading(true)
@@ -749,7 +756,19 @@ export default function ProfilesPage() {
                     try{
                       const d=JSON.parse(ev.target.result)
                       if(d.page_types&&Array.isArray(d.page_types)){
-                        set('page_types',d.page_types)
+                        const existing = form.page_types || []
+                        let merged
+                        if(existing.length === 0){
+                          merged = d.page_types
+                        } else {
+                          const choice = window.confirm(
+                            `Importare ${d.page_types.length} layout da "${d.exported_from || 'file'}"?\n\n` +
+                            `OK = Aggiungi ai ${existing.length} layout esistenti\n` +
+                            `Annulla = Sostituisci tutti i layout esistenti`
+                          )
+                          merged = choice ? [...existing, ...d.page_types] : d.page_types
+                        }
+                        set('page_types', merged)
                         setPtKey(k => k + 1)
                         showToast(p.importLayoutsOk(d.page_types.length, d.exported_from), 'success')
                       } else showToast(p.importLayoutsErr,'error')

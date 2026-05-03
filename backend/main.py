@@ -841,7 +841,7 @@ async def page_sizes():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.7.0"}
+    return {"status": "ok", "version": "0.8.0"}
 
 # ─── PROJECTS (save / load / list / delete) ──────────────────────────────────
 

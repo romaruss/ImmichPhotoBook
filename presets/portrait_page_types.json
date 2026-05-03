@@ -1,0 +1,822 @@
+{
+  "page_types": [
+    {
+      "id": "pp-01-full",
+      "label": "1 foto intera",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 100,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-02-photo-cap-bottom",
+      "label": "1 foto + didascalia bassa",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 75,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 75,
+          "w": 100,
+          "h": 25,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-03-photo-cap-side",
+      "label": "1 foto + didascalia laterale",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 68,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 68,
+          "y": 0,
+          "w": 32,
+          "h": 100,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-04-2v",
+      "label": "2 foto verticali",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 50,
+          "w": 100,
+          "h": 50,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-05-2h",
+      "label": "2 foto affiancate",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 50,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 0,
+          "w": 50,
+          "h": 100,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-06-2v-cap",
+      "label": "2 foto verticali + didascalia",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 42,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 42,
+          "w": 100,
+          "h": 42,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 84,
+          "w": 100,
+          "h": 16,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-07-2h-cap",
+      "label": "2 foto affiancate + didascalia",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 50,
+          "h": 82,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 0,
+          "w": 50,
+          "h": 82,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 82,
+          "w": 100,
+          "h": 18,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-08-alternate-2",
+      "label": "2 foto con didascalie alternate",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 38,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 38,
+          "w": 100,
+          "h": 12,
+          "slot_type": "caption"
+        },
+        {
+          "x": 0,
+          "y": 50,
+          "w": 100,
+          "h": 38,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 88,
+          "w": 100,
+          "h": 12,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-09-photo-cap-photo",
+      "label": "Foto + didascalia + foto",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 40,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 40,
+          "w": 100,
+          "h": 18,
+          "slot_type": "caption"
+        },
+        {
+          "x": 0,
+          "y": 58,
+          "w": 100,
+          "h": 42,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-10-hero-top",
+      "label": "3 foto — hero alto",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 55,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 55,
+          "w": 50,
+          "h": 45,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 55,
+          "w": 50,
+          "h": 45,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-11-hero-bottom",
+      "label": "3 foto — hero basso",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 50,
+          "h": 40,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 0,
+          "w": 50,
+          "h": 40,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 40,
+          "w": 100,
+          "h": 60,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-12-3-columns",
+      "label": "3 foto a colonne",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 33.33,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 33.33,
+          "y": 0,
+          "w": 33.33,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 66.66,
+          "y": 0,
+          "w": 33.34,
+          "h": 100,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-13-hero-cap",
+      "label": "3 foto hero + didascalia",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 48,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 48,
+          "w": 50,
+          "h": 36,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 48,
+          "w": 50,
+          "h": 36,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 84,
+          "w": 100,
+          "h": 16,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-14-3-side-caps",
+      "label": "3 foto con didascalie laterali",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 68,
+          "h": 33.33,
+          "slot_type": "photo"
+        },
+        {
+          "x": 68,
+          "y": 0,
+          "w": 32,
+          "h": 33.33,
+          "slot_type": "caption"
+        },
+        {
+          "x": 0,
+          "y": 33.33,
+          "w": 68,
+          "h": 33.33,
+          "slot_type": "photo"
+        },
+        {
+          "x": 68,
+          "y": 33.33,
+          "w": 32,
+          "h": 33.33,
+          "slot_type": "caption"
+        },
+        {
+          "x": 0,
+          "y": 66.66,
+          "w": 68,
+          "h": 33.34,
+          "slot_type": "photo"
+        },
+        {
+          "x": 68,
+          "y": 66.66,
+          "w": 32,
+          "h": 33.34,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-15-3-right-cap",
+      "label": "3 foto + grande didascalia destra",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 65,
+          "h": 33.33,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 33.33,
+          "w": 65,
+          "h": 33.33,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 66.66,
+          "w": 65,
+          "h": 33.34,
+          "slot_type": "photo"
+        },
+        {
+          "x": 65,
+          "y": 0,
+          "w": 35,
+          "h": 100,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-16-4-grid",
+      "label": "4 foto 2×2",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 50,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 0,
+          "w": 50,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 50,
+          "w": 50,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 50,
+          "w": 50,
+          "h": 50,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-17-4-grid-cap",
+      "label": "4 foto 2×2 + didascalia",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 50,
+          "h": 44,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 0,
+          "w": 50,
+          "h": 44,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 44,
+          "w": 50,
+          "h": 44,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 44,
+          "w": 50,
+          "h": 44,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 88,
+          "w": 100,
+          "h": 12,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-18-4-hero",
+      "label": "4 foto — 1 grande + 3 piccole",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 50,
+          "w": 33.33,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 33.33,
+          "y": 50,
+          "w": 33.33,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 66.66,
+          "y": 50,
+          "w": 33.34,
+          "h": 50,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-19-5-mixed",
+      "label": "5 foto — 1 grande + 4 piccole",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 45,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 45,
+          "w": 50,
+          "h": 27.5,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 45,
+          "w": 50,
+          "h": 27.5,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 72.5,
+          "w": 50,
+          "h": 27.5,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 72.5,
+          "w": 50,
+          "h": 27.5,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-20-5-2-3",
+      "label": "5 foto — 2 alto + 3 basso",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 50,
+          "h": 40,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 0,
+          "w": 50,
+          "h": 40,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 40,
+          "w": 33.33,
+          "h": 60,
+          "slot_type": "photo"
+        },
+        {
+          "x": 33.33,
+          "y": 40,
+          "w": 33.33,
+          "h": 60,
+          "slot_type": "photo"
+        },
+        {
+          "x": 66.66,
+          "y": 40,
+          "w": 33.34,
+          "h": 60,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-21-6-grid",
+      "label": "6 foto 2×3",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 50,
+          "h": 33.33,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 0,
+          "w": 50,
+          "h": 33.33,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 33.33,
+          "w": 50,
+          "h": 33.33,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 33.33,
+          "w": 50,
+          "h": 33.33,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 66.66,
+          "w": 50,
+          "h": 33.34,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 66.66,
+          "w": 50,
+          "h": 33.34,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-22-cap-top-2",
+      "label": "Didascalia + 2 foto",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 20,
+          "slot_type": "caption"
+        },
+        {
+          "x": 0,
+          "y": 20,
+          "w": 50,
+          "h": 80,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 20,
+          "w": 50,
+          "h": 80,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-23-cap-top-3",
+      "label": "Didascalia + 3 foto",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 16,
+          "slot_type": "caption"
+        },
+        {
+          "x": 0,
+          "y": 16,
+          "w": 100,
+          "h": 42,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 58,
+          "w": 50,
+          "h": 42,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 58,
+          "w": 50,
+          "h": 42,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-24-story",
+      "label": "Racconto — foto + cap + 2 foto",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 40,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 40,
+          "w": 100,
+          "h": 14,
+          "slot_type": "caption"
+        },
+        {
+          "x": 0,
+          "y": 54,
+          "w": 50,
+          "h": 46,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 54,
+          "w": 50,
+          "h": 46,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "portrait"
+    },
+    {
+      "id": "pp-25-asymm",
+      "label": "Asimmetrico — grande + piccola + cap",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 60,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 60,
+          "y": 0,
+          "w": 40,
+          "h": 55,
+          "slot_type": "photo"
+        },
+        {
+          "x": 60,
+          "y": 55,
+          "w": 40,
+          "h": 45,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "portrait"
+    }
+  ],
+  "exported_from": "Preset verticali v1.0",
+  "date": "2026-05-02T00:00:00.000Z"
+}

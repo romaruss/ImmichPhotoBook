@@ -4,22 +4,32 @@ services:
     container_name: photobook-studio
     restart: unless-stopped
     ports:
-      - "7180:8000"
+      - "${PHOTOBOOK_PORT:-7180}:8000"
     volumes:
+      # Default: named Docker volume (managed by Docker).
+      # To use a custom host path instead, comment the line below and
+      # uncomment the bind-mount line, setting DATA_PATH in .env.
       - photobook_data:/data
+      #- ${DATA_PATH:-./photobook-data}:/data
     environment:
-      - TZ=Europe/Rome
-      - STADIA_MAPS_API_KEY=         # optional — register at https://client.stadiamaps.com
-      - PHOTOBOOK_TOKEN=             # optional — leave empty to disable auth
-                                     # generate: python3 -c "import secrets; print(secrets.token_hex(32))"
-    # Uncomment to connect to Immich's Docker network:
+      - TZ=${TZ:-Europe/Rome}
+      - STADIA_MAPS_API_KEY=${STADIA_MAPS_API_KEY:-}
+      - PHOTOBOOK_TOKEN=${PHOTOBOOK_TOKEN:-}
+    # ── Immich network (same Docker host) ────────────────────────────────────
+    # Find your Immich network: docker network ls | grep immich
     # networks:
     #   - immich_net
 
 # networks:
 #   immich_net:
-#     name: immich_default     # replace with your Immich network name
+#     name: immich_default     # ← replace with your Immich network name
 #     external: true
 
 volumes:
   photobook_data:
+    # To store the volume at a specific host path, uncomment and set driver_opts:
+    # driver: local
+    # driver_opts:
+    #   type: none
+    #   o: bind
+    #   device: /your/custom/path/photobook-data

@@ -1,0 +1,829 @@
+{
+  "page_types": [
+    {
+      "id": "lp-01-full",
+      "label": "1 foto intera",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 100,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-02-photo-cap-right",
+      "label": "1 foto + didascalia destra",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 74,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 74,
+          "y": 0,
+          "w": 26,
+          "h": 100,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-03-photo-cap-bottom",
+      "label": "1 foto + didascalia bassa",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 80,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 80,
+          "w": 100,
+          "h": 20,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-04-2h",
+      "label": "2 foto affiancate",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 50,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 0,
+          "w": 50,
+          "h": 100,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-05-2h-cap-bottom",
+      "label": "2 foto affiancate + didascalia bassa",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 50,
+          "h": 80,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 0,
+          "w": 50,
+          "h": 80,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 80,
+          "w": 100,
+          "h": 20,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-06-2h-2cap",
+      "label": "2 foto con didascalie",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 50,
+          "h": 76,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 0,
+          "w": 50,
+          "h": 76,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 76,
+          "w": 50,
+          "h": 24,
+          "slot_type": "caption"
+        },
+        {
+          "x": 50,
+          "y": 76,
+          "w": 50,
+          "h": 24,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-07-2v",
+      "label": "2 foto sovrapposte",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 50,
+          "w": 100,
+          "h": 50,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-08-3-row",
+      "label": "3 foto in riga",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 33.33,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 33.33,
+          "y": 0,
+          "w": 33.33,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 66.66,
+          "y": 0,
+          "w": 33.34,
+          "h": 100,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-09-hero-left",
+      "label": "3 foto — hero sinistro",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 58,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 58,
+          "y": 0,
+          "w": 42,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 58,
+          "y": 50,
+          "w": 42,
+          "h": 50,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-10-hero-right",
+      "label": "3 foto — hero destro",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 42,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 50,
+          "w": 42,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 42,
+          "y": 0,
+          "w": 58,
+          "h": 100,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-11-3-cap",
+      "label": "3 foto in riga + didascalia",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 33.33,
+          "h": 78,
+          "slot_type": "photo"
+        },
+        {
+          "x": 33.33,
+          "y": 0,
+          "w": 33.33,
+          "h": 78,
+          "slot_type": "photo"
+        },
+        {
+          "x": 66.66,
+          "y": 0,
+          "w": 33.34,
+          "h": 78,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 78,
+          "w": 100,
+          "h": 22,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-12-hero-left-cap",
+      "label": "3 foto hero sinistro + didascalia",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 56,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 56,
+          "y": 0,
+          "w": 44,
+          "h": 44,
+          "slot_type": "photo"
+        },
+        {
+          "x": 56,
+          "y": 44,
+          "w": 44,
+          "h": 36,
+          "slot_type": "photo"
+        },
+        {
+          "x": 56,
+          "y": 80,
+          "w": 44,
+          "h": 20,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-13-3-side-caps",
+      "label": "3 foto con didascalie laterali",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 26,
+          "h": 100,
+          "slot_type": "caption"
+        },
+        {
+          "x": 26,
+          "y": 0,
+          "w": 24.66,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50.66,
+          "y": 0,
+          "w": 24.66,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 75.32,
+          "y": 0,
+          "w": 24.68,
+          "h": 100,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-14-4-grid",
+      "label": "4 foto 2×2",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 50,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 0,
+          "w": 50,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 50,
+          "w": 50,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 50,
+          "w": 50,
+          "h": 50,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-15-4-row",
+      "label": "4 foto in riga",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 25,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 25,
+          "y": 0,
+          "w": 25,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 0,
+          "w": 25,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 75,
+          "y": 0,
+          "w": 25,
+          "h": 100,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-16-4-grid-cap",
+      "label": "4 foto 2×2 + didascalia",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 50,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 0,
+          "w": 50,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 50,
+          "w": 50,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 50,
+          "w": 26,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 76,
+          "y": 50,
+          "w": 24,
+          "h": 50,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-17-panoramic",
+      "label": "Panoramica — grande sopra + 2 sotto",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 55,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 55,
+          "w": 50,
+          "h": 45,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 55,
+          "w": 50,
+          "h": 45,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-18-panoramic-cap",
+      "label": "Panoramica + didascalia",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 100,
+          "h": 56,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 56,
+          "w": 38,
+          "h": 44,
+          "slot_type": "photo"
+        },
+        {
+          "x": 38,
+          "y": 56,
+          "w": 38,
+          "h": 44,
+          "slot_type": "photo"
+        },
+        {
+          "x": 76,
+          "y": 56,
+          "w": 24,
+          "h": 44,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-19-5-3-2",
+      "label": "5 foto — 3 sopra + 2 sotto",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 33.33,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 33.33,
+          "y": 0,
+          "w": 33.33,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 66.66,
+          "y": 0,
+          "w": 33.34,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 50,
+          "w": 50,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 50,
+          "y": 50,
+          "w": 50,
+          "h": 50,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-20-5-hero",
+      "label": "5 foto — 1 grande + 4 piccole",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 55,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 55,
+          "y": 0,
+          "w": 22.5,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 77.5,
+          "y": 0,
+          "w": 22.5,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 55,
+          "y": 50,
+          "w": 22.5,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 77.5,
+          "y": 50,
+          "w": 22.5,
+          "h": 50,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-21-6-grid",
+      "label": "6 foto 3×2",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 33.33,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 33.33,
+          "y": 0,
+          "w": 33.33,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 66.66,
+          "y": 0,
+          "w": 33.34,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 50,
+          "w": 33.33,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 33.33,
+          "y": 50,
+          "w": 33.33,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 66.66,
+          "y": 50,
+          "w": 33.34,
+          "h": 50,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-22-cap-left-3",
+      "label": "Didascalia sinistra + 3 foto",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 26,
+          "h": 100,
+          "slot_type": "caption"
+        },
+        {
+          "x": 26,
+          "y": 0,
+          "w": 74,
+          "h": 33.33,
+          "slot_type": "photo"
+        },
+        {
+          "x": 26,
+          "y": 33.33,
+          "w": 74,
+          "h": 33.33,
+          "slot_type": "photo"
+        },
+        {
+          "x": 26,
+          "y": 66.66,
+          "w": 74,
+          "h": 33.34,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-23-story",
+      "label": "Racconto — foto + cap + 3 foto",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 55,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 55,
+          "y": 0,
+          "w": 45,
+          "h": 22,
+          "slot_type": "caption"
+        },
+        {
+          "x": 55,
+          "y": 22,
+          "w": 22.5,
+          "h": 78,
+          "slot_type": "photo"
+        },
+        {
+          "x": 77.5,
+          "y": 22,
+          "w": 11.25,
+          "h": 78,
+          "slot_type": "photo"
+        },
+        {
+          "x": 88.75,
+          "y": 22,
+          "w": 11.25,
+          "h": 78,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-24-alt-2-h",
+      "label": "2 foto + 2 didascalie alternate",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 44,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 44,
+          "y": 0,
+          "w": 14,
+          "h": 100,
+          "slot_type": "caption"
+        },
+        {
+          "x": 58,
+          "y": 0,
+          "w": 28,
+          "h": 100,
+          "slot_type": "photo"
+        },
+        {
+          "x": 86,
+          "y": 0,
+          "w": 14,
+          "h": 100,
+          "slot_type": "caption"
+        }
+      ],
+      "orientation": "landscape"
+    },
+    {
+      "id": "lp-25-asymm",
+      "label": "Asimmetrico — 2 piccole + 1 grande",
+      "enabled": true,
+      "slots": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 35,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 0,
+          "y": 50,
+          "w": 35,
+          "h": 50,
+          "slot_type": "photo"
+        },
+        {
+          "x": 35,
+          "y": 0,
+          "w": 65,
+          "h": 100,
+          "slot_type": "photo"
+        }
+      ],
+      "orientation": "landscape"
+    }
+  ],
+  "exported_from": "Preset orizzontali v1.0",
+  "date": "2026-05-02T00:00:00.000Z"
+}

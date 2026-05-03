@@ -1181,6 +1181,17 @@ def generate_album(
     if not profile.get("page_types"):
         log.append("  ATTENZIONE: nessun page type nel profilo, uso fallback standard")
 
+    # Exclude disabled page types and wrong-orientation page types
+    profile_orientation = profile.get("orientation", "portrait")
+    page_types = [
+        pt for pt in page_types
+        if pt.get("enabled", True)
+        and pt.get("orientation", "any") in ("any", profile_orientation)
+    ]
+    if not page_types:
+        page_types = FALLBACK_PAGE_TYPES
+        log.append("  ATTENZIONE: nessun page type attivo/compatibile, uso fallback standard")
+
     # Compute physical page AR (accounts for page size + orientation)
     page_ar = _get_page_ar(profile)
     log.append(f"  Formato pagina: {profile.get('page_size','?')} {profile.get('orientation','portrait')} → page_ar={page_ar:.3f}")

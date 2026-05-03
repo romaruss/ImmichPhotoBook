@@ -14,7 +14,7 @@
  * Il parent deve passare key={profileId} per il reset al cambio profilo.
  */
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 
 // ── Canvas dimensions (px) ────────────────────────────────────────────────────
 const CW = 360   // canvas width  (portrait)
@@ -69,20 +69,42 @@ function makeGrid(n) {
 }
 
 // ── Miniatura ─────────────────────────────────────────────────────────────────
-function LayoutThumb({ pt, landscape, onEdit, onDelete }) {
-  const W = landscape ? 120 : 84
-  const H = landscape ? 84  : 120
+function LayoutThumb({ pt, profileOrientation, onEdit, onDelete, onDuplicate, onToggle }) {
+  const ptOri  = pt.orientation || 'any'
+  const oriMatch   = ptOri === 'any' || ptOri === profileOrientation
+  const manualOff  = oriMatch && pt.enabled === false   // ✗ manual-off
+  const autoOff    = !oriMatch                          // ○ auto-off
+  const isActive   = oriMatch && pt.enabled !== false   // ● active
+
+  const W = profileOrientation === 'landscape' ? 120 : 84
+  const H = profileOrientation === 'landscape' ? 84  : 120
+
+  // Border/opacity per state
+  const border  = isActive ? '2px solid var(--border)'
+                : manualOff ? '2px dashed #844'
+                : '2px dashed #555'
+  const opacity = isActive ? 1 : 0.38
+
+  // Toggle button appearance
+  const toggleIcon  = isActive ? '●' : manualOff ? '✗' : '○'
+  const toggleColor = isActive ? '#8f8' : manualOff ? '#f66' : '#666'
+  const toggleTitle = isActive   ? 'Disattiva manualmente (escludi da auto-layout)'
+                    : manualOff  ? 'Riattiva'
+                    : `Auto-disattivato — orientamento ${ptOri === 'portrait' ? 'verticale' : 'orizzontale'} non coincide col profilo`
+
+  const btnBase = { width:18, height:18, background:'rgba(10,10,12,0.72)',
+    border:'1px solid rgba(255,255,255,0.12)', borderRadius:3, cursor:'pointer',
+    fontSize:9, display:'flex', alignItems:'center', justifyContent:'center' }
+
   return (
-    <div style={{ position:'relative', userSelect:'none' }}>
+    <div style={{ position:'relative', userSelect:'none', opacity }}>
       <div
         onClick={onEdit}
         title={`${pt.label} — clicca per modificare`}
         style={{ cursor:'pointer', borderRadius:6, overflow:'hidden',
-          border:'2px solid var(--border)', background:'var(--bg3)',
-          transition:'border-color 0.15s',
-        }}
-        onMouseEnter={e=>e.currentTarget.style.borderColor='var(--gold)'}
-        onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}>
+          border, background:'var(--bg3)', transition:'border-color 0.15s' }}
+        onMouseEnter={e=>{ if(isActive) e.currentTarget.style.borderColor='var(--gold)' }}
+        onMouseLeave={e=>e.currentTarget.style.borderColor=isActive?'var(--border)':manualOff?'#844':'#555'}>
         <svg width={W} height={H} style={{ display:'block', background:'#e9e5dd' }}>
           {pt.slots.map((s,i) => {
             const x=(s.x/100)*W, y=(s.y/100)*H, w=(s.w/100)*W, h=(s.h/100)*H
@@ -105,32 +127,44 @@ function LayoutThumb({ pt, landscape, onEdit, onDelete }) {
         </svg>
         <div style={{ padding:'3px 6px', fontSize:10, fontFamily:'var(--font-mono)',
           color:'var(--text2)', borderTop:'1px solid var(--border)',
-          overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+          overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+          textDecoration: manualOff ? 'line-through' : 'none' }}>
           {pt.label}
+          {ptOri !== 'any' && (
+            <span style={{ marginLeft:4, fontSize:8,
+              color: oriMatch ? '#8a8' : '#a66',
+              background:'var(--bg2)', borderRadius:3, padding:'0 3px' }}>
+              {ptOri === 'portrait' ? '▯' : '▭'}
+            </span>
+          )}
         </div>
       </div>
-      <div style={{ position:'absolute', top:3, right:3, display:'flex', gap:3 }}>
+      <div style={{ position:'absolute', top:3, right:3, display:'flex', gap:2 }}>
         <button onClick={e=>{e.stopPropagation();onEdit()}}
-          style={{ width:18,height:18,background:'rgba(10,10,12,0.72)',
-            border:'1px solid rgba(255,255,255,0.12)',borderRadius:3,cursor:'pointer',
-            fontSize:9,color:'#ddd',display:'flex',alignItems:'center',justifyContent:'center' }}>✏</button>
+          style={{...btnBase,color:'#ddd'}} title="Modifica">✏</button>
+        <button onClick={e=>{e.stopPropagation();onDuplicate()}}
+          style={{...btnBase,color:'#adf'}} title="Duplica">⧉</button>
+        <button onClick={e=>{e.stopPropagation(); if(!autoOff) onToggle()}}
+          style={{...btnBase, color:toggleColor, cursor:autoOff?'default':'pointer',
+            opacity:autoOff?0.5:1}} title={toggleTitle}>
+          {toggleIcon}
+        </button>
         <button onClick={e=>{e.stopPropagation();onDelete()}}
-          style={{ width:18,height:18,background:'rgba(10,10,12,0.72)',
-            border:'1px solid rgba(255,255,255,0.12)',borderRadius:3,cursor:'pointer',
-            fontSize:10,color:'#f88',display:'flex',alignItems:'center',justifyContent:'center' }}>✕</button>
+          style={{...btnBase,color:'#f88'}} title="Elimina">✕</button>
       </div>
     </div>
   )
 }
 
 // ── Slot Editor Modal ─────────────────────────────────────────────────────────
-function SlotEditorModal({ initSlots, initLabel, landscape, onSave, onCancel }) {
+function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', landscape, onSave, onCancel }) {
   const canvasW = landscape ? CH : CW
   const canvasH = landscape ? CW : CH
 
-  const [slots,  setSlots]  = useState(() => initSlots.map(s=>({...s})))
-  const [label,  setLabel]  = useState(initLabel)
-  const [pref,   setPref]   = useState('any')
+  const [slots,   setSlots]   = useState(() => initSlots.map(s=>({...s})))
+  const [label,   setLabel]   = useState(initLabel)
+  const [pref,    setPref]    = useState('any')
+  const [ptOri,   setPtOri]   = useState(initPtOrientation)
   const [magnet, setMagnet] = useState(true)
   const [hover,  setHover]  = useState(null)   // {si, edge} | null
   const [n,      setN]      = useState(initSlots.length)
@@ -316,12 +350,23 @@ function SlotEditorModal({ initSlots, initLabel, landscape, onSave, onCancel }) 
             </div>
 
             <div className="form-group">
-              <label className="form-label">Orientamento preferito</label>
+              <label className="form-label">Orientamento preferito foto</label>
               <select className="form-select" value={pref} onChange={e=>setPref(e.target.value)}>
                 <option value="any">Misto (qualsiasi)</option>
                 <option value="portrait">Verticale (ritratto)</option>
                 <option value="landscape">Orizzontale (paesaggio)</option>
               </select>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Formato pagina</label>
+              <select className="form-select" value={ptOri} onChange={e=>setPtOri(e.target.value)}>
+                <option value="portrait">▯ Verticale</option>
+                <option value="landscape">▭ Orizzontale</option>
+              </select>
+              <p style={{fontSize:10,color:'var(--text3)',marginTop:3}}>
+                Layout visibile e usato solo nei profili con orientamento concorde.
+              </p>
             </div>
 
             <div className="form-group">
@@ -482,7 +527,7 @@ function SlotEditorModal({ initSlots, initLabel, landscape, onSave, onCancel }) 
           <div style={{ display:'flex', gap:10 }}>
             <button className="btn" onClick={onCancel}>Annulla</button>
             <button className="btn btn-primary"
-              onClick={()=>onSave(label.trim()||'Layout', pref, slots.map(s=>({...s})))}>
+              onClick={()=>onSave(label.trim()||'Layout', pref, slots.map(s=>({...s})), ptOri)}>
               ✓ Salva layout
             </button>
           </div>
@@ -506,18 +551,31 @@ export default function PageTypeEditor({ pageTypes: initPTs, onChange, orientati
   // null | { mode:'new'|'edit', idx:number|null }
   const [editor, setEditor] = useState(null)
 
+  const profileOrientation = orientation === 'landscape' ? 'landscape' : 'portrait'
+
+  // Filters
+  const [filterType,        setFilterType]        = useState('all')         // 'all'|'photo'|'caption'
+  const [filterCount,       setFilterCount]       = useState('all')         // 'all'|'1'|'2'|'3'|'4'|'5+'
+  const [filterStatus,      setFilterStatus]      = useState('active')      // 'all'|'active'|'manual-off'|'auto-off'
+  const [filterOrientation, setFilterOrientation] = useState(profileOrientation) // 'all'|'portrait'|'landscape'
+
+  // Auto-update orientation filter when profile orientation changes
+  useEffect(() => {
+    setFilterOrientation(profileOrientation)
+  }, [orientation])
+
   const commit = (newPts) => { setPts(newPts); onChange(newPts) }
 
   const openNew  = () => setEditor({ mode:'new', idx:null })
   const openEdit = (i) => setEditor({ mode:'edit', idx:i })
   const close    = () => setEditor(null)
 
-  const save = (label, pref, slots) => {
+  const save = (label, pref, slots, ptOri='any') => {
     if (editor.mode === 'new') {
-      const newPT = { id:uid(), label, pref, slots }
+      const newPT = { id:uid(), label, pref, slots, enabled:true, orientation: ptOri }
       commit([...pts, newPT])
     } else {
-      commit(pts.map((pt,i) => i===editor.idx ? {...pt, label, pref, slots} : pt))
+      commit(pts.map((pt,i) => i===editor.idx ? {...pt, label, pref, slots, orientation: ptOri} : pt))
     }
     close()
   }
@@ -527,32 +585,109 @@ export default function PageTypeEditor({ pageTypes: initPTs, onChange, orientati
     commit(pts.filter((_,i)=>i!==idx))
   }
 
+  const duplicate = (idx) => {
+    const src = pts[idx]
+    const copy = { ...src, id:uid(), label:`${src.label} (copia)`,
+      slots: src.slots.map(s=>({...s})), enabled: src.enabled !== false }
+    const next = [...pts]
+    next.splice(idx + 1, 0, copy)
+    commit(next)
+  }
+
+  const toggleEnabled = (idx) => {
+    commit(pts.map((pt,i) => i===idx ? {...pt, enabled: !(pt.enabled !== false)} : pt))
+  }
+
   const editingPT = editor?.mode==='edit' && editor.idx!=null ? pts[editor.idx] : null
+
+  // Compute status helpers for each pt
+  const ptStatus = (pt) => {
+    const ptOri    = pt.orientation || 'any'
+    const oriMatch = ptOri === 'any' || ptOri === profileOrientation
+    if (!oriMatch)               return 'auto-off'
+    if (pt.enabled === false)    return 'manual-off'
+    return 'active'
+  }
+
+  // Apply filters (filter → visible list with original index)
+  const visible = pts.map((pt,i)=>({pt,i})).filter(({pt}) => {
+    const nCap   = pt.slots.filter(s=>s.slot_type==='caption').length
+    const nPhoto = pt.slots.length - nCap
+    const ptOri  = pt.orientation || 'any'
+    const status = ptStatus(pt)
+    if (filterType === 'photo'   && nCap > 0)  return false
+    if (filterType === 'caption' && nCap === 0) return false
+    if (filterCount !== 'all') {
+      if (filterCount === '5+' ? nPhoto < 5 : nPhoto !== parseInt(filterCount)) return false
+    }
+    if (filterStatus !== 'all' && status !== filterStatus) return false
+    if (filterOrientation !== 'all') {
+      if (filterOrientation === 'portrait'  && ptOri === 'landscape') return false
+      if (filterOrientation === 'landscape' && ptOri === 'portrait')  return false
+    }
+    return true
+  })
+
+  const chipStyle = (active) => ({
+    padding:'2px 8px', borderRadius:10, fontSize:10, cursor:'pointer',
+    border:`1px solid ${active?'var(--gold)':'var(--border)'}`,
+    background: active?'rgba(212,170,90,0.15)':'var(--bg3)',
+    color: active?'var(--gold)':'var(--text3)'
+  })
 
   return (
     <div>
       {/* Toolbar */}
-      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:12 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
         <p style={{ fontSize:11, color:'var(--text3)', flex:1 }}>
-          {pts.length} layout — ✏ modifica · ✕ elimina · clicca la miniatura per modificare
+          {visible.length}/{pts.length} layout
+          {(() => {
+            const nAuto   = pts.filter(p=>ptStatus(p)==='auto-off').length
+            const nManual = pts.filter(p=>ptStatus(p)==='manual-off').length
+            return (<>
+              {nAuto   > 0 && <span style={{color:'#888',marginLeft:6}}>· {nAuto} auto-off ○</span>}
+              {nManual > 0 && <span style={{color:'#f66',marginLeft:6}}>· {nManual} disattivati ✗</span>}
+            </>)
+          })()}
         </p>
-        <button className="btn btn-primary btn-sm" onClick={openNew}>
-          + Nuovo layout
-        </button>
+        <button className="btn btn-primary btn-sm" onClick={openNew}>+ Nuovo layout</button>
+      </div>
+
+      {/* Filter bar */}
+      <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:12,
+        padding:'8px 10px', background:'var(--bg2)', borderRadius:7,
+        border:'1px solid var(--border)' }}>
+        <span style={{fontSize:10,color:'var(--text3)',alignSelf:'center',marginRight:2}}>Formato:</span>
+        {[['all','Tutti'],['portrait','▯ Verticale'],['landscape','▭ Orizzontale']].map(([v,l])=>(
+          <button key={v} style={chipStyle(filterOrientation===v)} onClick={()=>setFilterOrientation(v)}>{l}</button>
+        ))}
+        <span style={{fontSize:10,color:'var(--text3)',alignSelf:'center',marginLeft:6,marginRight:2}}>Stato:</span>
+        {[['all','Tutti'],['active','● Attivi'],['manual-off','✗ Disattivati'],['auto-off','○ Auto-off']].map(([v,l])=>(
+          <button key={v} style={chipStyle(filterStatus===v)} onClick={()=>setFilterStatus(v)}>{l}</button>
+        ))}
+        <span style={{fontSize:10,color:'var(--text3)',alignSelf:'center',marginLeft:6,marginRight:2}}>Tipo:</span>
+        {[['all','Tutti'],['photo','Solo foto'],['caption','Con didascalie']].map(([v,l])=>(
+          <button key={v} style={chipStyle(filterType===v)} onClick={()=>setFilterType(v)}>{l}</button>
+        ))}
+        <span style={{fontSize:10,color:'var(--text3)',alignSelf:'center',marginLeft:6,marginRight:2}}>Foto:</span>
+        {['all','1','2','3','4','5+'].map(v=>(
+          <button key={v} style={chipStyle(filterCount===v)} onClick={()=>setFilterCount(v)}>{v==='all'?'Tutti':v}</button>
+        ))}
       </div>
 
       {/* Grid of thumbnails */}
-      {pts.length === 0 ? (
+      {visible.length === 0 ? (
         <div style={{ textAlign:'center', padding:'32px 0', color:'var(--text3)', fontSize:13,
           border:'2px dashed var(--border)', borderRadius:8, lineHeight:1.9 }}>
-          Nessun layout.<br/>
-          <span style={{ fontSize:12 }}>Clicca <strong>+ Nuovo layout</strong>.</span>
+          {pts.length === 0 ? <>Nessun layout.<br/><span style={{fontSize:12}}>Clicca <strong>+ Nuovo layout</strong>.</span></>
+            : 'Nessun layout corrisponde ai filtri.'}
         </div>
       ) : (
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:10 }}>
-          {pts.map((pt, i) => (
-            <LayoutThumb key={pt.id} pt={pt} landscape={landscape}
-              onEdit={()=>openEdit(i)} onDelete={()=>remove(i)}/>
+          {visible.map(({pt,i}) => (
+            <LayoutThumb key={pt.id} pt={pt} profileOrientation={profileOrientation}
+              onEdit={()=>openEdit(i)} onDelete={()=>remove(i)}
+              onDuplicate={()=>duplicate(i)} onToggle={()=>toggleEnabled(i)}/>
           ))}
         </div>
       )}
@@ -563,6 +698,7 @@ export default function PageTypeEditor({ pageTypes: initPTs, onChange, orientati
           key={editor.mode + (editor.idx ?? 'new')}
           initSlots={editingPT ? editingPT.slots.map(s=>({...s})) : makeGrid(2)}
           initLabel={editingPT ? editingPT.label : ''}
+          initPtOrientation={editingPT ? (editingPT.orientation || profileOrientation) : profileOrientation}
           landscape={landscape}
           onSave={save}
           onCancel={close}/>
