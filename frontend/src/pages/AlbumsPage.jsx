@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import axios from 'axios'
 import { useT } from '../i18n.jsx'
+import { migrateDividerStyle } from '../components/DividerEditor'
 
 // ── Default config ─────────────────────────────────────────────────────────────
 const DEFAULTS = {
@@ -441,24 +442,23 @@ export default function AlbumsPage() {
     try {
       const BLANK_PAGE = { page_type_id:'__blank__', page_type:{id:'__blank__',label:a.blankPage,slots:[]}, items:[] }
 
-      // Build divider page using profile's divider_style.
-      // Default: one full-page slot when profile has none configured, so user can add title/map.
-      const makeDividerPage = (albumData, prof) => {
-        const ds = prof?.divider_style || {}
-        const slots = ds.slots?.length ? ds.slots : [{ x:0, y:0, w:100, h:100 }]
-        const items = slots.map((slot, idx) => ({
-          slot,
-          item: ds.items?.find(it => it._slot_idx === idx) || null
-        }))
+      // Build divider page using profile's divider_style (new element-based format).
+      // locations and best_photo_id come from the layout API response and are used
+      // in PDF export to render the per-album map and photo slot on divider pages.
+      const makeDividerPage = (albumData, locations, prof) => {
+        const ds = migrateDividerStyle(prof?.divider_style)
         return {
           page_type_id: '__divider__',
-          page_type: { id:'__divider__', label:'Divisore album', slots },
-          items,
+          page_type: { id:'__divider__', label:'Divisore album', slots:[] },
+          items: [],
           _album_divider: true,
           _album_info: {
-            albumName:  albumData.albumName  || '',
-            assetCount: albumData.assetCount || 0,
-            dateRange:  albumData.dateRange  || '',
+            albumName:     albumData.albumName      || '',
+            assetCount:    albumData.assetCount     || 0,
+            dateRange:     albumData.dateRange      || '',
+            description:   albumData.description    || '',
+            best_photo_id: albumData.best_photo_id  || null,
+            locations:     locations                || [],
           },
           _divider_style: ds,
         }
@@ -478,9 +478,10 @@ export default function AlbumsPage() {
         }, { signal: controller.signal })
         const { photo_transforms = {}, ...layoutData } = r.data
         const albumData = r.data.album || {}
+        const locations = r.data.locations || []
 
         // Insert divider at index 0 (right-hand page of the "seconda di copertina" spread)
-        const divider = makeDividerPage(albumData, profile)
+        const divider = makeDividerPage(albumData, locations, profile)
         const pages = [divider, ...(layoutData.pages || [])]
 
         // Shift all transform keys by 1 (divider now occupies index 0)
@@ -522,9 +523,10 @@ export default function AlbumsPage() {
         results.forEach((r, i) => {
           const { photo_transforms = {}, pages = [] } = r.data
           const albumData = r.data.album || {}
+          const albumLocs = r.data.locations || []
 
           ensureEvenIndex()
-          allPages.push({...makeDividerPage(albumData, profile), _album_idx: i})
+          allPages.push({...makeDividerPage(albumData, albumLocs, profile), _album_idx: i})
 
           const transformOffset = allPages.length
           Object.entries(photo_transforms).forEach(([key, val]) => {

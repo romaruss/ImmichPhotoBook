@@ -276,6 +276,14 @@ def _draw_bleed_marks(c: canvas.Canvas, pw: float, ph: float, bleed: float) -> N
 
 
 
+_DIVIDER_FONTS = {
+    "display": "Helvetica-Bold",
+    "serif":   "Times-Roman",
+    "sans":    "Helvetica",
+    "mono":    "Courier",
+}
+
+
 def _draw_divider_page(c: canvas.Canvas, page: dict,
                        processed_cache: dict,
                        pw: float, ph: float,
@@ -284,36 +292,45 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
                        crop_marks: bool = False,
                        pan_offsets: dict | None = None,
                        page_idx: int = 0,
-                       profile_cs: dict | None = None) -> None:
+                       profile_cs: dict | None = None,
+                       map_image: bytes | None = None) -> None:
     """
-    Renders an album divider page.
-    Works like _draw_photo_page_fast but also handles dynamic content slots:
-      type == 'album_name'   → album name text
-      type == 'photo_count'  → photo count
-      type == 'year'         → year range from album
-      type == 'map'          → GPS map image (stored in item as base64 or bytes key)
+    Renders an album divider page using the new element-based divider_style format.
+
+    divider_style fields used:
+      bg        — background hex colour
+      elements  — list of { id, type, enabled, x, y, font, font_size, color, align,
+                             opacity, w, h } with positions in % of page (centre anchor)
+      lines     — list of { id, orientation, x, y, length, thickness, color, opacity }
+
+    Element types: title, subtitle, date_range, photo_count, map, photo
+    font_size is % of page height.
     """
-    cs = page.get("_divider_style") or {}
+    ds = page.get("_divider_style") or {}
+
     if bleed > 0 and crop_marks:
         _draw_bleed_marks(c, pw, ph, bleed)
 
-    album_info = page.get("_album_info") or {}
+    album_info  = page.get("_album_info") or {}
     album_name  = album_info.get("albumName", "")
     asset_count = album_info.get("assetCount", 0)
     date_range  = album_info.get("dateRange", "")
-    accent      = cs.get("accent_color", "#d4aa5a")
-    text_color  = cs.get("text_color", "#f0ede6")
+    description = album_info.get("description", "")
 
-    ux = ml
-    uw = pw - ml - mr
-    uh = ph - mt - mb
+    # ── Background ────────────────────────────────────────────────────────────
+    bg = ds.get("bg", "#13141a")
+    c.setFillColorRGB(*_hex_to_rgb(bg))
+    c.rect(0, 0, pw, ph, fill=1, stroke=0)
 
-    items = page.get("items", [])
-    if not items:
-        # Default layout: centered album name
+    elements = ds.get("elements") or []
+    lines    = ds.get("lines") or []
+
+    # ── Fallback: old format (no elements key) ────────────────────────────────
+    if not elements:
+        accent     = ds.get("accent_color", "#d4aa5a")
+        text_color = ds.get("text_color",   "#f0ede6")
         cx, cy = pw / 2, ph / 2
-        ar, ag, ab = _hex_to_rgb(accent)
-        c.setStrokeColorRGB(ar, ag, ab)
+        c.setStrokeColorRGB(*_hex_to_rgb(accent))
         c.setLineWidth(0.6)
         c.line(ml + _mm(10), cy, pw - mr - _mm(10), cy)
         c.setFillColorRGB(*_hex_to_rgb(text_color))
@@ -321,90 +338,145 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
         c.drawCentredString(pw / 2, cy + _mm(8), album_name or "Album")
         if date_range:
             c.setFont("Helvetica", _mm(6))
-            c.setFillColorRGB(ar, ag, ab)
+            c.setFillColorRGB(*_hex_to_rgb(accent))
             c.drawCentredString(pw / 2, cy - _mm(10), date_range)
         if asset_count:
             c.setFont("Helvetica", _mm(5))
             c.drawCentredString(pw / 2, cy - _mm(18), f"{asset_count} fotografie")
         return
 
-    # Slot-based layout
-    for slot_idx, item_data in enumerate(items):
-        slot = item_data.get("slot", {"x":0,"y":0,"w":100,"h":100})
-        item = item_data.get("item")
-        le = slot["x"] < 0.5
-        te = slot["y"] < 0.5
-        re = (slot["x"] + slot["w"]) > 99.5
-        be = (slot["y"] + slot["h"]) > 99.5
-        sx     = ux + (slot["x"] / 100) * uw + (0 if le else gap / 2)
-        sy_top = (slot["y"] / 100) * uh       + (0 if te else gap / 2)
-        sw     = (slot["w"] / 100) * uw - (0 if le else gap/2) - (0 if re else gap/2)
-        sh     = (slot["h"] / 100) * uh - (0 if te else gap/2) - (0 if be else gap/2)
-        sy = ph - mt - sy_top - sh
-        if sw <= 0 or sh <= 0:
+    # ── Build unified item list sorted by layer_order (index 0 = backmost) ────
+    _items_by_id = {el["id"]: ("element", el) for el in elements}
+    _items_by_id.update({ln["id"]: ("line", ln) for ln in lines})
+    _layer_order = ds.get("layer_order") or [el["id"] for el in elements] + [ln["id"] for ln in lines]
+    _render_order = [_items_by_id[i] for i in _layer_order if i in _items_by_id]
+    # Include any items not referenced in layer_order (backwards compat)
+    _render_order += [v for k, v in _items_by_id.items() if k not in _layer_order]
+
+    # ── Unified render pass (layer_order: backmost first) ─────────────────────
+    def _text_for(etype: str, el: dict = None) -> str:
+        if el is not None:
+            if etype == "text_custom":
+                return el.get("text", "") or ""
+            ct = el.get("custom_text")
+            if ct:
+                return ct
+        if etype == "title":       return album_name  or ""
+        if etype == "subtitle":    return description  or ""
+        if etype == "date_range":  return date_range   or ""
+        if etype == "photo_count": return f"{asset_count} fotografie" if asset_count else ""
+        return ""
+
+    for _kind, _item in _render_order:
+
+        if _kind == "line":
+            ln = _item
+            opacity   = (ln.get("opacity", 50) or 0) / 100
+            color     = ln.get("color", "#d4aa5a")
+            thickness = float(ln.get("thickness", 1))
+            lx        = ln.get("x", 50) / 100 * pw
+            ly        = (1 - ln.get("y", 50) / 100) * ph
+            length_pct = ln.get("length", 55) / 100
+            c.saveState()
+            c.setStrokeColorRGB(*_hex_to_rgb(color))
+            c.setStrokeAlpha(opacity)
+            c.setLineWidth(thickness)
+            if ln.get("orientation", "h") != "v":
+                half = length_pct * pw / 2
+                c.line(lx - half, ly, lx + half, ly)
+            else:
+                half = length_pct * ph / 2
+                c.line(lx, ly - half, lx, ly + half)
+            c.restoreState()
             continue
-        if item is None:
+
+        # kind == "element"
+        el = _item
+        if not el.get("enabled", True):
             continue
-        itype = item.get("type", "")
-        if itype == "photo":
-            aid = item.get("asset_id", "")
-            po    = (pan_offsets or {}).get(f"{page_idx}_{slot_idx}", {})
-            pan_x = po.get("x", item.get("_pan_x", 50.0))
-            pan_y = po.get("y", item.get("_pan_y", 50.0))
-            zoom  = float(po.get("zoom", 1.0))
-            key   = (aid, round(sw), round(sh), round(pan_x), round(pan_y), round(zoom*100))
-            pre = processed_cache.get(key)
-            if pre:
-                jpeg_bytes, ox, oy, draw_w, draw_h = pre
+        etype   = el.get("type", "")
+        ex      = el.get("x", 50) / 100 * pw
+        ey      = (1 - el.get("y", 50) / 100) * ph
+        opacity = (el.get("opacity", 100) or 100) / 100
+        color   = el.get("color", "#f0ede6")
+        align   = el.get("align", "center")
+
+        fs_pct  = el.get("font_size", 3)
+        fs_pt   = max(4.0, fs_pct / 100 * ph)
+
+        if etype in ("title", "subtitle", "date_range", "photo_count", "text_custom"):
+            text = _text_for(etype, el)
+            if not text:
+                continue
+            font_name = _DIVIDER_FONTS.get(el.get("font", "sans"), "Helvetica")
+            if etype == "title":
+                font_name = "Helvetica-Bold"
+            c.saveState()
+            c.setFillColorRGB(*_hex_to_rgb(color))
+            c.setFillAlpha(opacity)
+            c.setFont(font_name, fs_pt)
+            base_y = ey - fs_pt * 0.35
+            if align == "center":
+                c.drawCentredString(ex, base_y, text)
+            elif align == "right":
+                c.drawRightString(ex, base_y, text)
+            else:
+                c.drawString(ex, base_y, text)
+            c.restoreState()
+
+        elif etype == "map" and map_image:
+            ew = el.get("w", 55) / 100 * pw
+            eh = el.get("h", 35) / 100 * ph
+            rect_x = ex - ew / 2
+            rect_y = ey - eh / 2
+            try:
+                pil = PILImage.open(io.BytesIO(map_image)).convert("RGB")
+                buf = io.BytesIO(); pil.save(buf, "JPEG", quality=88); buf.seek(0)
+                iw, ih = pil.size
+                sc = min(ew / iw, eh / ih)
+                dw, dh = iw * sc, ih * sc
+                c.saveState()
+                c.setFillAlpha(opacity)
+                p = c.beginPath(); p.rect(rect_x, rect_y, ew, eh)
+                c.clipPath(p, stroke=0)
+                c.drawImage(ImageReader(buf), rect_x + (ew - dw) / 2, rect_y + (eh - dh) / 2,
+                            width=dw, height=dh, mask="auto")
+                c.restoreState()
+            except Exception as e:
+                logger.warning(f"Divider map draw error: {e}")
+
+        elif etype == "photo":
+            ew = el.get("w", 40) / 100 * pw
+            eh = el.get("h", 30) / 100 * ph
+            rect_x = ex - ew / 2
+            rect_y = ey - eh / 2
+            photo_id  = el.get("photo_id") or album_info.get("best_photo_id")
+            cache_key = (photo_id, round(ew), round(eh), 50, 50, 100) if photo_id else None
+            img_data  = processed_cache.get(cache_key) if cache_key else None
+            if img_data:
+                jpeg_bytes, ox, oy, dw, dh = img_data
                 try:
                     c.saveState()
-                    p = c.beginPath(); p.rect(sx, sy, sw, sh)
-                    c.clipPath(p, stroke=0)
+                    c.setFillAlpha(opacity)
+                    clip = c.beginPath(); clip.rect(rect_x, rect_y, ew, eh)
+                    c.clipPath(clip, stroke=0)
                     c.drawImage(ImageReader(io.BytesIO(jpeg_bytes)),
-                                sx - ox, sy - oy, width=draw_w, height=draw_h, mask="auto")
-                    c.restoreState()
-                except Exception as e:
-                    logger.warning(f"Divider photo draw error: {e}")
-        elif itype == "caption":
-            _render_caption_slot(c, item, sx, sy, sw, sh, profile_cs=profile_cs)
-        elif itype in ("album_name", "photo_count", "year", "date_range"):
-            # Dynamic text slot
-            ar, ag, ab = _hex_to_rgb(accent)
-            tr, tg, tb = _hex_to_rgb(text_color)
-            c.setFillColorRGB(*_hex_to_rgb(cs.get("bg", "#13141a")))
-            c.rect(sx, sy, sw, sh, fill=1, stroke=0)
-            if itype == "album_name":
-                fs = min(_mm(12), sw / max(len(album_name or "A"), 1) * 1.4)
-                fs = max(fs, _mm(5))
-                c.setFont("Helvetica-Bold", fs)
-                c.setFillColorRGB(tr, tg, tb)
-                c.drawCentredString(sx + sw/2, sy + sh/2 - fs/3, album_name or "Album")
-            elif itype == "photo_count":
-                text = f"{asset_count} fotografie"
-                c.setFont("Helvetica", _mm(7))
-                c.setFillColorRGB(ar, ag, ab)
-                c.drawCentredString(sx + sw/2, sy + sh/2 - _mm(3.5), text)
-            elif itype in ("year", "date_range"):
-                c.setFont("Helvetica", _mm(6))
-                c.setFillColorRGB(ar, ag, ab)
-                c.drawCentredString(sx + sw/2, sy + sh/2 - _mm(3), date_range or "")
-        elif itype == "map":
-            map_bytes = item.get("_map_bytes")
-            if map_bytes:
-                try:
-                    pil = PILImage.open(io.BytesIO(map_bytes)).convert("RGB")
-                    buf = io.BytesIO(); pil.save(buf, "JPEG", quality=88); buf.seek(0)
-                    iw, ih = pil.size
-                    scale = min(sw / iw, sh / ih)
-                    dw, dh = iw*scale, ih*scale
-                    c.saveState()
-                    p = c.beginPath(); p.rect(sx, sy, sw, sh)
-                    c.clipPath(p, stroke=0)
-                    c.drawImage(ImageReader(buf), sx + (sw-dw)/2, sy + (sh-dh)/2,
+                                rect_x + ox, rect_y + oy,
                                 width=dw, height=dh, mask="auto")
                     c.restoreState()
                 except Exception as e:
-                    logger.warning(f"Divider map draw error: {e}")
+                    logger.warning(f"Divider photo draw error: {e}")
+                    c.saveState()
+                    c.setFillColorRGB(0.16, 0.12, 0.22)
+                    c.setFillAlpha(opacity * 0.6)
+                    c.rect(rect_x, rect_y, ew, eh, fill=1, stroke=0)
+                    c.restoreState()
+            else:
+                c.saveState()
+                c.setFillColorRGB(0.16, 0.12, 0.22)
+                c.setFillAlpha(opacity * 0.6)
+                c.rect(rect_x, rect_y, ew, eh, fill=1, stroke=0)
+                c.restoreState()
 
 
 def _hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
@@ -711,6 +783,7 @@ def generate_pdf(
     profile: dict,
     photo_cache: dict[str, bytes],
     map_image: Optional[bytes] = None,
+    divider_maps: dict | None = None,
     on_page_progress: "callable | None" = None,
     pan_offsets: dict | None = None,
 ) -> bytes:
@@ -831,6 +904,23 @@ def generate_pdf(
             photo_jobs.append((aid, sw_pt, sh_pt, pan_x, pan_y, zoom))
         _p1_counter += 1
 
+    # Divider photo slots: add photo_id from each divider page's photo element to processing queue.
+    # Use center pan (50/50) and zoom=1 — no user-adjustable transforms on divider photos.
+    for page_idx, page in enumerate(pages):
+        if not page.get("_album_divider"):
+            continue
+        album_info_d = page.get("_album_info") or {}
+        ds_d = page.get("_divider_style") or {}
+        for el in (ds_d.get("elements") or []):
+            if el.get("type") == "photo" and el.get("enabled", True):
+                photo_id = el.get("photo_id") or album_info_d.get("best_photo_id")
+                if not photo_id or photo_id not in photo_cache:
+                    continue
+                ew_pt = el.get("w", 40) / 100 * pw
+                eh_pt = el.get("h", 30) / 100 * ph
+                if ew_pt > 0 and eh_pt > 0:
+                    photo_jobs.append((photo_id, ew_pt, eh_pt, 50.0, 50.0, 1.0))
+
     # Deduplicate by cache key (includes pan+zoom so edits produce distinct cached images)
     seen_keys: set = set()
     unique_jobs: list[tuple] = []
@@ -917,12 +1007,14 @@ def generate_pdf(
             ml_pt, mr_pt, mt_pt, mb_pt = margins_for_page(page_counter)
             profile_cs = profile.get("caption_style") or {}
             if page.get("_album_divider"):
+                div_map = (divider_maps or {}).get(page_idx, map_image)
                 _draw_divider_page(cv, page, processed_cache, pw, ph,
                                    ml_pt, mr_pt, mt_pt, mb_pt, gap, bleed,
                                    crop_marks=crop_marks,
                                    pan_offsets=pan_offsets,
                                    page_idx=page_idx,
-                                   profile_cs=profile_cs)
+                                   profile_cs=profile_cs,
+                                   map_image=div_map)
             else:
                 _draw_photo_page_fast(cv, page, processed_cache, pw, ph,
                                       ml_pt, mr_pt, mt_pt, mb_pt, gap, bleed,

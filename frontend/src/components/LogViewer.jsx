@@ -266,6 +266,16 @@ function SlotCard({ slot }) {
         </div>
       )}
 
+      {slot.quality_score != null && (
+        <div style={{marginTop:6}}>
+          <ScoreBar
+            score={Math.round((1 - slot.quality_score) * 100)}
+            max={100}
+            label={`Qualità: ${slot.quality_score}`}
+            warn={35} danger={65}/>
+        </div>
+      )}
+
       {slot.has_caption && slot.description && (
         <div style={{fontSize:10,color:C.gold,fontFamily:C.mono,
           background:C.goldDim,borderRadius:4,padding:'5px 8px',

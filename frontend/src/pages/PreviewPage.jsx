@@ -9,13 +9,14 @@
  *    stato usata/usata più volte/non usata, drag verso slot
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { useT } from '../i18n.jsx'
 import CoverStyleEditor, { CoverPreview, DEFAULT_COVER } from '../components/CoverEditor'
 import LogViewer from '../components/LogViewer'
+import { DividerCanvas, DividerEditorModal, migrateDividerStyle } from '../components/DividerEditor'
 
 // ── Page geometry ─────────────────────────────────────────────────────────────
 const PAGE_SIZES_PT = {
@@ -259,14 +260,20 @@ function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, o
     return tp.panelAlt(name, u, pages)
   }
 
-  // Click su foto: se non usata → preview ingrandita; se usata → naviga alla pagina
-  const handlePhotoClick = (asset, firstPage) => {
-    const uses = usageMap[asset.id] || 0
-    if (uses === 0) {
+  // Tracks which occurrence index was last shown per asset (for cycling)
+  const occurrenceCursor = useRef({})
+
+  // Click su foto: se non usata → preview ingrandita; se usata → cicla tra le occorrenze
+  const handlePhotoClick = (asset) => {
+    const pages_list = usagePages[asset.id] || []
+    if (pages_list.length === 0) {
       setPreviewAsset(asset)
-    } else if (firstPage !== undefined) {
-      onNavigate(firstPage)
+      return
     }
+    const cur = occurrenceCursor.current[asset.id] || 0
+    const targetPage = pages_list[cur % pages_list.length]
+    occurrenceCursor.current[asset.id] = (cur + 1) % pages_list.length
+    onNavigate(targetPage)
   }
 
   return (
@@ -417,7 +424,7 @@ function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, o
                       ref={highlightedAsset===asset.id ? highlightRef : null}
                       draggable
                       onDragStart={e=>{e.dataTransfer.setData('asset_id',asset.id);onDragStart(asset)}}
-                      onClick={()=>{ if(firstPage!==undefined) onNavigate(firstPage); onClearHighlight?.() }}
+                      onClick={()=>{ handlePhotoClick(asset); onClearHighlight?.() }}
                       onDoubleClick={()=>setPreviewAsset(asset)}
                       title={alt}
                       style={{
@@ -473,7 +480,7 @@ function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, o
                       ref={highlightedAsset===asset.id ? highlightRef : null}
                       draggable
                       onDragStart={e=>{e.dataTransfer.setData('asset_id',asset.id);onDragStart(asset)}}
-                      onClick={()=>{ handlePhotoClick(asset, firstPage); onClearHighlight?.() }}
+                      onClick={()=>{ handlePhotoClick(asset); onClearHighlight?.() }}
                       onDoubleClick={()=>setPreviewAsset(asset)}
                       title={alt}
                       style={{
@@ -975,6 +982,80 @@ function MapSlot({ item, slotW, slotH, transform, isEditMode, onEnterEdit, onExi
   )
 }
 
+// ── Layout picker with hover mini-preview ─────────────────────────────────────
+function LayoutPickerDropdown({ allPageTypes, currentId, profile, onChange }) {
+  const [open, setOpen] = useState(false)
+  const [hoveredId, setHoveredId] = useState(null)
+  const ref = useRef(null)
+  const current = allPageTypes.find(pt => pt.id === currentId) || allPageTypes[0]
+
+  useEffect(() => {
+    if (!open) return
+    const close = e => { if (!ref.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  const [pw, ph] = getPageDims(profile)
+  const PW = 52, PH = Math.round(ph / pw * PW)
+
+  const SlotPreview = ({ pt }) => (
+    <svg width={PW} height={PH} viewBox={`0 0 ${PW} ${PH}`}
+      style={{ display:'block', flexShrink:0, borderRadius:2, overflow:'hidden' }}>
+      <rect width={PW} height={PH} fill="#f0ece4"/>
+      {(pt.slots || []).map((s, i) => {
+        const sx = (s.x / 100) * PW, sy = (s.y / 100) * PH
+        const sw = (s.w / 100) * PW, sh = (s.h / 100) * PH
+        return <rect key={i} x={sx+0.5} y={sy+0.5} width={sw-1} height={sh-1}
+          fill="none" stroke="rgba(100,140,200,0.6)" strokeWidth={1}/>
+      })}
+    </svg>
+  )
+
+  return (
+    <div ref={ref} style={{ position:'relative', flex:1, minWidth:0 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ width:'100%', display:'flex', alignItems:'center', gap:6,
+          fontSize:11, padding:'3px 6px',
+          background:'var(--bg3)', border:'1px solid var(--border)',
+          color:'var(--text)', borderRadius:5, cursor:'pointer', textAlign:'left' }}>
+        {current && <SlotPreview pt={current}/>}
+        <span style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+          {current?.label || '—'}
+        </span>
+        <span style={{ color:'var(--text3)', fontSize:9 }}>{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <div style={{
+          position:'absolute', top:'100%', left:0, zIndex:9200,
+          background:'var(--bg2)', border:'1px solid var(--border)',
+          borderRadius:8, boxShadow:'0 8px 32px rgba(0,0,0,0.6)',
+          maxHeight:260, overflowY:'auto', minWidth:200, marginTop:2,
+        }}>
+          {allPageTypes.map(pt => (
+            <div key={pt.id}
+              onMouseEnter={() => setHoveredId(pt.id)}
+              onMouseLeave={() => setHoveredId(null)}
+              onClick={() => { onChange(pt.id); setOpen(false) }}
+              style={{
+                display:'flex', alignItems:'center', gap:8, padding:'7px 10px',
+                cursor:'pointer', transition:'background 0.1s',
+                background: pt.id === (hoveredId || currentId) ? 'var(--bg3)' : 'transparent',
+                borderLeft: pt.id === currentId ? '3px solid var(--gold)' : '3px solid transparent',
+              }}>
+              <SlotPreview pt={pt}/>
+              <span style={{ fontSize:12, color:'var(--text)', flex:1 }}>{pt.label}</span>
+              {pt.id === currentId && <span style={{ fontSize:9, color:'var(--gold)' }}>✓</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Editable page ─────────────────────────────────────────────────────────────
 // ── BlankPage — stesse dimensioni e struttura di EditablePage ────────────────
 // Replica pixel-perfect il layout di EditablePage: stesso ResizeObserver,
@@ -1027,7 +1108,8 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                         photoAspects, photoTransforms, originalTransforms,
                         onTransformChange, onSwapTransforms, onSlotRemoved,
                         onUpdatePage, onOpenPicker, onAddCaption,
-                        onDrop, maxW=570, onPhotoClick, onAddMap, isActive=false, zoomFactor=1 }) {
+                        onDrop, maxW=570, onPhotoClick, onAddMap, isActive=false, zoomFactor=1,
+                        dividerMapUrl, assets, assetById={} }) {
   const t = useT(); const tp = t.preview
   const [pw,ph]=getPageDims(profile)
   const containerRef = useRef(null)
@@ -1056,6 +1138,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
   const [editPhotoSlot,setEditPhotoSlot]=useState(null)
   const [editMapSlot,setEditMapSlot]=useState(null)
   const [slotMenu,setSlotMenu]=useState(null) // {x,y,yAbove,title,items:[{icon,label,action,color,danger}]}
+  const [dividerEditOpen,setDividerEditOpen]=useState(false)
 
   const openSlotMenu=(e, title, items)=>{
     e.stopPropagation()
@@ -1211,30 +1294,69 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
     )
   }
 
-  // _album_divider pages use the normal EditablePage slot system below.
-  // Their dark background is achieved via the page canvas background color override.
-  // The album info (name, photo count) is shown as a banner at the bottom of the canvas.
   const isDivider = !!page?._album_divider
+
+  // Divider pages use a dedicated element-based renderer instead of the slot system.
+  if (isDivider) {
+    const ds = migrateDividerStyle(page._divider_style)
+    return (
+      <>
+      <div ref={containerRef} style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}>
+        <div style={{position:'relative',flexShrink:0}}>
+          <div style={{width:W,height:H,borderRadius:2,boxShadow:'0 16px 64px rgba(0,0,0,0.55)',overflow:'hidden'}}>
+            <DividerCanvas
+              style={ds}
+              albumInfo={page._album_info}
+              canvasW={W} canvasH={H}
+              readOnly
+              dividerMapUrl={dividerMapUrl}
+            />
+          </div>
+        </div>
+        <p className="text-xs text-muted mt-2">Pagina divisore album</p>
+      </div>
+      {/* Button always on top via portal */}
+      {isActive && createPortal(
+        <button
+          onClick={()=>setDividerEditOpen(true)}
+          style={{
+            position:'fixed', bottom:24, left:'50%', transform:'translateX(-50%)',
+            padding:'8px 22px', fontSize:12, fontWeight:500,
+            background:'rgba(18,18,24,0.96)', border:'1px solid rgba(255,255,255,0.22)',
+            borderRadius:8, cursor:'pointer', color:'#fff',
+            boxShadow:'0 4px 20px rgba(0,0,0,0.6)', zIndex:8500,
+            whiteSpace:'nowrap', letterSpacing:'0.02em',
+          }}
+        >✏ Modifica stile divisore</button>,
+        document.body
+      )}
+      {dividerEditOpen && (
+        <DividerEditorModal
+          value={ds}
+          onChange={newDs=>onUpdatePage({...page,_divider_style:newDs})}
+          onClose={()=>setDividerEditOpen(false)}
+          profile={profile}
+          albumInfo={page._album_info}
+          dividerMapUrl={dividerMapUrl}
+          assets={assets}
+        />
+      )}
+      </>
+    )
+  }
 
   return (
     <>
     <div ref={containerRef} style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}>
-      {/* Page type switcher — compact select + add slot button */}
+      {/* Page type switcher — custom picker with hover mini-preview */}
       {allPageTypes.length>0&&(
         <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8,flexShrink:0}}>
           <span className="text-xs text-muted" style={{flexShrink:0}}>Layout:</span>
-          <select
-            value={page.page_type_id||''}
-            onChange={e=>changePageType(e.target.value)}
-            style={{
-              flex:1, minWidth:0, fontSize:11, padding:'3px 6px',
-              background:'var(--bg3)', border:'1px solid var(--border)',
-              color:'var(--text)', borderRadius:5, cursor:'pointer',
-            }}>
-            {allPageTypes.map(pt=>(
-              <option key={pt.id} value={pt.id}>{pt.label}</option>
-            ))}
-          </select>
+          <LayoutPickerDropdown
+            allPageTypes={allPageTypes}
+            currentId={page.page_type_id||''}
+            profile={profile}
+            onChange={changePageType}/>
           <button className="btn btn-sm" style={{fontSize:10,flexShrink:0,padding:'3px 8px'}}
             title={tp.addSlot} onClick={addSlot}>+ Slot</button>
         </div>
@@ -1243,7 +1365,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
       {/* Page canvas */}
       {(
       <div style={{width:W,height:H,
-        background: isDivider ? (page._divider_style?.bg||'#13141a') : '#f0ece4',
+        background: '#f0ece4',
         position:'relative',
         boxShadow:'0 16px 64px rgba(0,0,0,0.55)',borderRadius:2,overflow:'hidden',
         outline: isActive ? '3px solid #4ac585' : 'none', outlineOffset:'3px',
@@ -1386,6 +1508,24 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                   }}
                 />
               )}
+
+              {/* Favorite / description badges */}
+              {item?.type==='photo'&&!isPhotoEdit&&(()=>{
+                const asset = assetById[item.asset_id]
+                if (!asset) return null
+                const isFav = asset.isFavorite
+                const hasDesc = !!(asset.description || asset.exifInfo?.description)
+                if (!isFav && !hasDesc) return null
+                return (
+                  <div style={{ position:'absolute', top:3, left:3, display:'flex', gap:2,
+                    pointerEvents:'none', zIndex:4 }}>
+                    {isFav  && <span style={{ fontSize:Math.max(8,Math.min(14,r.w*0.1)),
+                      lineHeight:1, filter:'drop-shadow(0 1px 2px rgba(0,0,0,0.8))' }}>⭐</span>}
+                    {hasDesc && <span style={{ fontSize:Math.max(8,Math.min(14,r.w*0.1)),
+                      lineHeight:1, filter:'drop-shadow(0 1px 2px rgba(0,0,0,0.8))' }}>💬</span>}
+                  </div>
+                )
+              })()}
 
               {/* ⋮ button — opens floating action menu for photo slot */}
               {item?.type==='photo'&&!isPhotoEdit&&(
@@ -1713,39 +1853,6 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
           )
         })}
 
-        {/* Divider info banner — shown when all slots are empty */}
-        {isDivider && (() => {
-          const ai = page._album_info || {}
-          const ds = page._divider_style || {}
-          const accent = ds.accent_color || '#d4aa5a'
-          const textColor = ds.text_color || '#f0ede6'
-          const allEmpty = (page.items||[]).every(id => !id.item)
-          if (!allEmpty) return null
-          return (
-            <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',
-              alignItems:'center',justifyContent:'center',gap:Math.round(8*scale),
-              pointerEvents:'none',zIndex:0}}>
-              <div style={{width:'55%',height:1,background:accent+'88'}}/>
-              <p style={{fontFamily:'var(--font-display)',fontWeight:700,
-                fontSize:Math.round(16*scale*2),color:textColor,textAlign:'center',
-                padding:`0 ${Math.round(12*scale)}px`,margin:0}}>
-                {ai.albumName || 'Album'}
-              </p>
-              {ai.assetCount>0 && (
-                <p style={{fontSize:Math.round(8*scale*2),color:accent,
-                  fontFamily:'var(--font-mono)',margin:0}}>
-                  {ai.assetCount} foto{ai.dateRange ? ` · ${ai.dateRange}` : ''}
-                </p>
-              )}
-              <div style={{width:'55%',height:1,background:accent+'88'}}/>
-              <p style={{fontSize:Math.round(7*scale*2),color:textColor+'55',
-                fontFamily:'var(--font-mono)',fontStyle:'italic',margin:0}}>
-                trascina foto o clicca slot vuoto
-              </p>
-            </div>
-          )
-        })()}
-
         {/* Slot dividers */}
         <SlotDividers items={page.items} pw={pw} ph={ph} profile={profile} scale={scale} pageNum={pageIdx+2}
           onUpdateItems={newItems=>onUpdatePage({...page,items:newItems,page_type_id:'custom',
@@ -1787,7 +1894,10 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
               letterSpacing:'0.06em',textTransform:'uppercase'}}>
               {slotMenu.title}
             </div>
-            {slotMenu.items.map(({icon,label,action,color,danger})=>(
+            {slotMenu.items.map(({icon,label,action,color,danger})=>{
+              // Strip leading emoji/symbol from label when icon already shows it
+              const displayLabel = icon ? label.replace(/^[^a-zA-ZÀ-ÖØ-öø-ÿ\d]+/, '').trim() : label
+              return (
               <button key={label} onClick={action} style={{
                 display:'flex',alignItems:'center',gap:10,width:'100%',padding:'11px 14px',
                 background:'none',border:'none',cursor:'pointer',textAlign:'left',
@@ -1797,9 +1907,9 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                 onMouseEnter={e=>e.currentTarget.style.background=danger?'rgba(224,80,80,0.08)':'rgba(255,255,255,0.05)'}
                 onMouseLeave={e=>e.currentTarget.style.background='none'}>
                 <span style={{fontSize:18,lineHeight:1}}>{icon}</span>
-                <span style={{fontWeight:500,color:color||(danger?'#e05050':'inherit')}}>{label}</span>
+                <span style={{fontWeight:500,color:color||(danger?'#e05050':'inherit')}}>{displayLabel}</span>
               </button>
-            ))}
+            )})}
           </div>
         )
       })(),
@@ -1948,9 +2058,12 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
   const t = useT(); const tp = t.preview
   const [projects, setProjects]   = useState([])
   const [loading, setLoading]     = useState(false)
-  const [projectName, setProjectName] = useState(
-    layout ? tp.projectDefaultName(layout.album?.albumName) : ''
-  )
+  const [projectName, setProjectName] = useState(() => {
+    const storedName = sessionStorage.getItem('photobook_project_name')
+    const storedId   = sessionStorage.getItem('photobook_project_id')
+    if (storedId && storedName) return storedName
+    return layout ? tp.projectDefaultName(layout.album?.albumName) : ''
+  })
   const [saving, setSaving]       = useState(false)
   const [savedId, setSavedId]     = useState(null)   // current open project ID (for update)
   const [toast, setToast]         = useState(null)
@@ -1965,7 +2078,18 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
 
   const loadList = async () => {
     setLoading(true)
-    try { setProjects((await axios.get('/api/projects')).data) }
+    try {
+      const list = (await axios.get('/api/projects')).data
+      setProjects(list)
+      // Pre-fill project name from the currently open project (not generic album name)
+      if (mode === 'save') {
+        const sid = sessionStorage.getItem('photobook_project_id')
+        if (sid) {
+          const existing = list.find(p => String(p.id) === String(sid))
+          if (existing) setProjectName(existing.name)
+        }
+      }
+    }
     catch { setToast({ type:'error', msg:tp.projectListError }) }
     finally { setLoading(false) }
   }
@@ -1983,9 +2107,11 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
         photo_transforms: photoTransforms,
         current_page: currentPage,
       }
+      // Read from sessionStorage (not state) so handleSaveNew (which removes the key) works correctly
+      const sid = sessionStorage.getItem('photobook_project_id')
       let res
-      if (savedId) {
-        res = await axios.put(`/api/projects/${savedId}`, payload)
+      if (sid) {
+        res = await axios.put(`/api/projects/${sid}`, payload)
         setToast({ type:'success', msg:tp.projectSavedOk })
       } else {
         res = await axios.post('/api/projects', payload)
@@ -1993,6 +2119,7 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
         setSavedId(res.data.id)
         setToast({ type:'success', msg:tp.projectNewSavedOk })
       }
+      sessionStorage.setItem('photobook_project_name', projectName.trim())
       setTimeout(onClose, 1200)
     } catch {
       setToast({ type:'error', msg:tp.projectSaveError })
@@ -2002,11 +2129,24 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
   }
 
   const handleSaveNew = async () => {
-    setSavedId(null)     // forza creazione nuovo
+    setSavedId(null)
     sessionStorage.removeItem('photobook_project_id')
+    sessionStorage.removeItem('photobook_project_name')
     await handleSave()
   }
 
+  // In save mode: select project as overwrite target (never loads/replaces current work)
+  const handleSelectForSave = (pid) => {
+    const project = projects.find(p => String(p.id) === String(pid))
+    if (!project) return
+    setProjectName(project.name)
+    setSavedId(String(pid))
+    sessionStorage.setItem('photobook_project_id', String(pid))
+    sessionStorage.setItem('photobook_project_name', project.name)
+    if (nameRef.current) { nameRef.current.focus(); nameRef.current.select() }
+  }
+
+  // In load mode: actually loads the project (replaces current work)
   const handleLoad = async (pid) => {
     try {
       const r = await axios.get(`/api/projects/${pid}`)
@@ -2017,6 +2157,7 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
         locations: r.data.locations || [],
       }))
       sessionStorage.setItem('photobook_project_id', pid)
+      sessionStorage.setItem('photobook_project_name', r.data.name || '')
       onLoad(r.data)   // parent aggiorna stato
       onClose()
     } catch {
@@ -2079,7 +2220,7 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
                 placeholder="es. Vacanze estate 2024"/>
               <p className="text-xs text-muted" style={{ marginTop:6 }}>
                 {savedId
-                  ? `Progetto aperto — premi "Aggiorna" per sovrascrivere o "Salva come nuovo" per una copia`
+                  ? `Premi "Aggiorna" per sovrascrivere, oppure "Salva come nuovo" per una copia`
                   : 'Verrà creato un nuovo progetto'}
               </p>
 
@@ -2100,7 +2241,9 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
               </div>
 
               <hr className="divider"/>
-              <p className="text-xs text-muted mb-4">Progetti salvati</p>
+              <p className="text-xs text-muted mb-4">
+                Sovrascivi un progetto esistente — <em>clicca per selezionare</em>
+              </p>
               {loading && <div style={{ textAlign:'center', padding:16 }}><span className="spinner"/></div>}
               {!loading && projects.length === 0 && (
                 <p className="text-sm text-muted" style={{ textAlign:'center', padding:16 }}>
@@ -2108,7 +2251,9 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
                 </p>
               )}
               {!loading && projects.map(p => (
-                <ProjectRow key={p.id} project={p} fmt={fmt} onLoad={handleLoad} onDelete={handleDelete}/>
+                <ProjectRow key={p.id} project={p} fmt={fmt}
+                  selected={String(p.id) === String(savedId)}
+                  onLoad={handleSelectForSave} onDelete={handleDelete}/>
               ))}
               {!loading && projects.length === 0 && (
                 <button className="btn btn-sm" onClick={loadList} style={{ marginTop:8 }}>
@@ -2149,7 +2294,7 @@ function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onL
   )
 }
 
-function ProjectRow({ project, fmt, onLoad, onDelete }) {
+function ProjectRow({ project, fmt, onLoad, onDelete, selected }) {
   const t = useT(); const tp = t.preview
   return (
     <div
@@ -2157,12 +2302,13 @@ function ProjectRow({ project, fmt, onLoad, onDelete }) {
       style={{
         display:'flex', gap:12, alignItems:'center',
         padding:'12px 14px', borderRadius:8, cursor:'pointer',
-        border:'1px solid var(--border)', marginBottom:8,
+        border: selected ? '1px solid var(--gold)' : '1px solid var(--border)',
+        marginBottom:8,
         transition:'background 0.12s, border-color 0.12s',
-        background:'var(--bg3)',
+        background: selected ? 'var(--gold-dim,rgba(212,175,55,0.08))' : 'var(--bg3)',
       }}
-      onMouseEnter={e => { e.currentTarget.style.background='var(--bg)'; e.currentTarget.style.borderColor='var(--gold)' }}
-      onMouseLeave={e => { e.currentTarget.style.background='var(--bg3)'; e.currentTarget.style.borderColor='var(--border)' }}>
+      onMouseEnter={e => { if (!selected) { e.currentTarget.style.background='var(--bg)'; e.currentTarget.style.borderColor='var(--gold)' } }}
+      onMouseLeave={e => { if (!selected) { e.currentTarget.style.background='var(--bg3)'; e.currentTarget.style.borderColor='var(--border)' } }}>
       <span style={{ fontSize:24, flexShrink:0 }}>📖</span>
       <div style={{ flex:1, minWidth:0 }}>
         <p style={{ fontSize:14, fontWeight:500, color:'var(--text)', marginBottom:2,
@@ -2312,6 +2458,7 @@ export default function PreviewPage() {
   const [albumAssets,setAlbumAssets]=useState([])
   const [allAlbumAssets,setAllAlbumAssets]=useState([])
   const [mapUrl,setMapUrl]=useState(null)
+  const [dividerMapUrls,setDividerMapUrls]=useState({})
   const [exporting,setExporting]=useState(false)
   const [recalculating,setRecalculating]=useState(false)
   const [logViewerOpen,setLogViewerOpen]=useState(false)
@@ -2319,7 +2466,13 @@ export default function PreviewPage() {
   const [hasChanges,setHasChanges]=useState(false)
   const [recalcMenuOpen,setRecalcMenuOpen]=useState(false)
   const [projectModal,setProjectModal]=useState(null)  // null | 'save' | 'load'
+  const [lastAutoSave,setLastAutoSave]=useState(null)
+  const autoSaveTimerRef = useRef(null)
+  const liveLayoutRef = useRef(null)
+  const liveTransformsRef = useRef(null)
+  const livePageRef = useRef(null)
   const recalcBtnRef = useRef(null)
+  const sidebarListRef = useRef(null)
   const [panelOpen,setPanelOpen]=useState(()=>{try{return JSON.parse(localStorage.getItem('pb_panelOpen'))??true}catch{return true}})
   const [draggedAsset,setDraggedAsset]=useState(null)
   const [spreadView,setSpreadView]=useState(()=>{try{return JSON.parse(localStorage.getItem('pb_spreadView'))||false}catch{return false}})
@@ -2350,6 +2503,18 @@ export default function PreviewPage() {
     if (data.locations?.length)
       axios.post('/api/map',{locations:data.locations, map_style: data.profile?.map_style||{}},{responseType:'blob'})
         .then(r=>setMapUrl(URL.createObjectURL(r.data))).catch(()=>{})
+    // Per-divider album map URLs
+    if (data.pages) {
+      const mapStyle = data.profile?.map_style || {}
+      data.pages.forEach((pg, idx) => {
+        if (!pg._album_divider) return
+        const locs = pg._album_info?.locations
+        if (!locs?.length) return
+        axios.post('/api/map', { locations:locs, map_style:mapStyle }, { responseType:'blob' })
+          .then(r => setDividerMapUrls(prev => ({ ...prev, [idx]: URL.createObjectURL(r.data) })))
+          .catch(() => {})
+      })
+    }
     const sortAssets = arr => [...(arr||[])].sort((a,b)=>(a.localDateTime||'').localeCompare(b.localDateTime||''))
     if (data._multi_album && data._album_ids?.length) {
       Promise.all(data._album_ids.map(id=>axios.get(`/api/albums/${id}`)))
@@ -2363,6 +2528,49 @@ export default function PreviewPage() {
         .then(r=>{ const s=sortAssets(r.data.assets); setAlbumAssets(s); setAllAlbumAssets([s]) }).catch(()=>{})
     }
   },[])
+
+  // Sync sidebar page list to current page
+  useEffect(() => {
+    if (!sidebarListRef.current) return
+    const active = sidebarListRef.current.querySelector('.page-thumb-item.active')
+    if (active) active.scrollIntoView({ behavior:'smooth', block:'nearest' })
+  }, [currentPage])
+
+  // Keep live refs in sync (avoid stale closures in auto-save interval)
+  useEffect(()=>{ liveLayoutRef.current = layout },[layout])
+  useEffect(()=>{ liveTransformsRef.current = photoTransforms },[photoTransforms])
+  useEffect(()=>{ livePageRef.current = currentPage },[currentPage])
+
+  // Auto-save every 5 minutes to the currently open project (or a new draft)
+  useEffect(()=>{
+    if (!layout) return
+    autoSaveTimerRef.current = setInterval(async () => {
+      const lo = liveLayoutRef.current
+      if (!lo) return
+      const pid  = sessionStorage.getItem('photobook_project_id')
+      const pname = sessionStorage.getItem('photobook_project_name') || `Bozza — ${lo.album?.albumName || 'progetto'}`
+      const payload = {
+        name: pname,
+        album: lo.album,
+        profile: lo.profile,
+        pages: lo.pages,
+        locations: lo.locations || [],
+        photo_transforms: liveTransformsRef.current || {},
+        current_page: livePageRef.current ?? 0,
+      }
+      try {
+        if (pid) {
+          await axios.put(`/api/projects/${pid}`, payload)
+        } else {
+          const res = await axios.post('/api/projects', payload)
+          sessionStorage.setItem('photobook_project_id', res.data.id)
+          sessionStorage.setItem('photobook_project_name', pname)
+        }
+        setLastAutoSave(new Date())
+      } catch {}
+    }, 5 * 60 * 1000)
+    return () => clearInterval(autoSaveTimerRef.current)
+  }, [!!layout])  // restart only when layout goes null↔loaded
 
   // Detect aspect ratios
   useEffect(()=>{
@@ -2409,6 +2617,8 @@ export default function PreviewPage() {
       }
     }))
   }
+
+  const assetById = useMemo(() => Object.fromEntries(albumAssets.map(a=>[a.id,a])), [albumAssets])
 
   const persist=(nl)=>{sessionStorage.setItem('photobook_layout',JSON.stringify(nl));return nl}
 
@@ -2838,6 +3048,11 @@ export default function PreviewPage() {
               📂 Apri
             </button>
           </div>
+          {lastAutoSave && (
+            <p style={{fontSize:9,color:'var(--text3)',textAlign:'center',marginTop:3,fontFamily:'var(--font-mono)'}}>
+              ⏱ {lastAutoSave.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})}
+            </p>
+          )}
           {/* Recalculate menu */}
           <div style={{position:'relative',marginTop:8}}>
             <button ref={recalcBtnRef} className="btn w-full" style={{fontSize:11,justifyContent:'space-between'}}
@@ -2863,7 +3078,7 @@ export default function PreviewPage() {
             </button>
           )}
         </div>
-        <div style={{flex:1,overflowY:'auto',padding:'8px 8px 0'}}>
+        <div ref={sidebarListRef} style={{flex:1,overflowY:'auto',padding:'8px 8px 0'}}>
           {/* Cover thumb */}
           <div className={`page-thumb-item${currentPage===-1?' active':''}`} onClick={()=>setCurrentPage(-1)}>
             <span className="page-num">T</span>
@@ -3132,7 +3347,10 @@ export default function PreviewPage() {
                       onDrop={handleDropFromPanel}
                       onPhotoClick={aid=>{ setHighlightedAsset(aid); if(!panelOpen) setPanelOpen(true) }}
                       onAddMap={addMapToSlot}
-                      isActive={currentPage===leftIdx} zoomFactor={viewZoom}/>
+                      isActive={currentPage===leftIdx} zoomFactor={viewZoom}
+                      dividerMapUrl={dividerMapUrls[leftIdx]}
+                      assets={allAlbumAssets[leftPage?._album_idx??0]??albumAssets}
+                      assetById={assetById}/>
                   ) : (
                     <BlankPage profile={profile} allPageTypes={allPageTypes} label="pagina vuota" zoomFactor={viewZoom}/>
                   )}
@@ -3157,7 +3375,10 @@ export default function PreviewPage() {
                       onDrop={handleDropFromPanel}
                       onPhotoClick={aid=>{ setHighlightedAsset(aid); if(!panelOpen) setPanelOpen(true) }}
                       onAddMap={addMapToSlot}
-                      isActive={currentPage===rightIdx} zoomFactor={viewZoom}/>
+                      isActive={currentPage===rightIdx} zoomFactor={viewZoom}
+                      dividerMapUrl={dividerMapUrls[rightIdx]}
+                      assets={allAlbumAssets[rightPage?._album_idx??0]??albumAssets}
+                      assetById={assetById}/>
                   ) : (
                     <BlankPage profile={profile} allPageTypes={allPageTypes} label="pagina vuota" zoomFactor={viewZoom}/>
                   )}
@@ -3187,6 +3408,9 @@ export default function PreviewPage() {
             onPhotoClick={aid=>{ setHighlightedAsset(aid); if(!panelOpen) setPanelOpen(true) }}
             onAddMap={addMapToSlot}
             isActive={true} zoomFactor={viewZoom}
+            dividerMapUrl={dividerMapUrls[currentPage]}
+            assets={allAlbumAssets[pages[currentPage]?._album_idx??0]??albumAssets}
+            assetById={assetById}
           />
         )}
         </div>{/* end canvas area */}

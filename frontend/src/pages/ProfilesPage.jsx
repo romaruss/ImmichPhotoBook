@@ -3,6 +3,7 @@ import axios from 'axios'
 import { useT } from '../i18n.jsx'
 import PageTypeEditor from '../components/PageTypeEditor'
 import CoverStyleEditor, { DEFAULT_COVER } from '../components/CoverEditor'
+import DividerEditor from '../components/DividerEditor'
 
 // Standard page sizes with mm dimensions
 const STANDARD_SIZES = [
@@ -646,92 +647,12 @@ export default function ProfilesPage() {
                 Pagina separatrice tra album — sempre su pagina dispari (destra)
               </p>
             }>
-            <div className="form-row-3" style={{marginBottom:16}}>
-              <div className="form-group">
-                <label className="form-label">Sfondo</label>
-                <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                  <input type="color"
-                    value={(form.divider_style||{}).bg||'#13141a'}
-                    onChange={e=>set('divider_style',{...(form.divider_style||{}),bg:e.target.value})}
-                    style={{width:36,height:36,border:'none',cursor:'pointer',borderRadius:4}}/>
-                  <span className="text-xs text-muted">{(form.divider_style||{}).bg||'#13141a'}</span>
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Colore accento</label>
-                <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                  <input type="color"
-                    value={(form.divider_style||{}).accent_color||'#d4aa5a'}
-                    onChange={e=>set('divider_style',{...(form.divider_style||{}),accent_color:e.target.value})}
-                    style={{width:36,height:36,border:'none',cursor:'pointer',borderRadius:4}}/>
-                  <span className="text-xs text-muted">{(form.divider_style||{}).accent_color||'#d4aa5a'}</span>
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Colore testo</label>
-                <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                  <input type="color"
-                    value={(form.divider_style||{}).text_color||'#f0ede6'}
-                    onChange={e=>set('divider_style',{...(form.divider_style||{}),text_color:e.target.value})}
-                    style={{width:36,height:36,border:'none',cursor:'pointer',borderRadius:4}}/>
-                  <span className="text-xs text-muted">{(form.divider_style||{}).text_color||'#f0ede6'}</span>
-                </div>
-              </div>
-            </div>
-
-            <div style={{marginBottom:8}}>
-              <p className="text-sm text-muted" style={{marginBottom:8}}>
-                Layout slots della pagina divisore. Oltre a foto e didascalie puoi inserire
-                contenuto dinamico: <strong>nome album</strong>, <strong>numero foto</strong>,
-                <strong>anno</strong>, <strong>mappa GPS</strong>.
-              </p>
-              <PageTypeEditor
-                key={`divider_${ptKey}`}
-                pageTypes={form.divider_style?.page_types || [
-                  {id:'div_default',label:'Default',slots:[{x:0,y:0,w:100,h:100}]}
-                ]}
-                onChange={pts => set('divider_style', {
-                  ...(form.divider_style||{}),
-                  page_types: pts,
-                  slots: pts[0]?.slots || [],
-                })}
-                extraItemTypes={[
-                  {type:'album_name',  label:'📛 Nome album',   icon:'📛'},
-                  {type:'photo_count', label:'🔢 Numero foto',  icon:'🔢'},
-                  {type:'year',        label:'📅 Anno',         icon:'📅'},
-                  {type:'map',         label:'🗺 Mappa GPS',    icon:'🗺'},
-                ]}
-              />
-            </div>
-            {(()=>{
-              const ds = form.divider_style || {}
-              const bg = ds.bg || '#13141a'
-              const accent = ds.accent_color || '#d4aa5a'
-              const textColor = ds.text_color || '#f0ede6'
-              const sizeEntry = allSizes.find(s => s.id === form.page_size) || {w:200,h:300}
-              let [pw, ph] = [sizeEntry.w, sizeEntry.h]
-              if (form.orientation === 'landscape') [pw, ph] = [ph, pw]
-              const maxW = 160, scale = maxW / pw
-              const W = maxW, H = Math.round(ph * scale)
-              return (
-                <div style={{marginTop:12,display:'flex',flexDirection:'column',alignItems:'center',gap:6}}>
-                  <p className="text-xs text-muted">Anteprima divisore</p>
-                  <div style={{width:W,height:H,background:bg,borderRadius:3,
-                    boxShadow:'0 4px 16px rgba(0,0,0,0.5)',overflow:'hidden',
-                    display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:8}}>
-                    <div style={{width:'55%',height:1,background:accent+'88'}}/>
-                    <p style={{fontFamily:'var(--font-display)',fontWeight:700,fontSize:Math.round(14*scale),
-                      color:textColor,textAlign:'center',margin:0}}>
-                      {form.name || 'Nome album'}
-                    </p>
-                    <p style={{fontSize:Math.round(8*scale),color:accent,fontFamily:'var(--font-mono)',margin:0}}>
-                      42 fotografie · 2024
-                    </p>
-                    <div style={{width:'55%',height:1,background:accent+'88'}}/>
-                  </div>
-                </div>
-              )
-            })()}
+            <DividerEditor
+              value={form.divider_style}
+              onChange={ds => set('divider_style', ds)}
+              profile={form}
+              canvasWidth={460}
+            />
           </CollapsibleCard>
 
           <div style={{display:'flex',justifyContent:'flex-end',marginTop:-6,marginBottom:4}}>

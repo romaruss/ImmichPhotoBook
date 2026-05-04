@@ -481,12 +481,35 @@ async def generate_layout_new(req: GenerateRequest, _rl: None = Depends(rl_gener
     # Store log for download
     _last_log["latest"] = log_text
 
+    # Best photo for divider: first favorite, or first asset
+    _favs = [a for a in assets if a.get("isFavorite")]
+    _pool = _favs or assets
+    best_photo_id = _pool[0]["id"] if _pool else None
+
+    # Date range from actual photo timestamps
+    _IT_MON = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic']
+    def _fmt_date(iso: str) -> str:
+        try:
+            d = iso[:10]; y,m,day = int(d[:4]),int(d[5:7]),int(d[8:10])
+            return f"{day} {_IT_MON[m-1]} {y}"
+        except Exception:
+            return iso[:10]
+    _dates = sorted(a.get("localDateTime","") for a in assets if a.get("localDateTime"))
+    if len(_dates) >= 2 and _dates[0][:10] != _dates[-1][:10]:
+        date_range = f"dal {_fmt_date(_dates[0])} al {_fmt_date(_dates[-1])}"
+    elif _dates:
+        date_range = _fmt_date(_dates[0])
+    else:
+        date_range = ""
+
     return {
         "album": {
-            "id":          album["id"],
-            "albumName":   album.get("albumName", ""),
-            "description": album.get("description", ""),
-            "assetCount":  len(assets),
+            "id":            album["id"],
+            "albumName":     album.get("albumName", ""),
+            "description":   album.get("description", ""),
+            "assetCount":    len(assets),
+            "best_photo_id": best_photo_id,
+            "dateRange":     date_range,
         },
         "profile":          profile,
         "pages":            pages,
@@ -739,13 +762,17 @@ async def export_book(req: ExportRequest, _rl: None = Depends(rl_export)):
             raise HTTPException(404, "Profile not found")
         profile = json.loads(path.read_text())
 
-        # Collect asset IDs from all pages
+        # Collect asset IDs from all pages (photos in slots + divider best_photo_id)
         asset_ids = set()
         for page in req.pages:
             for item_data in page.get("items", []):
                 item = item_data.get("item")
                 if item and item.get("type") == "photo":
                     asset_ids.add(item["asset_id"])
+            if page.get("_album_divider"):
+                pid = page.get("_album_info", {}).get("best_photo_id")
+                if pid:
+                    asset_ids.add(pid)
 
         _set_progress(8, f"Download {len(asset_ids)} foto…")
         hires = (req.quality != "preview")
@@ -755,6 +782,22 @@ async def export_book(req: ExportRequest, _rl: None = Depends(rl_export)):
         map_image = None
         if req.locations:
             map_image = generate_map_image(req.locations, 800, 400, map_style=profile.get("map_style"))
+
+        # Per-divider maps: each divider page can carry its own album's GPS locations
+        divider_maps: dict[int, bytes] = {}
+        _map_style = profile.get("map_style") or {}
+        for _pidx, _page in enumerate(req.pages):
+            if not _page.get("_album_divider"):
+                continue
+            _locs = _page.get("_album_info", {}).get("locations", [])
+            if not _locs:
+                continue
+            try:
+                _img = generate_map_image(_locs, 800, 500, map_style=_map_style)
+                if _img:
+                    divider_maps[_pidx] = _img
+            except Exception as _e:
+                logger.warning(f"Divider map gen failed page {_pidx}: {_e}")
 
         album_info = {
             "albumName":   album.get("albumName", ""),
@@ -799,6 +842,7 @@ async def export_book(req: ExportRequest, _rl: None = Depends(rl_export)):
                     lambda: generate_pdf(
                         album=album_info, pages=req.pages, profile=profile,
                         photo_cache=photo_cache, map_image=map_image,
+                        divider_maps=divider_maps,
                         on_page_progress=_pdf_progress,
                         pan_offsets=req.photo_transforms,
                     )

@@ -1117,6 +1117,7 @@ def _make_pages_from_group(
                 s_ar2  = _slot_ar(slot2, page_ar)
                 clipped= _face_would_be_clipped(fr2,p_ar2,s_ar2) if fr2 and fr2.get('size',0)>=0.12 else False
                 tr2    = transforms.get(f'{pg_idx}_{si2}',{'x':50,'y':50,'zoom':1.0})
+                q_score = round(_photo_quality(pr2), 3) if pr2 else None
                 slot_logs.append({'slot_idx':si2,'slot_type':'photo',
                     'asset_id':item2.get('asset_id',''),'filename':item2.get('originalFileName',''),
                     'datetime':item2.get('localDateTime',''),
@@ -1133,7 +1134,7 @@ def _make_pages_from_group(
                                      round(max(f['x2'] for f in prom2 or faces2),3),
                                      round(max(f['y2'] for f in prom2 or faces2),3)] if (prom2 or faces2) else None,
                              'would_clip':clipped} if faces2 else None,
-                    'transform':tr2})
+                    'transform':tr2,'quality_score':q_score})
             else:
                 slot_logs.append({'slot_idx':si2,'slot_type':'photo','empty':True})
         page_logs.append({'page_num':pg_idx+1,'group':group_label,

@@ -38,15 +38,16 @@ Configuration → Print profile → Generate layout → Edit preview → Export 
 
 ## Main features
 
-- **Immich integration** — reads albums, EXIF, GPS, face data, descriptions; syncs captions back as asset descriptions
+- **Immich integration** — reads albums, EXIF, GPS, face data, descriptions; syncs captions back as asset descriptions; shows favorite ⭐ and description 💬 badges on photo slots
 - **Smart Layout** — groups photos by time event, ranks by quality, face-aware crop, fills empty slots with GPS cluster maps
-- **Manual layout** — fully configurable page layouts per profile; visual drag-to-resize slot editor
+- **Manual layout** — fully configurable page layouts per profile; visual drag-to-resize slot editor with hover mini-preview picker
 - **Print profiles** — page sizes (A4, A3, A5, 20×20, 30×30, custom mm), portrait/landscape, margins, bleed, duplex
-- **Page types** — portrait/landscape orientation tag, enable/disable per layout, filter by format/status/content, preset library (25 portrait + 25 landscape layouts included)
-- **Interactive preview** — swap/pan/zoom photos, WYSIWYG caption editor, add/remove/reorder pages, recalculate menu
+- **Page types** — orientation tag, filter by format/status/content, preset library (25 portrait + 25 landscape layouts included)
+- **Interactive preview** — swap/pan/zoom photos, WYSIWYG caption editor, add/remove/reorder pages, recalculate menu, auto-save every 5 minutes
+- **Album divider pages** — fully customisable layout with editable text (title, subtitle, free text), GPS map, photo slot, separator lines; drag-to-reorder layers; export/import JSON; save/load style presets
 - **GPS maps** — static map slots with configurable tile style, marker shape/colour/size, route; Stadia Maps or OSM fallback
 - **Generation options** — duplicate removal (dHash + burst detection), quality filter, auto-captions toggle, named option presets
-- **Projects** — save and resume named projects across sessions
+- **Projects** — save and resume named projects across sessions; load from project list without losing current work
 - **Export** — PDF with bleed/crop marks, SVG ZIP with embedded photos; both respect pan/zoom/crop and caption styles
 - **Localisation** — Italian and English built-in
 
