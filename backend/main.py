@@ -68,6 +68,7 @@ def rl_api(req: Request):
 CACHE_DIR    = DATA_DIR / "cache"
 EXPORT_DIR   = DATA_DIR / "exports"
 PROJECTS_DIR = DATA_DIR / "projects"
+PRESETS_DIR  = DATA_DIR / "presets"
 SMART_CONFIG_PATH = DATA_DIR / "smart_config.json"
 
 def _compute_dhash(img_bytes: bytes, size: int = 8) -> int | None:
@@ -81,7 +82,7 @@ def _compute_dhash(img_bytes: bytes, size: int = 8) -> int | None:
     except Exception:
         return None
 
-for d in [PROFILES_DIR, CACHE_DIR, EXPORT_DIR, PROJECTS_DIR]:
+for d in [PROFILES_DIR, CACHE_DIR, EXPORT_DIR, PROJECTS_DIR, PRESETS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 def _load_smart_config() -> dict:
@@ -420,30 +421,67 @@ async def generate_layout_new(req: GenerateRequest, _rl: None = Depends(rl_gener
         if needs_faces:
             enrich_fields.extend(["people", "faces"])
         if needs_dedup:
-            enrich_fields.extend(["checksum", "thumbhash"])
+            enrich_fields.extend(["checksum"])
+        enrich_fields.append("thumbhash")  # always: needed for thumbnail cache invalidation
         if needs_favs:
             enrich_fields.append("isFavorite")
         assets = await ic.enrich_assets(assets, fields=enrich_fields)
 
-    # Compute perceptual dHash from cached thumbnails for visual dedup.
-    # Thumbnails (60KB) are fetched in bulk if not already cached.
-    if needs_dedup:
-        missing_ids = [a["id"] for a in assets
-                       if not (CACHE_DIR / f"{a['id']}_thumbnail.jpg").exists()]
-        if missing_ids:
-            fetched = await ic.fetch_assets_bulk(missing_ids, hires=False, max_concurrent=8)
-            for aid, data in fetched.items():
+    # Fetch+cache thumbnails (60KB each): always, for display-dim correction and dedup.
+    # Immich thumbnails always reflect UI edits (rotation, crop) unlike raw EXIF data.
+    # Primary invalidation: thumbhash comparison (changes on rotation/edit in Immich UI).
+    # Fallback: updatedAt timestamp comparison.
+    from datetime import datetime, timezone as _tz
+    for a in assets:
+        aid = a["id"]
+        cache_path = CACHE_DIR / f"{aid}_thumbnail.jpg"
+        hash_path  = CACHE_DIR / f"{aid}_thumbhash.txt"
+        if not cache_path.exists():
+            continue
+        asset_thumbhash = (a.get("thumbhash") or "").strip()
+        if asset_thumbhash:
+            stored = hash_path.read_text().strip() if hash_path.exists() else ""
+            if stored != asset_thumbhash:
+                cache_path.unlink(missing_ok=True)
+                hash_path.unlink(missing_ok=True)
+        else:
+            # No thumbhash in response: fall back to updatedAt
+            updated_at = a.get("updatedAt") or ""
+            if updated_at:
                 try:
-                    (CACHE_DIR / f"{aid}_thumbnail.jpg").write_bytes(data)
+                    asset_ts = datetime.fromisoformat(updated_at.replace("Z", "+00:00")).timestamp()
+                    if asset_ts > cache_path.stat().st_mtime + 5:
+                        cache_path.unlink(missing_ok=True)
+                        hash_path.unlink(missing_ok=True)
                 except Exception:
                     pass
-        for asset in assets:
-            cache_path = CACHE_DIR / f"{asset['id']}_thumbnail.jpg"
-            if cache_path.exists():
-                try:
-                    asset["_dhash"] = _compute_dhash(cache_path.read_bytes())
-                except Exception:
-                    pass
+
+    missing_ids = [a["id"] for a in assets
+                   if not (CACHE_DIR / f"{a['id']}_thumbnail.jpg").exists()]
+    if missing_ids:
+        fetched = await ic.fetch_assets_bulk(missing_ids, hires=False, max_concurrent=8)
+        for aid, data in fetched.items():
+            try:
+                (CACHE_DIR / f"{aid}_thumbnail.jpg").write_bytes(data)
+                # Store thumbhash for future invalidation comparisons
+                th = next((a.get("thumbhash","") for a in assets if a["id"]==aid), "")
+                if th:
+                    (CACHE_DIR / f"{aid}_thumbhash.txt").write_text(th.strip())
+            except Exception:
+                pass
+    for asset in assets:
+        cache_path = CACHE_DIR / f"{asset['id']}_thumbnail.jpg"
+        if cache_path.exists():
+            try:
+                from PIL import Image
+                import io as _io
+                img_bytes = cache_path.read_bytes()
+                with Image.open(_io.BytesIO(img_bytes)) as _img:
+                    asset["_thumb_w"], asset["_thumb_h"] = _img.size
+                if needs_dedup:
+                    asset["_dhash"] = _compute_dhash(img_bytes)
+            except Exception:
+                pass
 
     pages, transforms, log_text, page_logs, excluded_photos = generate_album(assets, profile, cfg)
     locations = extract_gps_locations(assets)
@@ -881,11 +919,44 @@ async def export_book(req: ExportRequest, _rl: None = Depends(rl_export)):
 async def page_sizes():
     return [{"key": k, "w": v[0], "h": v[1]} for k, v in PAGE_SIZES_MM.items()]
 
+# ─── PRESETS ──────────────────────────────────────────────────────────────────
+
+def _preset_path(kind: str) -> Path:
+    return PRESETS_DIR / f"{kind}_presets.json"
+
+@app.get("/api/presets/{kind}")
+async def get_presets(kind: str):
+    path = _preset_path(kind)
+    return json.loads(path.read_text()) if path.exists() else []
+
+@app.post("/api/presets/{kind}")
+async def save_preset(kind: str, body: dict):
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "Name required")
+    path = _preset_path(kind)
+    presets = json.loads(path.read_text()) if path.exists() else []
+    presets = [p for p in presets if p.get("name") != name]
+    presets.insert(0, {"name": name, "style": body.get("style"), "ts": body.get("ts", int(time.time() * 1000))})
+    path.write_text(json.dumps(presets[:20]))
+    return presets[:20]
+
+@app.delete("/api/presets/{kind}/{name}")
+async def delete_preset(kind: str, name: str):
+    from urllib.parse import unquote
+    path = _preset_path(kind)
+    if not path.exists():
+        return []
+    presets = json.loads(path.read_text())
+    presets = [p for p in presets if p.get("name") != unquote(name)]
+    path.write_text(json.dumps(presets))
+    return presets
+
 # ─── HEALTHCHECK ─────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.8.0"}
+    return {"status": "ok", "version": "0.9.1"}
 
 # ─── PROJECTS (save / load / list / delete) ──────────────────────────────────
 

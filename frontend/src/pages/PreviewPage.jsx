@@ -851,10 +851,11 @@ function PhotoSlot({ item, slotW, slotH, transform, photoAR,
 
       {/* Mismatch badge — solo quando non in edit mode */}
       {mismatch && !isEditMode && (
-        <div style={{position:'absolute',top:4,left:4,
+        <div title="Proporzioni foto non corrispondono allo slot — clicca ⋮ → Riposiziona per regolare"
+          style={{position:'absolute',top:4,left:4,
           background:'rgba(220,70,70,0.88)',color:'white',
           fontSize:9,padding:'2px 6px',borderRadius:4,
-          fontFamily:'var(--font-mono)',pointerEvents:'none',zIndex:12,lineHeight:1.4}}>
+          fontFamily:'var(--font-mono)',pointerEvents:'auto',zIndex:12,lineHeight:1.4,cursor:'default'}}>
           ↕↔
         </div>
       )}
@@ -1032,7 +1033,9 @@ function LayoutPickerDropdown({ allPageTypes, currentId, profile, onChange }) {
           position:'absolute', top:'100%', left:0, zIndex:9200,
           background:'var(--bg2)', border:'1px solid var(--border)',
           borderRadius:8, boxShadow:'0 8px 32px rgba(0,0,0,0.6)',
-          maxHeight:260, overflowY:'auto', minWidth:200, marginTop:2,
+          height:360, minHeight:120, maxHeight:'70vh',
+          overflowY:'auto', minWidth:200, marginTop:2,
+          resize:'vertical',
         }}>
           {allPageTypes.map(pt => (
             <div key={pt.id}
@@ -1074,22 +1077,20 @@ function BlankPage({ profile, allPageTypes, label, maxW=570, zoomFactor=1 }) {
   },[maxW])
 
   const maxH_px = typeof window !== 'undefined' ? window.innerHeight * 0.65 : 600
-  const scale = Math.min(containerW/pw, (containerW*1.4)/ph, maxH_px/ph) * zoomFactor
+  const scale = Math.min(containerW/pw, maxH_px/ph) * zoomFactor
   const W = pw*scale, H = ph*scale
 
   return (
     <div ref={containerRef} style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}>
-      {/* Toolbar fantasma: stessa struttura di EditablePage ma invisibile.
-          visibility:hidden mantiene le dimensioni senza mostrare nulla,
-          garantendo che il canvas parta alla stessa coordinata Y. */}
+      {/* Toolbar fantasma: usa lo stesso markup del LayoutPickerDropdown (<div> non <select>)
+          così l'altezza coincide con quella di EditablePage → pagine allineate nello spread. */}
       {allPageTypes.length>0 && (
         <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8,flexShrink:0,visibility:'hidden'}}>
           <span className="text-xs text-muted" style={{flexShrink:0}}>Layout:</span>
-          <select style={{flex:1,minWidth:0,fontSize:11,padding:'3px 6px',
+          <div style={{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:6,
+            fontSize:11,padding:'3px 6px',
             background:'var(--bg3)',border:'1px solid var(--border)',
-            color:'var(--text)',borderRadius:5}}>
-            <option>—</option>
-          </select>
+            color:'var(--text)',borderRadius:5}}>—</div>
           <button className="btn btn-sm" style={{fontSize:10,flexShrink:0,padding:'3px 8px'}}>+ Slot</button>
         </div>
       )}
@@ -1104,12 +1105,42 @@ function BlankPage({ profile, allPageTypes, label, maxW=570, zoomFactor=1 }) {
   )
 }
 
+function autoNameSlots(slots, orientation) {
+  const pageAR = orientation === 'landscape' ? 504/360 : 360/504
+  const photo = slots.filter(s => s.slot_type !== 'caption')
+  const capt  = slots.filter(s => s.slot_type === 'caption')
+  const n = photo.length
+  const suffix = capt.length > 0 ? ` +${capt.length}T` : ''
+  if (n === 0) return capt.length === 1 ? '1 didascalia' : `${capt.length} didascalie`
+  const nPort = photo.filter(s => (s.w / (s.h || 1)) * pageAR < 1).length
+  const nLand = n - nPort
+  if (n === 1) return `1 ${nPort ? 'verticale' : 'orizzontale'}${suffix}`
+  if (n === 2) {
+    if (nPort === 2) return `2 verticali${suffix}`
+    if (nLand === 2) return `2 orizzontali${suffix}`
+    return `vert + oriz${suffix}`
+  }
+  if (n === 3) {
+    const areas = photo.map(s => s.w * s.h)
+    const maxA = Math.max(...areas), minA = Math.min(...areas)
+    if (maxA / minA > 2) return `1 grande + 2${suffix}`
+    return `3 foto${suffix}`
+  }
+  const areas = photo.map(s => s.w * s.h)
+  const maxA = Math.max(...areas), minA = Math.min(...areas)
+  if (maxA / minA < 1.4) {
+    if (n === 4) return `4 griglia 2×2${suffix}`
+    if (n === 6) return `6 griglia 3×2${suffix}`
+  }
+  return `${n} foto${suffix}`
+}
+
 function EditablePage({ page, pageIdx, profile, allPageTypes,
                         photoAspects, photoTransforms, originalTransforms,
                         onTransformChange, onSwapTransforms, onSlotRemoved,
                         onUpdatePage, onOpenPicker, onAddCaption,
                         onDrop, maxW=570, onPhotoClick, onAddMap, isActive=false, zoomFactor=1,
-                        dividerMapUrl, assets, assetById={} }) {
+                        dividerMapUrl, assets, assetById={}, onSaveCustomLayout }) {
   const t = useT(); const tp = t.preview
   const [pw,ph]=getPageDims(profile)
   const containerRef = useRef(null)
@@ -1125,7 +1156,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
   // Cap scale so portrait pages don't overflow available viewport height.
   // 65vh leaves room for the top toolbar (~80px) and nav bar (~50px).
   const maxH_px = typeof window !== 'undefined' ? window.innerHeight * 0.65 : 600
-  const scale=Math.min(containerW/pw, (containerW*1.4)/ph, maxH_px/ph) * zoomFactor
+  const scale=Math.min(containerW/pw, maxH_px/ph) * zoomFactor
   const W=pw*scale, H=ph*scale
 
   const [dragFromIdx,setDragFromIdx]=useState(null)
@@ -1359,6 +1390,13 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
             onChange={changePageType}/>
           <button className="btn btn-sm" style={{fontSize:10,flexShrink:0,padding:'3px 8px'}}
             title={tp.addSlot} onClick={addSlot}>+ Slot</button>
+          {page.page_type_id==='custom' && onSaveCustomLayout && (
+            <button className="btn btn-sm btn-primary" style={{fontSize:10,flexShrink:0,padding:'3px 8px'}}
+              title="Salva come nuovo tipo di pagina nel profilo"
+              onClick={()=>onSaveCustomLayout(page.items.map(i=>i.slot))}>
+              💾 Salva
+            </button>
+          )}
         </div>
       )}
 
@@ -1475,7 +1513,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                     <span style={{fontSize:Math.max(10,Math.min(22,r.w*0.18)),color:'#999',
                       fontFamily:'var(--font-mono)',lineHeight:1,pointerEvents:'none'}}>＋</span>
                   </div>
-                  <button className="slot-menu-btn" onClick={e=>{
+                  <button className="slot-menu-btn" title="Azioni" onClick={e=>{
                     e.stopPropagation()
                     const canRemove=page.items.length>1
                     openSlotMenu(e, 'Slot vuoto', [
@@ -1509,27 +1547,28 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                 />
               )}
 
-              {/* Favorite / description badges */}
+              {/* Favorite / description badges — bottom-left to avoid mismatch badge overlap */}
               {item?.type==='photo'&&!isPhotoEdit&&(()=>{
                 const asset = assetById[item.asset_id]
                 if (!asset) return null
                 const isFav = asset.isFavorite
                 const hasDesc = !!(asset.description || asset.exifInfo?.description)
                 if (!isFav && !hasDesc) return null
+                const sz = Math.max(8,Math.min(14,r.w*0.1))
                 return (
-                  <div style={{ position:'absolute', top:3, left:3, display:'flex', gap:2,
-                    pointerEvents:'none', zIndex:4 }}>
-                    {isFav  && <span style={{ fontSize:Math.max(8,Math.min(14,r.w*0.1)),
-                      lineHeight:1, filter:'drop-shadow(0 1px 2px rgba(0,0,0,0.8))' }}>⭐</span>}
-                    {hasDesc && <span style={{ fontSize:Math.max(8,Math.min(14,r.w*0.1)),
-                      lineHeight:1, filter:'drop-shadow(0 1px 2px rgba(0,0,0,0.8))' }}>💬</span>}
+                  <div style={{ position:'absolute', bottom:3, left:3, display:'flex', gap:2,
+                    pointerEvents:'auto', zIndex:4 }}>
+                    {isFav  && <span title="Preferita in Immich" style={{ fontSize:sz,
+                      lineHeight:1, filter:'drop-shadow(0 1px 2px rgba(0,0,0,0.8))', cursor:'default' }}>⭐</span>}
+                    {hasDesc && <span title="Ha didascalia in Immich" style={{ fontSize:sz,
+                      lineHeight:1, filter:'drop-shadow(0 1px 2px rgba(0,0,0,0.8))', cursor:'default' }}>💬</span>}
                   </div>
                 )
               })()}
 
               {/* ⋮ button — opens floating action menu for photo slot */}
               {item?.type==='photo'&&!isPhotoEdit&&(
-                <button className="slot-menu-btn" onClick={e=>{
+                <button className="slot-menu-btn" title="Azioni" onClick={e=>{
                   e.stopPropagation()
                   openSlotMenu(e, 'Foto', [
                     {icon:'🖐', label: mismatch ? tp.repositionMismatch : tp.reposition, action:()=>{ setEditPhotoSlot(slotIdx); setSlotMenu(null) }, color: mismatch?'#e05050':undefined},
@@ -1556,7 +1595,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
               )}
               {/* ⋮ button — opens floating action menu for map slot */}
               {item?.type==='map'&&!isMapEdit&&(
-                <button className="slot-menu-btn" onClick={e=>{
+                <button className="slot-menu-btn" title="Azioni" onClick={e=>{
                   e.stopPropagation()
                   openSlotMenu(e, 'Mappa', [
                     {icon:'🖐', label:'Riposiziona / zoom mappa', action:()=>{ setEditMapSlot(slotIdx); setSlotMenu(null) }},
@@ -1839,7 +1878,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                       WebkitBoxOrient:'vertical'}}>
                       {item.text||<span style={{opacity:0.32}}>clicca per scrivere…</span>}
                     </span>
-                    <button className="slot-menu-btn" onClick={e=>{
+                    <button className="slot-menu-btn" title="Azioni" onClick={e=>{
                       e.stopPropagation()
                       openSlotMenu(e, 'Didascalia', [
                         {icon:'✏️', label:'Modifica', action:()=>{ setEditCaptionIdx(slotIdx); setSlotMenu(null) }},
@@ -1860,9 +1899,6 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
       </div>
       )}
 
-      <p className="text-xs text-muted mt-2">
-        Hover → azioni · "🖐 Riposiziona" → drag+scroll per spostare e zoomare · ⇄ drag tra slot per scambiare
-      </p>
     </div>
 
     {/* ── Floating slot action menu (portal, outside page canvas) ── */}
@@ -2938,6 +2974,29 @@ export default function PreviewPage() {
     finally{setRecalculating(false)}
   }
 
+  // ── Salva layout custom nel profilo ─────────────────────────────────────────
+  const saveCustomLayout = async (slots) => {
+    if (!layout?.profile) return
+    const ori = layout.profile.orientation || 'portrait'
+    const newPT = {
+      id: Math.random().toString(36).slice(2) + Date.now().toString(36),
+      label: autoNameSlots(slots, ori),
+      pref: 'any',
+      slots: slots.map(s => ({...s})),
+    }
+    const updatedProfile = {
+      ...layout.profile,
+      page_types: [...(layout.profile.page_types || []), newPT],
+    }
+    try {
+      await axios.put(`/api/profiles/${layout.profile.id}`, updatedProfile)
+      setLayout(prev => persist({ ...prev, profile: updatedProfile }))
+      showToast(`Layout "${newPT.label}" salvato nel profilo`, 'success')
+    } catch {
+      showToast('Errore salvataggio layout', 'error')
+    }
+  }
+
   // ── Dispatcher ───────────────────────────────────────────────────────────────
   const handleRecalcAction = (id) => {
     setRecalcMenuOpen(false)
@@ -3167,6 +3226,22 @@ export default function PreviewPage() {
       {/* ── Main canvas ── */}
       <div className="preview-main" style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}
         onWheel={e=>{
+          // Yield to fixed overlays (PhotoPicker, caption toolbar, slot menu)
+          // and to scrollable elements that actually CAN scroll in this direction.
+          // The canvas div has overflow:auto but usually no overflow → pass through.
+          let el = e.target
+          while (el && el !== e.currentTarget) {
+            const s = window.getComputedStyle(el)
+            if (s.position === 'fixed' || s.position === 'sticky') return
+            const oy = s.overflowY
+            if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') &&
+                el.scrollHeight > el.clientHeight + 2 &&
+                ((e.deltaY > 0 && el.scrollTop < el.scrollHeight - el.clientHeight - 2) ||
+                 (e.deltaY < 0 && el.scrollTop > 0))) {
+              return
+            }
+            el = el.parentElement
+          }
           e.preventDefault()
           if(e.deltaY>0){
             setCurrentPage(p=>{
@@ -3350,7 +3425,8 @@ export default function PreviewPage() {
                       isActive={currentPage===leftIdx} zoomFactor={viewZoom}
                       dividerMapUrl={dividerMapUrls[leftIdx]}
                       assets={allAlbumAssets[leftPage?._album_idx??0]??albumAssets}
-                      assetById={assetById}/>
+                      assetById={assetById}
+                      onSaveCustomLayout={saveCustomLayout}/>
                   ) : (
                     <BlankPage profile={profile} allPageTypes={allPageTypes} label="pagina vuota" zoomFactor={viewZoom}/>
                   )}
@@ -3378,7 +3454,8 @@ export default function PreviewPage() {
                       isActive={currentPage===rightIdx} zoomFactor={viewZoom}
                       dividerMapUrl={dividerMapUrls[rightIdx]}
                       assets={allAlbumAssets[rightPage?._album_idx??0]??albumAssets}
-                      assetById={assetById}/>
+                      assetById={assetById}
+                      onSaveCustomLayout={saveCustomLayout}/>
                   ) : (
                     <BlankPage profile={profile} allPageTypes={allPageTypes} label="pagina vuota" zoomFactor={viewZoom}/>
                   )}
@@ -3411,6 +3488,7 @@ export default function PreviewPage() {
             dividerMapUrl={dividerMapUrls[currentPage]}
             assets={allAlbumAssets[pages[currentPage]?._album_idx??0]??albumAssets}
             assetById={assetById}
+            onSaveCustomLayout={saveCustomLayout}
           />
         )}
         </div>{/* end canvas area */}

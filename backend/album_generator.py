@@ -35,7 +35,7 @@ FALLBACK_PAGE_TYPES = [
     {"id": "f4", "label": "4 griglia",    "slots": [{"x":0,"y":0,"w":50,"h":50},{"x":50,"y":0,"w":50,"h":50},
                                                      {"x":0,"y":50,"w":50,"h":50},{"x":50,"y":50,"w":50,"h":50}]},
 ]
-FULL_PAGE_TYPE = {"id": "__full__", "label": "Pagina intera", "slots": [{"x":0,"y":0,"w":100,"h":100}]}
+FULL_PAGE_TYPE = {"id": "__full__", "label": "Pagina intera", "slots": [{"x":0,"y":0,"w":100,"h":100,"slot_type":"photo"}]}
 
 
 # ── Helpers fondamentali ───────────────────────────────────────────────────────
@@ -85,23 +85,16 @@ def _count_slot_types(slots: list[Slot]) -> tuple[int, int]:
 
 def _display_dims(photo: Photo) -> tuple[float, float]:
     """
-    Ritorna (larghezza_display, altezza_display) tenendo conto dell'orientamento EXIF.
-
-    Le fotocamere spesso salvano fisicamente i pixel come landscape e memorizzano
-    l'orientamento desiderato in un tag EXIF. In questi casi exifImageWidth > exifImageHeight
-    anche se la foto visualizzata è portrait.
-
-    Tag EXIF orientation:
-      1 = normale
-      2 = specchio orizzontale
-      3 = 180°
-      4 = specchio verticale
-      5 = 90° CW + specchio
-      6 = 90° CW         ← portrait da DSLR/telefono landscape
-      7 = 90° CCW + specchio
-      8 = 90° CCW        ← portrait ruotato
-    Per 5,6,7,8 le dimensioni fisiche sono invertite rispetto al display.
+    Ritorna (larghezza_display, altezza_display) tenendo conto dell'orientamento EXIF
+    o delle dimensioni effettive della thumbnail Immich (che riflette anche le rotazioni
+    applicate dall'utente tramite l'interfaccia di Immich).
     """
+    # Prefer thumbnail dims: they reflect Immich UI edits (rotation, crop)
+    tw = photo.get("_thumb_w")
+    th = photo.get("_thumb_h")
+    if tw and th:
+        return float(tw), float(th)
+    # Fallback: EXIF dims with orientation correction
     exif = photo.get("exifInfo") or {}
     w = float(exif.get("exifImageWidth")  or exif.get("imageWidth")  or 1)
     h = float(exif.get("exifImageHeight") or exif.get("imageHeight") or 1)
@@ -469,28 +462,31 @@ def _filter_duplicates(photos: list[Photo], threshold: float, log: Log) -> tuple
             dt_k   = _photo_dt(k)
 
             # ── Criterio visivo (dHash) ───────────────────────────────────────
-            visual_ok = (dh_p is not None and dh_k is not None
-                         and _hamming(dh_p, dh_k) <= max_hamming)
+            dist = _hamming(dh_p, dh_k) if (dh_p is not None and dh_k is not None) else None
+            visual_ok = dist is not None and dist <= max_hamming
 
             # ── Criterio burst (nome base + tempo) ────────────────────────────
             burst_ok = (bool(bn_p) and bool(bn_k) and bn_p == bn_k
                         and dt_p is not None and dt_k is not None
                         and abs((dt_p - dt_k).total_seconds()) <= time_window_sec)
 
-            if visual_ok and burst_ok:
-                dist   = _hamming(dh_p, dh_k)
+            # Match if: same perceptual hash (dist=0, same photo different name/metadata)
+            # OR visually similar AND same burst pattern (same shot sequence)
+            if visual_ok and (dist == 0 or burst_ok):
                 better = p if _photo_quality(p) > _photo_quality(k) else k
                 worse  = k if better is p else p
+                match_type = "identico" if dist == 0 else "visivo+burst"
                 log.append(f"  DUPLICATO rimosso: {worse.get('originalFileName','?')} "
                             f"→ tenuto: {better.get('originalFileName','?')} "
-                            f"(hamming={dist}/{max_hamming}, finestra={time_window_sec}s)")
+                            f"(hamming={dist}/{max_hamming}, {match_type})")
                 excluded.append({
                     'asset_id':      worse.get('id', ''),
                     'filename':      worse.get('originalFileName', ''),
                     'datetime':      worse.get('localDateTime', ''),
                     'reason':        'duplicate_visual',
-                    'detail':        (f"visivo+burst: hamming={dist}, "
-                                     f"entro {time_window_sec}s da '{better.get('originalFileName','?')}'"),
+                    'detail':        (f"{match_type}: hamming={dist}, "
+                                     f"{'nomi diversi' if dist==0 and not burst_ok else f'entro {time_window_sec}s'} "
+                                     f"da '{better.get('originalFileName','?')}'"),
                     'kept_filename': better.get('originalFileName', ''),
                     'kept_asset_id': better.get('id', ''),
                     'hamming':       dist,
@@ -510,6 +506,26 @@ def _filter_duplicates(photos: list[Photo], threshold: float, log: Log) -> tuple
                f"({n_combined} visivo+burst, hamming≤{max_hamming}, finestra={time_window_sec}s, "
                f"soglia={threshold}, dHash su {n_with_dhash}/{len(all_remaining)} foto)")
     return kept, excluded
+
+
+def _compute_similarity_scores(photos: list[Photo]) -> dict[str, float | None]:
+    """For each photo compute similarity to nearest neighbor (0=unique, 1=identical)."""
+    scores: dict[str, float | None] = {}
+    for i, p in enumerate(photos):
+        pid = p.get("id", "")
+        dh = p.get("_dhash")
+        if dh is None or len(photos) < 2:
+            scores[pid] = None
+            continue
+        min_dist = 128
+        for j, k in enumerate(photos):
+            if i == j:
+                continue
+            dh2 = k.get("_dhash")
+            if dh2 is not None:
+                min_dist = min(min_dist, _hamming(dh, dh2))
+        scores[pid] = round(1 - min_dist / 128, 3)
+    return scores
 
 
 # ── Filtro qualità ─────────────────────────────────────────────────────────────
@@ -795,7 +811,7 @@ def _score_page_type(
             p_ar = _photo_ar(photo)
             s_ar = _slot_ar(slot, page_ar)
             if _face_would_be_clipped(face, p_ar, s_ar):
-                face_penalty += 30 * face["size"]
+                face_penalty += 400 * face["size"]
     score += face_penalty
     if face_penalty > 0:
         detail.append(f"face_penalty={face_penalty:.1f}")
@@ -901,6 +917,53 @@ def _best_page_type(
 
 
 
+def _best_hero_layout(photo: Photo, pt_pool: list[dict], page_ar: float) -> dict:
+    """
+    For favorites_full_page:
+    - Orientation match (portrait→portrait or landscape→landscape): single-slot full page.
+    - Orientation mismatch: multi-slot layout where the largest photo slot matches the
+      photo's orientation (photo goes in that slot, other slots filled with nearby photos).
+    Falls back to FULL_PAGE_TYPE when no suitable layout found.
+    """
+    def photo_slots(pt):
+        return [s for s in pt.get("slots", []) if s.get("slot_type", "photo") == "photo"]
+
+    ph_portrait = _photo_is_portrait(photo)
+
+    # ── Case 1: orientation match → prefer single-slot layouts ──────────────────
+    single_slot = [pt for pt in pt_pool if len(photo_slots(pt)) == 1]
+    matching_single = [pt for pt in single_slot if _slot_is_portrait(photo_slots(pt)[0], page_ar) == ph_portrait]
+
+    if matching_single:
+        def slot_area(pt):
+            s = photo_slots(pt)[0]
+            return s.get("w", 0) * s.get("h", 0)
+        return max(matching_single, key=slot_area)
+
+    # ── Case 2: orientation mismatch → multi-slot with largest hero matching orientation ──
+    multi_slot = [pt for pt in pt_pool if len(photo_slots(pt)) >= 2]
+    # Among multi-slot layouts, hero slot = largest photo slot
+    def hero_slot(pt):
+        slots = photo_slots(pt)
+        return max(slots, key=lambda s: s.get("w", 0) * s.get("h", 0))
+
+    # Keep layouts where hero slot orientation matches the photo
+    matching_multi = [pt for pt in multi_slot if _slot_is_portrait(hero_slot(pt), page_ar) == ph_portrait]
+
+    if matching_multi:
+        # Pick the layout with the largest hero slot (most dominant presentation)
+        return max(matching_multi, key=lambda pt: hero_slot(pt).get("w", 0) * hero_slot(pt).get("h", 0))
+
+    # ── Case 3: fallback — any single-slot or FULL_PAGE_TYPE ──────────────────
+    if single_slot:
+        def slot_area(pt):
+            s = photo_slots(pt)[0]
+            return s.get("w", 0) * s.get("h", 0)
+        return max(single_slot, key=slot_area)
+
+    return FULL_PAGE_TYPE
+
+
 def _make_photo_item(photo: Photo) -> Item:
     exif = photo.get("exifInfo") or {}
     desc = (exif.get("description") or photo.get("description") or "").strip()
@@ -930,6 +993,7 @@ def _make_pages_from_group(
     group_label: str,
     page_offset: int,
     page_ar: float = 1.0,
+    similarity_scores: dict | None = None,
 ) -> list[Page]:
     if not photos:
         return []
@@ -957,14 +1021,29 @@ def _make_pages_from_group(
         _page_candidates = []
         photo = remaining[0]
 
-        # Foto preferita → pagina intera
+        # Foto preferita → pagina hero (orientamento rispettato)
+        # - orientamenti uguali → pagina singola (1 slot)
+        # - orientamenti diversi → layout multi-slot dove lo slot più grande corrisponde
+        #   all'orientamento della foto; gli altri slot sono riempiti con foto successive
         if favs_full and photo.get("isFavorite"):
-            pt    = FULL_PAGE_TYPE
-            n_photo_sl, n_cap_sl = 1, 0
-            _page_candidates = [{'id':'__full__','label':'Pagina intera','score':0,'winner':True,'breakdown':{'total':0,'orient_violations':0,'n_photo_slots':1,'n_caption_slots':0,'unused_bonus':False,'rhythm_penalty':False}}]
-            chunk = [photo]
-            remaining = remaining[1:]
-            log.append(f"  [★ PREFERITA] {photo.get('originalFileName','?')} → pagina intera")
+            pt    = _best_hero_layout(photo, pt_pool, page_ar)
+            n_photo_sl, n_cap_sl = _count_slot_types(pt.get("slots", []))
+            _page_candidates = [{'id':pt.get('id','__full__'),'label':pt.get('label','Pagina intera'),'score':0,'winner':True,'breakdown':{'total':0,'orient_violations':0,'n_photo_slots':n_photo_sl,'n_caption_slots':n_cap_sl,'unused_bonus':False,'rhythm_penalty':False}}]
+            # Favorite goes first; fill extra photo slots with non-favorite successors
+            # (never consume another favorite — stop before the next ★)
+            fillers = []
+            if n_photo_sl > 1:
+                for p in remaining[1:]:
+                    if len(fillers) >= n_photo_sl - 1:
+                        break
+                    if not p.get("isFavorite"):
+                        fillers.append(p)
+            chunk = [photo] + fillers
+            # Remove all used photos from remaining
+            used_ids = {id(p) for p in chunk}
+            remaining = [p for p in remaining if id(p) not in used_ids]
+            note = f" (+{len(fillers)} foto)" if fillers else ""
+            log.append(f"  [★ PREFERITA] {photo.get('originalFileName','?')} → {pt.get('label','pagina intera')}{note}")
         else:
             # When favorites_full_page is on, clip the visible window so a multi-slot page
             # cannot consume a favorite photo that is deeper in remaining.
@@ -1117,7 +1196,8 @@ def _make_pages_from_group(
                 s_ar2  = _slot_ar(slot2, page_ar)
                 clipped= _face_would_be_clipped(fr2,p_ar2,s_ar2) if fr2 and fr2.get('size',0)>=0.12 else False
                 tr2    = transforms.get(f'{pg_idx}_{si2}',{'x':50,'y':50,'zoom':1.0})
-                q_score = round(_photo_quality(pr2), 3) if pr2 else None
+                q_score  = round(_photo_quality(pr2), 3) if pr2 else None
+                sim_score = (similarity_scores or {}).get(item2.get('asset_id', ''))
                 slot_logs.append({'slot_idx':si2,'slot_type':'photo',
                     'asset_id':item2.get('asset_id',''),'filename':item2.get('originalFileName',''),
                     'datetime':item2.get('localDateTime',''),
@@ -1134,7 +1214,7 @@ def _make_pages_from_group(
                                      round(max(f['x2'] for f in prom2 or faces2),3),
                                      round(max(f['y2'] for f in prom2 or faces2),3)] if (prom2 or faces2) else None,
                              'would_clip':clipped} if faces2 else None,
-                    'transform':tr2,'quality_score':q_score})
+                    'transform':tr2,'quality_score':q_score,'similarity_score':sim_score})
             else:
                 slot_logs.append({'slot_idx':si2,'slot_type':'photo','empty':True})
         page_logs.append({'page_num':pg_idx+1,'group':group_label,
@@ -1243,6 +1323,8 @@ def generate_album(
         all_excluded.extend(excl_d)
         log.append("")
 
+    similarity_scores = _compute_similarity_scores(photos)
+
     log.append(f"  Foto da impaginare: {len(photos)}")
     log.append("")
 
@@ -1289,7 +1371,8 @@ def generate_album(
     for label, group in units:
         log.append(f"─── {label.upper()} ({len(group)} foto) ───")
         group_pages, group_logs = _make_pages_from_group(
-            group, page_types, usage_counter, cfg, transforms, log, label, len(all_pages), page_ar
+            group, page_types, usage_counter, cfg, transforms, log, label, len(all_pages), page_ar,
+            similarity_scores=similarity_scores,
         )
         all_pages.extend(group_pages)
         all_page_logs.extend(group_logs)

@@ -246,7 +246,11 @@ export default function ProfilesPage() {
   const [marginLocked, setMarginLocked] = useState(true)
   const [mapPreviewUrl, setMapPreviewUrl]   = useState(null)
   const [previewLoading, setPreviewLoading] = useState(false)
-  const previewTimerRef  = useRef(null)
+  const [autoSaveStatus, setAutoSaveStatus] = useState('idle') // 'idle'|'pending'|'saving'|'saved'|'error'
+  const previewTimerRef   = useRef(null)
+  const autoSaveTimerRef  = useRef(null)
+  const originalFormRef   = useRef(null)  // snapshot at edit-start for "Scarta modifiche"
+  const formInitKeyRef    = useRef(null)  // JSON key at edit-start to skip spurious first-render save
   const sectionOpenRef   = useRef((() => {
     try { return JSON.parse(sessionStorage.getItem('pb_profile_sections') || '{}') }
     catch { return {} }
@@ -300,9 +304,13 @@ export default function ProfilesPage() {
 
   const startEdit = async (profile) => {
     const r = await axios.get(`/api/profiles/${profile.id}`)
-    setForm({ ...DEFAULT_PROFILE, ...r.data })
+    const data = { ...DEFAULT_PROFILE, ...r.data }
+    setForm(data)
+    originalFormRef.current = data
+    formInitKeyRef.current  = JSON.stringify(data)
     setPtKey(k => k + 1)
     setEditing(r.data)
+    setAutoSaveStatus('idle')
   }
 
   const duplicate = async (profile) => {
@@ -315,17 +323,52 @@ export default function ProfilesPage() {
     }
   }
 
+  // Manual save — only used for new profile creation
   const save = async () => {
     if (!form.name.trim()) { showToast(p.noNameError, 'error'); return }
     setSaving(true)
     try {
-      if (editing === 'new') await axios.post('/api/profiles', form)
-      else await axios.put(`/api/profiles/${editing.id}`, form)
+      const r = await axios.post('/api/profiles', form)
+      const created = r.data
       await loadProfiles()
-      setEditing(null)
+      // Transition to edit mode so auto-save takes over from here
+      const fullProfile = { ...DEFAULT_PROFILE, ...created }
+      setForm(fullProfile)
+      originalFormRef.current = fullProfile
+      formInitKeyRef.current  = JSON.stringify(fullProfile)
+      setEditing(created)
+      setAutoSaveStatus('idle')
       showToast(p.savedOk, 'success')
     } catch { showToast(p.savedError, 'error') }
     finally { setSaving(false) }
+  }
+
+  // Discard: restore server to snapshot taken at edit-start
+  const discardChanges = async () => {
+    if (!editing || editing === 'new' || !originalFormRef.current) return
+    try {
+      await axios.put(`/api/profiles/${editing.id}`, originalFormRef.current)
+      await loadProfiles()
+      setForm({ ...originalFormRef.current })
+      formInitKeyRef.current = JSON.stringify(originalFormRef.current)
+      setPtKey(k => k + 1)
+      setAutoSaveStatus('idle')
+      showToast('Modifiche scartate ✓', 'success')
+    } catch { showToast('Errore nel ripristino', 'error') }
+  }
+
+  // Close: flush any pending auto-save, then exit editor
+  const handleClose = async () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current)
+      autoSaveTimerRef.current = null
+    }
+    if (autoSaveStatus === 'pending' && editing && editing !== 'new' && form.name.trim()) {
+      try { await axios.put(`/api/profiles/${editing.id}`, form); await loadProfiles() }
+      catch {}
+    }
+    setEditing(null)
+    setAutoSaveStatus('idle')
   }
 
   const del = async (profile) => {
@@ -358,6 +401,29 @@ export default function ProfilesPage() {
     }, 700)
     return () => clearTimeout(previewTimerRef.current)
   }, [_mapStyleKey, editing]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Auto-save (edit mode only, 800ms debounce) ────────────────────────────────
+  const _formKey = JSON.stringify(form)
+  useEffect(() => {
+    if (!editing || editing === 'new' || !form.name.trim()) return
+    if (_formKey === formInitKeyRef.current) return  // skip spurious first-render trigger
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    setAutoSaveStatus('pending')
+    const snapshot = form
+    const profileId = editing.id
+    autoSaveTimerRef.current = setTimeout(async () => {
+      setAutoSaveStatus('saving')
+      try {
+        await axios.put(`/api/profiles/${profileId}`, snapshot)
+        loadProfiles()
+        setAutoSaveStatus('saved')
+        setTimeout(() => setAutoSaveStatus(s => s === 'saved' ? 'idle' : s), 2500)
+      } catch {
+        setAutoSaveStatus('error')
+      }
+    }, 800)
+    return () => clearTimeout(autoSaveTimerRef.current)
+  }, [_formKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Editor view ───────────────────────────────────────────────────────────────
   if (editing) {
@@ -403,10 +469,32 @@ export default function ProfilesPage() {
                   e.target.value=''
                 }}/>
               </label>
-              <button className="btn" onClick={() => setEditing(null)}>{p.cancelBtn}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving}>
-                {saving ? <span className="spinner"/> : null} {p.saveBtn}
-              </button>
+              {editing === 'new' ? (
+                <>
+                  <button className="btn" onClick={() => setEditing(null)}>{p.cancelBtn}</button>
+                  <button className="btn btn-primary" onClick={save} disabled={saving}>
+                    {saving ? <span className="spinner"/> : null} {p.saveBtn}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span style={{ fontSize:11, display:'flex', alignItems:'center', gap:4,
+                    color: autoSaveStatus==='error' ? '#e05050'
+                         : autoSaveStatus==='saving'||autoSaveStatus==='pending' ? 'var(--gold)'
+                         : autoSaveStatus==='saved' ? '#4ac585' : 'transparent' }}>
+                    {autoSaveStatus==='pending' ? '⟳ In attesa…'
+                   : autoSaveStatus==='saving'  ? '⟳ Salvataggio…'
+                   : autoSaveStatus==='saved'   ? '✓ Salvato'
+                   : autoSaveStatus==='error'   ? '⚠ Errore salvataggio' : '·'}
+                  </span>
+                  <button className="btn btn-sm" onClick={discardChanges} title="Ripristina lo stato all'apertura della sessione di modifica">
+                    ↺ Scarta modifiche
+                  </button>
+                  <button className="btn btn-primary" onClick={handleClose}>
+                    ← Chiudi
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -655,11 +743,6 @@ export default function ProfilesPage() {
             />
           </CollapsibleCard>
 
-          <div style={{display:'flex',justifyContent:'flex-end',marginTop:-6,marginBottom:4}}>
-            <button className="btn btn-sm btn-primary" style={{fontSize:10,padding:'3px 10px'}}
-              onClick={save} disabled={saving}>{saving?p.saving:p.saveQuick}</button>
-          </div>
-
           {/* ── Page types ──────────────────────────────────────────────────── */}
           <CollapsibleCard title={p.pageTypesCard}
             actions={<>
@@ -707,11 +790,6 @@ export default function ProfilesPage() {
               onChange={pt => set('page_types', pt)}
             />
           </CollapsibleCard>
-
-          <div style={{display:'flex',justifyContent:'flex-end',marginTop:-6,marginBottom:4}}>
-            <button className="btn btn-sm btn-primary" style={{fontSize:10,padding:'3px 10px'}}
-              onClick={save} disabled={saving}>{saving?p.saving:p.saveQuick}</button>
-          </div>
 
           {/* ── Caption style ────────────────────────────────────────────────── */}
           <CollapsibleCard title="Stile didascalie">
@@ -1054,11 +1132,6 @@ export default function ProfilesPage() {
               )
             })()}
           </CollapsibleCard>
-
-          <div style={{display:'flex',justifyContent:'flex-end',marginTop:-6,marginBottom:4}}>
-            <button className="btn btn-sm btn-primary" style={{fontSize:10,padding:'3px 10px'}}
-              onClick={save} disabled={saving}>{saving?p.saving:p.saveQuick}</button>
-          </div>
 
         </div>
         {toast&&<div className={`toast ${toast.type}`}>{toast.msg}</div>}

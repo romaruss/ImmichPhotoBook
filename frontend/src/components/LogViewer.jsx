@@ -76,8 +76,8 @@ function CandidateRow({ cand, expanded, onToggle }) {
               label={`Slot vuoti ×${b.empty_slots||0}`} danger={800} warn={200}/>
             <ScoreBar score={b.density_score||0} max={200}
               label={`Densità diff=${b.slot_diff||0}`} danger={100} warn={40}/>
-            <ScoreBar score={b.face_penalty||0} max={60}
-              label="Volto tagliato" danger={30} warn={10}/>
+            <ScoreBar score={b.face_penalty||0} max={800}
+              label="Volto tagliato" danger={300} warn={100}/>
             <ScoreBar score={b.usage_score||0} max={80}
               label={`Utilizzo ×${b.usage||0}`} danger={50} warn={16}/>
           </div>
@@ -273,6 +273,16 @@ function SlotCard({ slot }) {
             max={100}
             label={`Qualità: ${slot.quality_score}`}
             warn={35} danger={65}/>
+        </div>
+      )}
+
+      {slot.similarity_score != null && (
+        <div style={{marginTop:3}}>
+          <ScoreBar
+            score={Math.round(slot.similarity_score * 100)}
+            max={100}
+            label={`Somiglianza: ${slot.similarity_score}`}
+            warn={70} danger={90}/>
         </div>
       )}
 

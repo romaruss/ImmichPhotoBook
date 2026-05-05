@@ -250,10 +250,11 @@ function ConfigModal({ config, onChange, onClose }) {
           <Section title="a) Clustering temporale"/>
           <Toggle k="temporal_clustering" label="Raggruppa foto per evento"
             help="Mantiene insieme le foto scattate nello stesso lasso di tempo. Le foto senza data restano nella logica base."/>
-          <SliderInput value={local.event_gap_min} onChange={v=>set("event_gap_min",v)} value={local.event_gap_min} onChange={v=>set("event_gap_min",v)} min={5} max={1440} step={5} unit="min"
+          <SliderInput value={local.event_gap_min} onChange={v=>set("event_gap_min",v)} value={local.event_gap_min} onChange={v=>set("event_gap_min",v)} min={5} max={1440} step={5}
+            unit="min"
             label="Soglia di tempo tra eventi"
             disabled={!local.temporal_clustering}
-            help={`Foto con più di ${local.event_gap_min} minuti di distanza dalla precedente iniziano un nuovo evento.`}/>
+            help={`Foto con più di ${local.event_gap_min >= 60 ? `${Math.floor(local.event_gap_min/60)}h${local.event_gap_min%60>0?` ${local.event_gap_min%60}min`:''}` : `${local.event_gap_min} min`} di distanza dalla precedente iniziano un nuovo evento.`}/>
 
           {/* Favorites */}
           <Section title="b) Foto preferite"/>

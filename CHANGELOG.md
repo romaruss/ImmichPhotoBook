@@ -4,6 +4,30 @@ All notable changes to PhotoBook Studio are documented here.
 
 ---
 
+## [0.9.1] - 2026-05-05
+
+### Added
+- **Divider editor — photo picker modal** — "Scegli foto" button opens a searchable grid to assign a photo to a photo block slot
+- **Divider editor — photo zoom & pan** — mouse wheel on photo block zooms; Ctrl+drag pans; sliders in property panel for fine control
+- **Divider editor — multi-line free text** — `text_custom` element now uses a textarea; Enter key inserts a newline; rendered with `pre-line` on canvas
+- **Divider editor — Ctrl+drag hint** — updated canvas hint shows "Ctrl+trascina foto → pan"
+- **Page type slot editor — drag to move** — clicking and dragging inside a slot (interior area) moves the entire slot; border handles still resize only
+- **Page type slot editor — z-index reorder** — slot table rows are draggable; row order equals z-index (first row = bottom layer, last = top layer); hint added
+- **Profile auto-save** — existing profiles auto-save 800 ms after any change; status indicator (●/⌛/✓/✗) in editor header; "Scarta modifiche" reverts to server snapshot; manual save retained for new profiles only
+
+### Changed
+- **Divider editor layout** — switched from CSS grid to flex for stability; properties panel grows to fill available space; modal canvas formula updated to reserve more width for property panel
+- **Divider presets** — migrated from localStorage to backend API (`/api/presets/divider`)
+- **Page type slot colors** — photo slots amber (`rgba(212,170,90,0.20)`) and caption slots blue (`rgba(100,160,200,0.28)`) for easier visual identification while editing; same update applied to layout thumbnails
+
+### Removed
+- **"Orientamento preferito foto"** field from page type editor — was stored but never read by the layout algorithm
+
+### Fixed
+- **Spread 2-page view alignment** — `BlankPage` ghost toolbar replaced `<select>` with a styled `<div>`, eliminating browser-native height mismatch that misaligned adjacent pages
+
+---
+
 ## [0.8.0] - 2026-05-03
 
 ### Added

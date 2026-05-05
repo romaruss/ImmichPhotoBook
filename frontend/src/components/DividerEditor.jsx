@@ -15,8 +15,9 @@
  *   default DividerEditor     — full editor (ProfilesPage)
  */
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import axios from 'axios'
 
 const uid   = () => Math.random().toString(36).slice(2, 9)
 const clamp = (v, mn, mx) => Math.min(mx, Math.max(mn, v))
@@ -171,6 +172,8 @@ export function DividerCanvas({
   onSelect,
   onDrag,
   onResize,
+  onPhotoZoom,
+  onPhotoPan,
   readOnly = false,
   dividerMapUrl,
 }) {
@@ -208,6 +211,28 @@ export function DividerCanvas({
       document.addEventListener('mousemove', onMove)
       document.addEventListener('mouseup', onUp)
       return
+    }
+
+    // Ctrl+drag on photo block → pan
+    if (e.ctrlKey) {
+      const el = (ds.elements||[]).find(x => x.id === id)
+      if (el?.type === 'photo' && el.photo_id) {
+        const zoom   = el.photo_zoom || 1
+        const blockW = (el.w||40) / 100 * rect.width
+        const blockH = (el.h||30) / 100 * rect.height
+        const ox = el.photo_pan_x || 0, oy = el.photo_pan_y || 0
+        dragRef.current = { type:'photo_pan', id, sx:e.clientX, sy:e.clientY, ox, oy, zoom, blockW, blockH }
+        const onMove = (me) => {
+          const d = dragRef.current; if (!d || d.type !== 'photo_pan') return
+          const dx = (me.clientX - d.sx) / d.blockW * 100 / d.zoom
+          const dy = (me.clientY - d.sy) / d.blockH * 100 / d.zoom
+          onPhotoPan?.(d.id, clamp(d.ox + dx, -50, 50), clamp(d.oy + dy, -50, 50))
+        }
+        const onUp = () => { dragRef.current = null; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
+        document.addEventListener('mousemove', onMove)
+        document.addEventListener('mouseup', onUp)
+        return
+      }
     }
 
     const target = [...(ds.elements||[]), ...(ds.lines||[])].find(x => x.id === id)
@@ -295,8 +320,10 @@ export function DividerCanvas({
                 color: el.color||'#fff',
                 opacity: (el.opacity??100) / 100,
                 textAlign: el.align||'center',
-                whiteSpace:'nowrap', maxWidth:'90%',
-                overflow:'hidden', textOverflow:'ellipsis',
+                whiteSpace: el.type === 'text_custom' ? 'pre-line' : 'nowrap',
+                maxWidth:'90%',
+                overflow:'hidden',
+                textOverflow: el.type === 'text_custom' ? 'clip' : 'ellipsis',
                 cursor: readOnly ? 'default' : 'move',
                 pointerEvents:'auto', zIndex: zIdx,
                 ...selRing(el.id),
@@ -332,10 +359,24 @@ export function DividerCanvas({
             }}
             onMouseDown={e => beginDrag(e, el.id)}
             onClick={e => { e.stopPropagation(); onSelect?.(el.id) }}
+            onWheel={el.type === 'photo' && !readOnly && onPhotoZoom ? (e) => {
+              e.stopPropagation(); e.preventDefault()
+              onPhotoZoom(el.id, e.deltaY)
+            } : undefined}
           >
             {hasPhoto ? (
-              <img src={`/api/thumb/${photoId}`} alt="" draggable={false}
-                style={{ width:'100%', height:'100%', objectFit:'cover', opacity:opct, display:'block', pointerEvents:'none' }}/>
+              <div style={{ position:'relative', width:'100%', height:'100%', overflow:'hidden' }}>
+                <img src={`/api/thumb/${photoId}`} alt="" draggable={false}
+                  style={{
+                    position:'absolute', display:'block',
+                    width:`${(el.photo_zoom||1)*100}%`,
+                    height:`${(el.photo_zoom||1)*100}%`,
+                    objectFit:'cover',
+                    left:'50%', top:'50%',
+                    transform:`translate(calc(-50% + ${el.photo_pan_x||0}%),calc(-50% + ${el.photo_pan_y||0}%))`,
+                    opacity:opct, pointerEvents:'none',
+                  }}/>
+              </div>
             ) : hasMap ? (
               <img src={dividerMapUrl} alt="" draggable={false}
                 style={{ width:'100%', height:'100%', objectFit:'cover', opacity:opct, display:'block', pointerEvents:'none' }}/>
@@ -407,8 +448,8 @@ function TextElProps({ el, onChange }) {
         </Row>
       )}
       {el.type === 'text_custom' && (
-        <Row label="Testo">
-          <input className="form-input" style={{fontSize:11}}
+        <Row label="Testo (Invio = nuova riga)">
+          <textarea className="form-input" style={{fontSize:11, resize:'vertical', minHeight:56, fontFamily:'inherit'}}
             value={el.text || ''}
             onChange={e => up({ text: e.target.value })}
             placeholder="Testo personalizzato"/>
@@ -456,26 +497,61 @@ function TextElProps({ el, onChange }) {
 
 function BlockElProps({ el, onChange, assets }) {
   const up = p => onChange({ ...el, ...p })
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const photoId = el.photo_id
+
   return (
     <>
-      {el.type === 'photo' && assets?.length > 0 && (
-        <Row label="Scegli foto">
-          <div style={{ display:'flex', flexWrap:'wrap', gap:3, maxHeight:110, overflowY:'auto', padding:2 }}>
-            {assets.map(a => (
-              <div key={a.id}
-                onClick={() => up({ photo_id: a.id })}
-                title={a.originalFileName || a.id}
-                style={{
-                  width:36, height:36, cursor:'pointer', borderRadius:4,
-                  overflow:'hidden', flexShrink:0, boxSizing:'border-box',
-                  border: el.photo_id === a.id ? '2px solid #4ac585' : '2px solid transparent',
-                }}>
-                <img src={`/api/thumb/${a.id}`} alt="" draggable={false}
-                  style={{ width:'100%', height:'100%', objectFit:'cover', display:'block' }}/>
-              </div>
-            ))}
-          </div>
-        </Row>
+      {el.type === 'photo' && (
+        <>
+          <Row label="Foto">
+            <div style={{ display:'flex', gap:5, alignItems:'center' }}>
+              {photoId && (
+                <div style={{ width:44, height:44, overflow:'hidden', borderRadius:4,
+                  flexShrink:0, border:'1px solid var(--border)' }}>
+                  <img src={`/api/thumb/${photoId}`} alt="" draggable={false}
+                    style={{ width:'100%', height:'100%', objectFit:'cover', display:'block' }}/>
+                </div>
+              )}
+              <button onClick={() => setPickerOpen(true)}
+                style={{ flex:1, fontSize:11, padding:'4px 8px', cursor:'pointer',
+                  background:'var(--bg3)', border:'1px solid var(--border)',
+                  borderRadius:5, color:'var(--text)', textAlign:'left' }}>
+                {photoId ? '↻ Cambia foto' : '📷 Scegli foto'}
+              </button>
+              {photoId && (
+                <button onClick={() => up({ photo_id:undefined, photo_zoom:1, photo_pan_x:0, photo_pan_y:0 })}
+                  title="Rimuovi foto"
+                  style={{ fontSize:11, padding:'4px 6px', cursor:'pointer',
+                    background:'none', border:'1px solid #e05050',
+                    borderRadius:5, color:'#e05050', flexShrink:0 }}>✕</button>
+              )}
+            </div>
+          </Row>
+          {photoId && (
+            <>
+              <Row label={`Zoom ${Math.round((el.photo_zoom||1)*100)}%`}>
+                <Sld min={100} max={300} step={1} value={Math.round((el.photo_zoom||1)*100)}
+                  onChange={v => up({ photo_zoom: v/100 })}/>
+              </Row>
+              <Row label={`Pan X ${el.photo_pan_x||0}%`}>
+                <Sld min={-50} max={50} step={1} value={el.photo_pan_x||0}
+                  onChange={v => up({ photo_pan_x: v })}/>
+              </Row>
+              <Row label={`Pan Y ${el.photo_pan_y||0}%`}>
+                <Sld min={-50} max={50} step={1} value={el.photo_pan_y||0}
+                  onChange={v => up({ photo_pan_y: v })}/>
+              </Row>
+            </>
+          )}
+          {pickerOpen && (
+            <DividerPhotoPickerModal
+              assets={assets}
+              currentId={photoId}
+              onSelect={id => up({ photo_id: id })}
+              onClose={() => setPickerOpen(false)}/>
+          )}
+        </>
       )}
       <p className="text-xs text-muted" style={{ margin:'0 0 6px' }}>
         Trascina i bordi sull'anteprima per ridimensionare
@@ -550,19 +626,24 @@ function LineProps({ line, onChange, onDelete }) {
 
 // ── PresetPanel ───────────────────────────────────────────────────────────────
 
-const PRESETS_KEY = 'divider_presets_v1'
 function PresetPanel({ ds, onLoad }) {
-  const load = () => { try { return JSON.parse(localStorage.getItem(PRESETS_KEY)||'[]') } catch { return [] } }
-  const [presets, setPresets] = useState(load)
+  const [presets, setPresets] = useState([])
   const [name, setName]       = useState('')
+
+  useEffect(() => {
+    axios.get('/api/presets/divider').then(r => setPresets(r.data)).catch(() => {})
+  }, [])
+
   const save = () => {
     if (!name.trim()) return
-    const np = [{ name:name.trim(), style:ds, ts:Date.now() }, ...presets.filter(p=>p.name!==name.trim())].slice(0,20)
-    setPresets(np); localStorage.setItem(PRESETS_KEY, JSON.stringify(np)); setName('')
+    axios.post('/api/presets/divider', { name: name.trim(), style: ds, ts: Date.now() })
+      .then(r => { setPresets(r.data); setName('') })
+      .catch(() => {})
   }
   const del = (n) => {
-    const np = presets.filter(p=>p.name!==n)
-    setPresets(np); localStorage.setItem(PRESETS_KEY, JSON.stringify(np))
+    axios.delete(`/api/presets/divider/${encodeURIComponent(n)}`)
+      .then(r => setPresets(r.data))
+      .catch(() => {})
   }
   return (
     <div style={{ marginTop:8, borderTop:'1px solid var(--border)', paddingTop:8 }}>
@@ -594,6 +675,58 @@ function PresetPanel({ ds, onLoad }) {
         ))}
       </div>
     </div>
+  )
+}
+
+// ── DividerPhotoPickerModal ───────────────────────────────────────────────────
+
+function DividerPhotoPickerModal({ assets, currentId, onSelect, onClose }) {
+  const [filter, setFilter] = useState('')
+  const items = (assets || [])
+    .filter(a => (a.type || 'IMAGE').toUpperCase() !== 'VIDEO')
+    .filter(a => !filter || (a.originalFileName || '').toLowerCase().includes(filter.toLowerCase()))
+
+  return createPortal(
+    <div
+      style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.88)', zIndex:9500,
+        display:'flex', alignItems:'center', justifyContent:'center' }}
+      onClick={e => e.target === e.currentTarget && onClose()}
+    >
+      <div style={{ background:'var(--bg2)', borderRadius:12, padding:20, width:640,
+        maxHeight:'80vh', display:'flex', flexDirection:'column', gap:10,
+        border:'1px solid var(--border)', boxShadow:'0 24px 80px rgba(0,0,0,0.7)' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <h3 style={{ fontFamily:'var(--font-display)', fontWeight:300, fontSize:18, margin:0 }}>
+            Scegli foto
+          </h3>
+          <button onClick={onClose}
+            style={{ background:'none', border:'none', fontSize:18, color:'var(--text3)', cursor:'pointer' }}>✕</button>
+        </div>
+        <input className="form-input" placeholder="Cerca per nome file…" autoFocus
+          value={filter} onChange={e => setFilter(e.target.value)}/>
+        <div style={{ overflowY:'auto', flex:1 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(90px,1fr))', gap:6 }}>
+            {items.map(a => (
+              <div key={a.id}
+                onClick={() => { onSelect(a.id); onClose() }}
+                style={{ cursor:'pointer', borderRadius:5, overflow:'hidden', aspectRatio:'1',
+                  border:`2px solid ${a.id === currentId ? '#4ac585' : 'transparent'}`,
+                  transition:'border-color 0.12s' }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--gold)'}
+                onMouseLeave={e => e.currentTarget.style.borderColor = a.id === currentId ? '#4ac585' : 'transparent'}
+              >
+                <img src={`/api/thumb/${a.id}`} alt="" loading="lazy"
+                  style={{ width:'100%', height:'100%', objectFit:'cover', display:'block' }}/>
+              </div>
+            ))}
+          </div>
+          {items.length === 0 && (
+            <p style={{ textAlign:'center', padding:32, color:'var(--text3)' }}>Nessun risultato</p>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -680,6 +813,17 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
     updateEl(id, e => ({ ...e, x, y, w, h }))
   }
 
+  const handlePhotoZoom = useCallback((id, deltaY) => {
+    updateEl(id, e => ({
+      ...e,
+      photo_zoom: Math.max(1, Math.min(3, (e.photo_zoom || 1) - deltaY * 0.001)),
+    }))
+  }, [ds]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handlePhotoPan = useCallback((id, px, py) => {
+    updateEl(id, e => ({ ...e, photo_pan_x: px, photo_pan_y: py }))
+  }, [ds]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const selEl   = ds.elements?.find(e => e.id===selectedId)
   const selLine = (ds.lines||[]).find(l => l.id===selectedId)
   const selMeta = selEl ? (EL_META[selEl.type]||{}) : null
@@ -691,12 +835,14 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
   const displayItems = [...orderedFlat].reverse()
 
   return (
-    <div style={{ display:'flex', gap:12, alignItems:'flex-start' }}>
+    <div style={{
+      display:'flex', gap:12, alignItems:'start', overflowX:'auto',
+    }}>
 
       {/* ── Col 1: Canvas ── */}
-      <div style={{ flexShrink:0, display:'flex', flexDirection:'column', gap:4 }}>
+      <div style={{ width:canvasW, flexShrink:0, display:'flex', flexDirection:'column', gap:4 }}>
         <p className="text-xs text-muted" style={{ margin:0, fontSize:10 }}>
-          Trascina → sposta &nbsp;·&nbsp; Bordi verdi → ridimensiona
+          Trascina → sposta &nbsp;·&nbsp; Ctrl+trascina foto → pan &nbsp;·&nbsp; Rotella → zoom
         </p>
         <DividerCanvas
           style={ds} albumInfo={albumInfo}
@@ -705,6 +851,8 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
           onSelect={setSelectedId}
           onDrag={handleDrag}
           onResize={handleResize}
+          onPhotoZoom={handlePhotoZoom}
+          onPhotoPan={handlePhotoPan}
           dividerMapUrl={dividerMapUrl}
         />
         <p className="text-xs text-muted" style={{ margin:0, textAlign:'center', maxWidth:canvasW, fontSize:10 }}>
@@ -714,7 +862,7 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
 
       {/* ── Col 2: Unified layers list ── */}
       <div style={{
-        width:182, flexShrink:0,
+        width:220, flexShrink:0,
         maxHeight: canvasH + 28, overflowY:'auto',
         display:'flex', flexDirection:'column', gap:8,
       }}>
@@ -834,7 +982,7 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
 
       {/* ── Col 3: Properties panel ── */}
       <div style={{
-        flex:'1 1 0', minWidth:150,
+        flex:'1 1 220px', minWidth:200,
         maxHeight: canvasH + 28, overflowY:'auto',
       }}>
         {(selEl || selLine) ? (
@@ -897,7 +1045,8 @@ export function DividerEditorModal({ value, onChange, onClose, profile, albumInf
     document.addEventListener('mouseup', onUp)
   }
 
-  const canvasWidth = size.w ? Math.max(320, Math.round(size.w - 340)) : 400
+  // Reserve ~500px for the two side panels (220px layers + 240px props + gaps + padding)
+  const canvasWidth = size.w ? Math.max(220, Math.round(size.w - 500)) : 340
 
   return createPortal(
     <>

@@ -50,6 +50,36 @@ const MIN_SIZE  = 5   // % — dimensione minima slot
 function uid() { return Math.random().toString(36).slice(2) + Date.now().toString(36) }
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
 
+function autoNameSlots(slots, orientation) {
+  const pageAR = orientation === 'landscape' ? CH/CW : CW/CH
+  const photo = slots.filter(s => s.slot_type !== 'caption')
+  const capt  = slots.filter(s => s.slot_type === 'caption')
+  const n = photo.length
+  const suffix = capt.length > 0 ? ` +${capt.length}T` : ''
+  if (n === 0) return capt.length === 1 ? '1 didascalia' : `${capt.length} didascalie`
+  const nPort = photo.filter(s => (s.w / (s.h || 1)) * pageAR < 1).length
+  const nLand = n - nPort
+  if (n === 1) return `1 ${nPort ? 'verticale' : 'orizzontale'}${suffix}`
+  if (n === 2) {
+    if (nPort === 2) return `2 verticali${suffix}`
+    if (nLand === 2) return `2 orizzontali${suffix}`
+    return `vert + oriz${suffix}`
+  }
+  if (n === 3) {
+    const areas = photo.map(s => s.w * s.h)
+    const maxA = Math.max(...areas), minA = Math.min(...areas)
+    if (maxA / minA > 2) return `1 grande + 2${suffix}`
+    return `3 foto${suffix}`
+  }
+  const areas = photo.map(s => s.w * s.h)
+  const maxA = Math.max(...areas), minA = Math.min(...areas)
+  if (maxA / minA < 1.4) {
+    if (n === 4) return `4 griglia 2×2${suffix}`
+    if (n === 6) return `6 griglia 3×2${suffix}`
+  }
+  return `${n} foto${suffix}`
+}
+
 /** Griglia uniforme di n slot */
 function makeGrid(n) {
   const cols = Math.ceil(Math.sqrt(n))
@@ -111,8 +141,8 @@ function LayoutThumb({ pt, profileOrientation, onEdit, onDelete, onDuplicate, on
             return (
               <g key={i}>
                 <rect x={x+1.5} y={y+1.5} width={w-3} height={h-3}
-                  fill={s.slot_type==='caption'?'rgba(100,160,200,0.18)':'rgba(155,150,140,0.25)'}
-                  stroke={s.slot_type==='caption'?'#7eb8d4':'#a8a49c'}
+                  fill={s.slot_type==='caption'?'rgba(100,160,200,0.35)':'rgba(212,170,90,0.28)'}
+                  stroke={s.slot_type==='caption'?'#7eb8d4':'#c8a84a'}
                   strokeWidth={1} strokeDasharray={s.slot_type==='caption'?'3,2':'4,2.5'} rx={1}/>
                 {w>20&&h>14&&(
                   <text x={x+w/2} y={y+h/2+3.5} textAnchor="middle"
@@ -163,14 +193,15 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
 
   const [slots,   setSlots]   = useState(() => initSlots.map(s=>({...s})))
   const [label,   setLabel]   = useState(initLabel)
-  const [pref,    setPref]    = useState('any')
   const [ptOri,   setPtOri]   = useState(initPtOrientation)
   const [magnet, setMagnet] = useState(true)
   const [hover,  setHover]  = useState(null)   // {si, edge} | null
   const [n,      setN]      = useState(initSlots.length)
+  const [tableDragIdx,  setTableDragIdx]  = useState(null)
+  const [tableDragOver, setTableDragOver] = useState(null)
 
   const svgRef  = useRef(null)
-  const dragRef = useRef(null)  // {si, edge, startX, startY, snapshot, sr}
+  const dragRef = useRef(null)  // {si, edge|'move', startX, startY, snapshot, sr}
 
   const GRAB_W = 14   // px grab zone width
   const PILL   = 5    // px pill half-size
@@ -229,6 +260,44 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
       } else {  // bottom
         const newB = clamp(s.y + s.h + dy, s.y + MIN_SIZE, 100)
         s.h = parseFloat((newB - s.y).toFixed(2))
+      }
+      setSlots(prev => prev.map((o,j) => j===d.si ? s : o))
+    }
+
+    const onUp = () => {
+      const d = dragRef.current
+      if (d) setSlots(prev => applySnap(prev, d.si))
+      dragRef.current = null
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  // Avvia drag per spostare uno slot (interno)
+  const startMoveDrag = (e, si) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const sr = svgRef.current.getBoundingClientRect()
+    dragRef.current = {
+      si, edge: 'move',
+      startX: e.clientX, startY: e.clientY,
+      sr,
+      snapshot: slots.map(s => ({...s})),
+    }
+
+    const onMove = (me) => {
+      const d = dragRef.current
+      if (!d || d.edge !== 'move') return
+      const dx = ((me.clientX - d.startX) / d.sr.width)  * 100
+      const dy = ((me.clientY - d.startY) / d.sr.height) * 100
+      const snap0 = d.snapshot[d.si]
+      const s = {
+        ...snap0,
+        x: parseFloat(clamp(snap0.x + dx, 0, 100 - snap0.w).toFixed(2)),
+        y: parseFloat(clamp(snap0.y + dy, 0, 100 - snap0.h).toFixed(2)),
       }
       setSlots(prev => prev.map((o,j) => j===d.si ? s : o))
     }
@@ -328,7 +397,7 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
               ✏ Editor layout
             </h3>
             <p style={{ fontSize:11, color:'var(--text3)', fontFamily:'var(--font-mono)' }}>
-              Trascina i bordi dorati · ogni slot è indipendente · il magnete avvicina i bordi al rilascio
+              Trascina interno → sposta slot · bordi dorati → ridimensiona · magnete avvicina al rilascio
             </p>
           </div>
           <button onClick={onCancel}
@@ -347,15 +416,6 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
               <input className="form-input" value={label}
                 onChange={e=>setLabel(e.target.value)}
                 placeholder="es. Ritratto + striscia"/>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Orientamento preferito foto</label>
-              <select className="form-select" value={pref} onChange={e=>setPref(e.target.value)}>
-                <option value="any">Misto (qualsiasi)</option>
-                <option value="portrait">Verticale (ritratto)</option>
-                <option value="landscape">Orizzontale (paesaggio)</option>
-              </select>
             </div>
 
             <div className="form-group">
@@ -412,18 +472,39 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
             <div style={{ background:'var(--bg3)', borderRadius:6,
               border:'1px solid var(--border)', padding:'8px 10px' }}>
               <p style={{ fontSize:10, color:'var(--text3)', fontFamily:'var(--font-mono)', marginBottom:6 }}>
-                Coordinate slot (%):
+                Coordinate slot (%) · z-index = ordine:
               </p>
               <table style={{ borderCollapse:'collapse', fontSize:10, fontFamily:'var(--font-mono)', width:'100%' }}>
                 <thead><tr style={{ color:'var(--text3)' }}>
-                  {['#','Tipo','X','Y','W','H'].map(h=>(
-                    <th key={h} style={{ padding:'2px 5px', textAlign:'right', fontWeight:400 }}>{h}</th>
+                  {['','#','Tipo','X','Y','W','H'].map(h=>(
+                    <th key={h} style={{ padding:'2px 4px', textAlign:'right', fontWeight:400 }}>{h}</th>
                   ))}
                 </tr></thead>
                 <tbody>
                   {slots.map((s,i)=>(
-                    <tr key={i} style={{ borderTop:'1px solid var(--border)', color:'var(--text2)' }}>
-                      <td style={{ padding:'2px 5px', color:'var(--gold)', textAlign:'right' }}>{i+1}</td>
+                    <tr key={i}
+                      draggable
+                      onDragStart={() => setTableDragIdx(i)}
+                      onDragOver={e => { e.preventDefault(); setTableDragOver(i) }}
+                      onDrop={() => {
+                        if (tableDragIdx !== null && tableDragIdx !== i) {
+                          setSlots(prev => {
+                            const next = [...prev]
+                            const [moved] = next.splice(tableDragIdx, 1)
+                            next.splice(i, 0, moved)
+                            return next
+                          })
+                        }
+                        setTableDragIdx(null); setTableDragOver(null)
+                      }}
+                      onDragEnd={() => { setTableDragIdx(null); setTableDragOver(null) }}
+                      style={{
+                        borderTop:'1px solid var(--border)', color:'var(--text2)',
+                        background: tableDragOver === i && tableDragIdx !== i ? 'rgba(74,197,133,0.12)' : 'transparent',
+                        cursor:'grab',
+                      }}>
+                      <td style={{ padding:'2px 3px', color:'var(--text3)', textAlign:'center', userSelect:'none' }}>⠿</td>
+                      <td style={{ padding:'2px 4px', color:'var(--gold)', textAlign:'right' }}>{i+1}</td>
                       <td style={{ padding:'2px 4px', textAlign:'center' }}>
                         <button
                           onClick={()=>setSlots(ss=>ss.map((sl,si)=>si===i?{...sl,slot_type:sl.slot_type==='caption'?'photo':'caption'}:sl))}
@@ -436,7 +517,7 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
                         </button>
                       </td>
                       {[s.x,s.y,s.w,s.h].map((v,j)=>(
-                        <td key={j} style={{ padding:'2px 5px', textAlign:'right' }}>{v.toFixed(1)}</td>
+                        <td key={j} style={{ padding:'2px 4px', textAlign:'right' }}>{v.toFixed(1)}</td>
                       ))}
                     </tr>
                   ))}
@@ -446,7 +527,10 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
                 {slots.length} slot · {slots.filter(s=>s.h>s.w).length} vert · {slots.filter(s=>s.w>=s.h).length} orizz · {slots.filter(s=>s.slot_type==='caption').length} T
               </p>
               <p style={{ fontSize:9, color:'#7eb8d4', marginTop:4 }}>
-                📷 = slot foto &nbsp;·&nbsp; T = slot didascalia (usato solo con foto con descrizione)
+                📷 = slot foto &nbsp;·&nbsp; T = slot didascalia
+              </p>
+              <p style={{ fontSize:9, color:'var(--text3)', marginTop:3 }}>
+                ⠿ Trascina righe per riordinare · primo = sotto, ultimo = sopra (z-index)
               </p>
             </div>
           </div>
@@ -474,10 +558,12 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
   >
                     {(()=>{
                       const isCaption = s.slot_type === 'caption'
-                      const fillBase = isCaption ? 'rgba(100,160,200,0.10)' : 'rgba(212,170,90,0.04)'
-                      const fillAct  = isCaption ? 'rgba(100,160,200,0.22)' : 'rgba(212,170,90,0.10)'
-                      const strokeB  = isCaption ? 'rgba(100,160,200,0.7)'  : 'rgba(212,170,90,0.45)'
+                      const fillBase = isCaption ? 'rgba(100,160,200,0.28)' : 'rgba(212,170,90,0.20)'
+                      const fillAct  = isCaption ? 'rgba(100,160,200,0.42)' : 'rgba(212,170,90,0.34)'
+                      const strokeB  = isCaption ? 'rgba(100,160,200,0.7)'  : 'rgba(212,170,90,0.55)'
                       const strokeA  = isCaption ? 'rgba(100,160,200,1.0)'  : 'rgba(212,170,90,0.9)'
+                      const innerW = Math.max(0, sw - GRAB_W*2)
+                      const innerH = Math.max(0, sh - GRAB_W*2)
                       return (<>
                         <rect x={sx+0.5} y={sy+0.5} width={sw-1} height={sh-1}
                           fill={isA?fillAct:fillBase}
@@ -486,7 +572,7 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
                         {sw>30&&sh>20&&(
                           <text x={sx+sw/2} y={sy+sh/2+(isCaption?2:5)} textAnchor="middle"
                             fontSize={Math.min(18,Math.max(8,Math.min(sw,sh)*0.22))}
-                            fill={isA?(isCaption?'rgba(100,160,200,0.9)':'rgba(212,170,90,0.7)'):(isCaption?'#7eb8d4':'#bbb')} fontFamily="monospace">
+                            fill={isA?(isCaption?'rgba(100,160,200,0.9)':'rgba(212,170,90,0.7)'):(isCaption?'#7eb8d4':'#c8a84a')} fontFamily="monospace">
                             {isCaption ? 'T' : i+1}
                           </text>
                         )}
@@ -495,6 +581,16 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
                             fontSize={8} fill={isCaption?'#7eb8d4':'#aaa'} fontFamily="monospace">
                             {isCaption ? 'didascalia' : `${(s.w/s.h).toFixed(2)} ${isP?'↕':'↔'}`}
                           </text>
+                        )}
+                        {/* Interior drag rect for slot move */}
+                        {innerW > 4 && innerH > 4 && (
+                          <rect
+                            x={sx+GRAB_W} y={sy+GRAB_W}
+                            width={innerW} height={innerH}
+                            fill="transparent"
+                            style={{ cursor:'move' }}
+                            onMouseDown={e => startMoveDrag(e, i)}
+                          />
                         )}
                       </>)
                     })()}
@@ -509,7 +605,7 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
 
             </svg>
             <p style={{ fontSize:10, color:'var(--text3)', fontFamily:'var(--font-mono)', marginTop:6 }}>
-              Ogni bordo è indipendente — gli slot possono sovrapporsi o avere spazi
+              Trascina interno → sposta · bordi dorati → ridimensiona · bordi indipendenti
             </p>
 
 
@@ -527,7 +623,7 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
           <div style={{ display:'flex', gap:10 }}>
             <button className="btn" onClick={onCancel}>Annulla</button>
             <button className="btn btn-primary"
-              onClick={()=>onSave(label.trim()||'Layout', pref, slots.map(s=>({...s})), ptOri)}>
+              onClick={()=>onSave(label.trim()||autoNameSlots(slots, ptOri), slots.map(s=>({...s})), ptOri)}>
               ✓ Salva layout
             </button>
           </div>
@@ -545,7 +641,7 @@ export default function PageTypeEditor({ pageTypes: initPTs, onChange, orientati
     if (initPTs && initPTs.length > 0)
       return initPTs.map(pt=>({ ...pt, slots: pt.slots.map(s=>({...s})) }))
     const defs = landscape ? DEFAULTS_LANDSCAPE : DEFAULTS_PORTRAIT
-    return defs.map(d=>({ id:uid(), label:d.label, pref:'any', slots:d.slots.map(s=>({...s})) }))
+    return defs.map(d=>({ id:uid(), label:d.label, slots:d.slots.map(s=>({...s})) }))
   })
 
   // null | { mode:'new'|'edit', idx:number|null }
@@ -570,12 +666,12 @@ export default function PageTypeEditor({ pageTypes: initPTs, onChange, orientati
   const openEdit = (i) => setEditor({ mode:'edit', idx:i })
   const close    = () => setEditor(null)
 
-  const save = (label, pref, slots, ptOri='any') => {
+  const save = (label, slots, ptOri='any') => {
     if (editor.mode === 'new') {
-      const newPT = { id:uid(), label, pref, slots, enabled:true, orientation: ptOri }
+      const newPT = { id:uid(), label, slots, enabled:true, orientation: ptOri }
       commit([...pts, newPT])
     } else {
-      commit(pts.map((pt,i) => i===editor.idx ? {...pt, label, pref, slots, orientation: ptOri} : pt))
+      commit(pts.map((pt,i) => i===editor.idx ? {...pt, label, slots, orientation: ptOri} : pt))
     }
     close()
   }
