@@ -1029,7 +1029,9 @@ function LayoutPickerDropdown({ allPageTypes, currentId, profile, onChange }) {
       </button>
 
       {open && (
-        <div style={{
+        <div
+          onWheel={e=>e.stopPropagation()}
+          style={{
           position:'absolute', top:'100%', left:0, zIndex:9200,
           background:'var(--bg2)', border:'1px solid var(--border)',
           borderRadius:8, boxShadow:'0 8px 32px rgba(0,0,0,0.6)',
@@ -1264,9 +1266,15 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
 
   const changePageType=(ptId)=>{
     const pt=allPageTypes.find(p=>p.id===ptId);if(!pt) return
-    const curItems=page.items.map(i=>i.item)
-    onUpdatePage({...page,page_type_id:ptId,page_type:pt,
-      items:pt.slots.map((slot,idx)=>({slot,item:curItems[idx]??null}))})
+    // Merge visible items + previously pooled overflow so photos are restored when
+    // switching back to a layout with more slots.
+    const visible = page.items.map(i=>i.item).filter(Boolean)
+    const pool    = (page._photo_pool||[]).filter(Boolean)
+    const inView  = new Set(visible.map(i=>i.asset_id).filter(Boolean))
+    const merged  = [...visible, ...pool.filter(i=>!inView.has(i.asset_id))]
+    const newItems= pt.slots.map((slot,idx)=>({slot, item:merged[idx]??null}))
+    const newPool = merged.slice(pt.slots.length)
+    onUpdatePage({...page, page_type_id:ptId, page_type:pt, items:newItems, _photo_pool:newPool})
   }
 
   const addSlot=()=>{
@@ -1333,6 +1341,17 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
     return (
       <>
       <div ref={containerRef} style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}>
+        {/* Ghost toolbar — same height as photo-page toolbar so spread alignment matches */}
+        {allPageTypes.length>0 && (
+          <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8,flexShrink:0,visibility:'hidden'}}>
+            <span className="text-xs text-muted" style={{flexShrink:0}}>Layout:</span>
+            <div style={{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:6,
+              fontSize:11,padding:'3px 6px',
+              background:'var(--bg3)',border:'1px solid var(--border)',
+              color:'var(--text)',borderRadius:5}}>—</div>
+            <button className="btn btn-sm" style={{fontSize:10,flexShrink:0,padding:'3px 8px'}}>+ Slot</button>
+          </div>
+        )}
         <div style={{position:'relative',flexShrink:0}}>
           <div style={{width:W,height:H,borderRadius:2,boxShadow:'0 16px 64px rgba(0,0,0,0.55)',overflow:'hidden'}}>
             <DividerCanvas
@@ -1344,7 +1363,6 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
             />
           </div>
         </div>
-        <p className="text-xs text-muted mt-2">Pagina divisore album</p>
       </div>
       {/* Button always on top via portal */}
       {isActive && createPortal(
@@ -2504,6 +2522,8 @@ export default function PreviewPage() {
   const [projectModal,setProjectModal]=useState(null)  // null | 'save' | 'load'
   const [lastAutoSave,setLastAutoSave]=useState(null)
   const autoSaveTimerRef = useRef(null)
+  const [profileMismatch,setProfileMismatch]=useState(null)   // {apiProfile, changes:{margini,formato}}
+  const [profileApply,setProfileApply]=useState({margini:true,formato:false})
   const liveLayoutRef = useRef(null)
   const liveTransformsRef = useRef(null)
   const livePageRef = useRef(null)
@@ -2513,7 +2533,7 @@ export default function PreviewPage() {
   const [draggedAsset,setDraggedAsset]=useState(null)
   const [spreadView,setSpreadView]=useState(()=>{try{return JSON.parse(localStorage.getItem('pb_spreadView'))||false}catch{return false}})
   const [viewZoom,setViewZoom]=useState(1.0)
-  const zoomStep=0.15
+  const zoomStep=0.10
   const zoomMin=0.3
   const zoomMax=2.5
   const [sidebarDrag,setSidebarDrag]=useState(null)
@@ -2551,6 +2571,22 @@ export default function PreviewPage() {
           .catch(() => {})
       })
     }
+    // Profile mismatch check: compare embedded profile with current API profile
+    if (data.profile?.id) {
+      axios.get(`/api/profiles/${data.profile.id}`).then(r => {
+        const api = r.data
+        const cur = data.profile
+        const marginiChanged = ['margin_mm','margin_top','margin_right','margin_bottom','margin_left']
+          .some(f => (api[f]??null) !== (cur[f]??null))
+        const formatoChanged = ['page_size','orientation']
+          .some(f => (api[f]??null) !== (cur[f]??null))
+        if (marginiChanged || formatoChanged) {
+          setProfileMismatch({ apiProfile: api, changes: { margini:marginiChanged, formato:formatoChanged } })
+          setProfileApply({ margini: marginiChanged, formato: false })
+        }
+      }).catch(()=>{})
+    }
+
     const sortAssets = arr => [...(arr||[])].sort((a,b)=>(a.localDateTime||'').localeCompare(b.localDateTime||''))
     if (data._multi_album && data._album_ids?.length) {
       Promise.all(data._album_ids.map(id=>axios.get(`/api/albums/${id}`)))
@@ -2657,6 +2693,21 @@ export default function PreviewPage() {
   const assetById = useMemo(() => Object.fromEntries(albumAssets.map(a=>[a.id,a])), [albumAssets])
 
   const persist=(nl)=>{sessionStorage.setItem('photobook_layout',JSON.stringify(nl));return nl}
+
+  const applyProfileChanges=()=>{
+    if(!profileMismatch) return
+    const api=profileMismatch.apiProfile
+    const np={...layout.profile}
+    if(profileApply.margini)
+      ['margin_mm','margin_top','margin_right','margin_bottom','margin_left']
+        .forEach(f=>{ np[f]=api[f] })
+    if(profileApply.formato)
+      ['page_size','orientation']
+        .forEach(f=>{ np[f]=api[f] })
+    setLayout(prev=>persist({...prev,profile:np}))
+    setHasChanges(true)
+    setProfileMismatch(null)
+  }
 
   const updatePage=useCallback((idx,newPage)=>{
     setLayout(prev=>{const pages=[...prev.pages];pages[idx]=newPage;return persist({...prev,pages})})
@@ -3243,6 +3294,11 @@ export default function PreviewPage() {
             el = el.parentElement
           }
           e.preventDefault()
+          if(e.ctrlKey){
+            const delta=e.deltaY>0?-0.05:0.05
+            setViewZoom(z=>Math.max(zoomMin,Math.min(zoomMax,+(z+delta).toFixed(2))))
+            return
+          }
           if(e.deltaY>0){
             setCurrentPage(p=>{
               if(spreadView&&p>=0){const l=p%2===0?p-1:p;return Math.min(layout.pages.length-1,l+2)}
@@ -3250,11 +3306,46 @@ export default function PreviewPage() {
             })
           } else {
             setCurrentPage(p=>{
-              if(spreadView&&p>=0){const l=p%2===0?p-1:p;return Math.max(-1,l-2)}
+              if(spreadView&&p>=0){const l=p%2===0?p-1:p;return l===1?0:Math.max(-1,l-2)}
               return Math.max(-1,p-1)
             })
           }
         }}>
+        {/* Profile mismatch banner */}
+        {profileMismatch && (
+          <div style={{
+            display:'flex', alignItems:'center', gap:10, flexWrap:'wrap',
+            padding:'8px 14px', background:'rgba(212,170,50,0.12)',
+            borderBottom:'1px solid rgba(212,170,50,0.35)', flexShrink:0,
+          }}>
+            <span style={{fontSize:12,color:'var(--gold)',fontWeight:500,flexShrink:0}}>⚠ Profilo modificato</span>
+            <span style={{fontSize:11,color:'var(--text2)',flex:1,minWidth:160}}>
+              Le impostazioni del profilo di stampa sono cambiate. Applica le modifiche selezionate mantenendo pagine e foto.
+            </span>
+            <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+              {profileMismatch.changes.margini && (
+                <label style={{display:'flex',gap:5,alignItems:'center',fontSize:12,cursor:'pointer',color:'var(--text)'}}>
+                  <input type="checkbox" checked={profileApply.margini}
+                    onChange={e=>setProfileApply(p=>({...p,margini:e.target.checked}))}/>
+                  Margini
+                </label>
+              )}
+              {profileMismatch.changes.formato && (
+                <label style={{display:'flex',gap:5,alignItems:'center',fontSize:12,cursor:'pointer',color:'var(--text)'}}>
+                  <input type="checkbox" checked={profileApply.formato}
+                    onChange={e=>setProfileApply(p=>({...p,formato:e.target.checked}))}/>
+                  Formato pagina
+                </label>
+              )}
+              <button className="btn btn-sm btn-primary" style={{fontSize:11,padding:'3px 12px'}}
+                disabled={!profileApply.margini&&!profileApply.formato}
+                onClick={applyProfileChanges}>Applica</button>
+              <button className="btn btn-sm" style={{fontSize:11,padding:'3px 8px'}}
+                onClick={()=>setProfileMismatch(null)}>✕ Ignora</button>
+            </div>
+          </div>
+        )}
+
         {/* Top bar: prev/next + spread toggle + add/remove page — one compact line */}
         <div style={{
           display:'flex', alignItems:'center', justifyContent:'space-between',
@@ -3264,9 +3355,10 @@ export default function PreviewPage() {
           <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px'}}
             onClick={()=>{
               if(spreadView&&currentPage>=0){
-                // In spread: step back by 2 (to prev pair), snap to odd index (left of pair)
+                // In spread: step back by 2 (to prev pair), snap to odd index (left of pair).
+                // l===1 means "spread 1" → go to spread 0 (currentPage=0, divider), not cover.
                 const leftIdx=currentPage%2===0?currentPage-1:currentPage
-                setCurrentPage(Math.max(-1,leftIdx-2))
+                setCurrentPage(leftIdx===1?0:Math.max(-1,leftIdx-2))
               } else {
                 setCurrentPage(p=>Math.max(-1,p-1))
               }

@@ -183,7 +183,7 @@ function MarginInput({ side, label, formValue, onCommit }) {
       <label style={{fontSize:10,color:'var(--text3)',fontFamily:'var(--font-mono)'}}>{label}</label>
       <input type="number" className="form-input" min={0} max={50} step={0.5}
         value={txt}
-        onChange={e => setTxt(e.target.value)}
+        onChange={e => { setTxt(e.target.value); commit(e.target.value) }}
         onBlur={e => { commit(e.target.value) }}
         onKeyDown={e => { if(e.key==='Enter') { commit(e.target.value); e.target.blur() } }}
         style={{width:64,textAlign:'center'}}/>
@@ -1135,6 +1135,23 @@ export default function ProfilesPage() {
 
         </div>
         {toast&&<div className={`toast ${toast.type}`}>{toast.msg}</div>}
+        {editing !== 'new' && autoSaveStatus !== 'idle' && (
+          <div style={{
+            position:'fixed', bottom:24, right:24, zIndex:9999,
+            padding:'8px 16px', borderRadius:8, fontSize:12, fontWeight:500,
+            boxShadow:'0 4px 16px rgba(0,0,0,0.35)',
+            background:'var(--bg2)', border:'1px solid var(--border)',
+            color: autoSaveStatus==='error'   ? '#e05050'
+                 : autoSaveStatus==='saving'||autoSaveStatus==='pending' ? 'var(--gold)'
+                 : '#4ac585',
+            transition:'opacity 0.3s',
+          }}>
+            {autoSaveStatus==='pending' ? '⟳ In attesa…'
+           : autoSaveStatus==='saving'  ? '⟳ Salvataggio…'
+           : autoSaveStatus==='saved'   ? '✓ Salvato'
+           : '⚠ Errore salvataggio'}
+          </div>
+        )}
       </SectionOpenCtx.Provider>
     )
   }

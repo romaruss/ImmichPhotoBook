@@ -4,6 +4,18 @@ All notable changes to PhotoBook Studio are documented here.
 
 ---
 
+## [0.9.3] - 2026-05-06
+
+### Fixed
+- **Preview zoom** — step reduced 0.15→0.10 for smoother increments; Ctrl+scroll wheel zooms ±0.05 per tick without changing page
+- **Spread view alignment** — divider page now has a ghost toolbar placeholder matching photo pages and blank page, preventing vertical misalignment in 2-page spread view
+- **MarginInput auto-save** — arrow-key increments on margin fields now trigger auto-save immediately (previously only blur/Enter committed the value)
+
+### Added
+- **Save status banner** — fixed bottom-right badge shows auto-save state (pending / saving / saved / error) while editing an existing profile; always visible regardless of scroll position
+
+---
+
 ## [0.9.2] - 2026-05-06
 
 ### Fixed
