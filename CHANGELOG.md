@@ -4,6 +4,15 @@ All notable changes to PhotoBook Studio are documented here.
 
 ---
 
+## [0.9.2] - 2026-05-06
+
+### Fixed
+- **PDF page structure** — blank "seconda di copertina" page now always present after the cover (was only added when duplex was enabled); cover page shown alone in PDF 2-page view via `TwoPageRight` layout preference
+- **PDF margin alternation with duplex** — page counter no longer offset by the back-of-cover blank page; all content pages now get the correct inner/outer margin side, matching the screen spread view
+- **PDF duplex trailing blank** — end-of-book blank page for duplex sheet alignment was previously missing when content page count was odd; now correctly added in all cases
+
+---
+
 ## [0.9.1] - 2026-05-05
 
 ### Added

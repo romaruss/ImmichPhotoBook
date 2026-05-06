@@ -863,8 +863,10 @@ def generate_pdf(
     # Use (asset_id, round(w), round(h)) as cache key — same photo, same slot size → reuse.
     photo_jobs: list[tuple] = []  # (asset_id, w_pt, h_pt, pan_x, pan_y)
     # Phase 1 must use per-page margins (same as Phase 2) so slot dimensions match.
-    # page_counter in Phase 2 starts at 2 (cover=1) + 1 if duplex blank page.
-    _p1_counter = 3 if duplex else 2
+    # page_counter always starts at 2: the blank "seconda di copertina" page is always
+    # emitted after the cover but is NOT counted, so pages[0] stays at counter=2 (even=recto),
+    # matching the frontend convention: marginsForPage(pageIdx + 2) = marginsForPage(0+2=2).
+    _p1_counter = 2
     for page_idx, page in enumerate(pages):
         if page.get("_album_cover") or page.get("_album_separator"):
             _p1_counter += 1
@@ -982,6 +984,9 @@ def generate_pdf(
         cv.setTitle(album.get("albumName", "Fotolibro"))
         cv.setAuthor("PhotoBook Studio")
         cv.setCreator("PhotoBook Studio")
+        # Cover page (page 1) must appear alone in PDF 2-page view.
+        # TwoPageRight: page 1 is a right/cover page shown alone; pages 2+3, 4+5... pair normally.
+        cv._doc._catalog.setPageLayout('TwoPageRight')
 
         # Title page
         _draw_title_page(cv, album, map_image, pw, ph, margin, bleed, crop_marks=crop_marks,
@@ -990,9 +995,11 @@ def generate_pdf(
         cv.showPage()
 
         page_counter = 2
-        if duplex:
-            cv.showPage()
-            page_counter += 1
+        # Always emit a blank "seconda di copertina" page after the cover.
+        # This matches the screen spread view (leftIdx=-1 virtual blank + pages[0] divider).
+        # page_counter stays at 2 so pages[0] gets counter=2 (even=recto margins),
+        # consistent with frontend marginsForPage(pageIdx+2 = 0+2 = 2).
+        cv.showPage()
 
         n_pages = len(pages)
         for page_idx, page in enumerate(pages):

@@ -98,6 +98,35 @@ function makeGrid(n) {
   return slots
 }
 
+// ── Slot color palette (one distinct colour per slot index, cycles) ───────────
+const SLOT_PALETTE = [
+  [212, 160,  50],  // amber
+  [ 55, 185, 165],  // teal
+  [200,  75, 115],  // rose
+  [130,  90, 215],  // violet
+  [ 65, 190,  85],  // green
+  [220, 110,  45],  // orange
+  [ 50, 155, 215],  // sky
+  [200,  55,  55],  // red
+  [155, 200,  45],  // lime
+  [ 55, 115, 200],  // blue
+  [190, 140,  75],  // sand
+  [ 75, 200, 150],  // mint
+]
+
+function slotColor(i) {
+  const [r, g, b] = SLOT_PALETTE[i % SLOT_PALETTE.length]
+  return {
+    fill:      `rgba(${r},${g},${b},0.22)`,
+    fillAct:   `rgba(${r},${g},${b},0.40)`,
+    stroke:    `rgba(${r},${g},${b},0.70)`,
+    strokeAct: `rgba(${r},${g},${b},1.0)`,
+    tableBg:   `rgba(${r},${g},${b},0.14)`,
+    thumb:     `rgba(${r},${g},${b},0.32)`,
+    thumbStroke: `rgb(${Math.round(r*0.75)},${Math.round(g*0.75)},${Math.round(b*0.75)})`,
+  }
+}
+
 // ── Miniatura ─────────────────────────────────────────────────────────────────
 function LayoutThumb({ pt, profileOrientation, onEdit, onDelete, onDuplicate, onToggle }) {
   const ptOri  = pt.orientation || 'any'
@@ -138,16 +167,16 @@ function LayoutThumb({ pt, profileOrientation, onEdit, onDelete, onDuplicate, on
         <svg width={W} height={H} style={{ display:'block', background:'#e9e5dd' }}>
           {pt.slots.map((s,i) => {
             const x=(s.x/100)*W, y=(s.y/100)*H, w=(s.w/100)*W, h=(s.h/100)*H
+            const sc = slotColor(i)
             return (
               <g key={i}>
                 <rect x={x+1.5} y={y+1.5} width={w-3} height={h-3}
-                  fill={s.slot_type==='caption'?'rgba(100,160,200,0.35)':'rgba(212,170,90,0.28)'}
-                  stroke={s.slot_type==='caption'?'#7eb8d4':'#c8a84a'}
+                  fill={sc.thumb} stroke={sc.thumbStroke}
                   strokeWidth={1} strokeDasharray={s.slot_type==='caption'?'3,2':'4,2.5'} rx={1}/>
                 {w>20&&h>14&&(
                   <text x={x+w/2} y={y+h/2+3.5} textAnchor="middle"
                     fontSize={Math.min(10,Math.max(6,Math.min(w,h)*0.28))}
-                    fill={s.slot_type==='caption'?'#7eb8d4':'#aaa'} fontFamily="monospace">
+                    fill={sc.thumbStroke} fontFamily="monospace">
                     {s.slot_type==='caption'?'T':i+1}
                   </text>
                 )}
@@ -500,7 +529,9 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
                       onDragEnd={() => { setTableDragIdx(null); setTableDragOver(null) }}
                       style={{
                         borderTop:'1px solid var(--border)', color:'var(--text2)',
-                        background: tableDragOver === i && tableDragIdx !== i ? 'rgba(74,197,133,0.12)' : 'transparent',
+                        background: tableDragOver === i && tableDragIdx !== i
+                          ? 'rgba(74,197,133,0.12)'
+                          : slotColor(i).tableBg,
                         cursor:'grab',
                       }}>
                       <td style={{ padding:'2px 3px', color:'var(--text3)', textAlign:'center', userSelect:'none' }}>⠿</td>
@@ -558,10 +589,11 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
   >
                     {(()=>{
                       const isCaption = s.slot_type === 'caption'
-                      const fillBase = isCaption ? 'rgba(100,160,200,0.28)' : 'rgba(212,170,90,0.20)'
-                      const fillAct  = isCaption ? 'rgba(100,160,200,0.42)' : 'rgba(212,170,90,0.34)'
-                      const strokeB  = isCaption ? 'rgba(100,160,200,0.7)'  : 'rgba(212,170,90,0.55)'
-                      const strokeA  = isCaption ? 'rgba(100,160,200,1.0)'  : 'rgba(212,170,90,0.9)'
+                      const sc = slotColor(i)
+                      const fillBase = sc.fill
+                      const fillAct  = sc.fillAct
+                      const strokeB  = sc.stroke
+                      const strokeA  = sc.strokeAct
                       const innerW = Math.max(0, sw - GRAB_W*2)
                       const innerH = Math.max(0, sh - GRAB_W*2)
                       return (<>
@@ -572,13 +604,13 @@ function SlotEditorModal({ initSlots, initLabel, initPtOrientation='portrait', l
                         {sw>30&&sh>20&&(
                           <text x={sx+sw/2} y={sy+sh/2+(isCaption?2:5)} textAnchor="middle"
                             fontSize={Math.min(18,Math.max(8,Math.min(sw,sh)*0.22))}
-                            fill={isA?(isCaption?'rgba(100,160,200,0.9)':'rgba(212,170,90,0.7)'):(isCaption?'#7eb8d4':'#c8a84a')} fontFamily="monospace">
+                            fill={isA ? sc.strokeAct : sc.thumbStroke} fontFamily="monospace">
                             {isCaption ? 'T' : i+1}
                           </text>
                         )}
                         {sw>50&&sh>30&&(
                           <text x={sx+sw/2} y={sy+sh/2+(isCaption?16:18)} textAnchor="middle"
-                            fontSize={8} fill={isCaption?'#7eb8d4':'#aaa'} fontFamily="monospace">
+                            fontSize={8} fill={sc.thumbStroke} fontFamily="monospace">
                             {isCaption ? 'didascalia' : `${(s.w/s.h).toFixed(2)} ${isP?'↕':'↔'}`}
                           </text>
                         )}
