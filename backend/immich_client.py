@@ -74,7 +74,7 @@ async def get_asset_thumbnail(asset_id: str, size: str = "thumbnail") -> bytes:
         r = await client.get(
             f"{get_base_url()}/assets/{asset_id}/thumbnail",
             headers={**get_headers(), "Accept": "image/jpeg"},
-            params={"size": size},
+            params={"size": size, "edited": "true"},
         )
         r.raise_for_status()
         return r.content
@@ -99,7 +99,7 @@ async def get_asset_original(
             r = await c.get(
                 f"{get_base_url()}/assets/{asset_id}/thumbnail",
                 headers={**get_headers(), "Accept": "image/jpeg"},
-                params={"size": "preview"},
+                params={"size": "preview", "edited": "true"},
             )
             if r.status_code == 200 and len(r.content) > 1000:
                 return r.content, "image/jpeg"
@@ -186,7 +186,7 @@ async def fetch_assets_bulk(
                                 data = await client.get(
                                     f"{get_base_url()}/assets/{aid}/thumbnail",
                                     headers={**get_headers(), "Accept": "image/jpeg"},
-                                    params={"size": "thumbnail"},
+                                    params={"size": "thumbnail", "edited": "true"},
                                 )
                                 if data.status_code == 200:
                                     results[aid] = data.content

@@ -31,7 +31,7 @@ Configuration → Print profile → Generate layout → Edit preview → Export 
 1. **Configuration** — enter your Immich URL and API key
 2. **Print profile** — choose page size, orientation, margins, bleed, page layouts, caption style, GPS map style
 3. **Generate** — Smart Layout (automatic, face-aware, GPS maps) or Manual layout
-4. **Preview** — drag photos between slots, resize, pan/zoom, edit captions inline
+4. **Preview** — drag photos between slots, resize, pan/zoom, edit captions inline, click any page to edit
 5. **Export** — PDF (print shop ready) or SVG ZIP (editable in Illustrator, Inkscape, Scribus)
 
 ---
@@ -43,12 +43,13 @@ Configuration → Print profile → Generate layout → Edit preview → Export 
 - **Manual layout** — configurable page layouts per profile; visual slot editor with drag-to-move and drag-to-resize, z-index reorder, magnet snap
 - **Print profiles** — page sizes (A4, A3, A5, 20×20, 30×30, custom mm), portrait/landscape, margins, bleed, duplex; auto-save with discard support
 - **Page types** — orientation tag, filter by format/status/content, preset library (25 portrait + 25 landscape layouts included)
-- **Interactive preview** — swap/pan/zoom photos, WYSIWYG caption editor, add/remove/reorder pages, recalculate menu, 2-page spread view
-- **Album divider pages** — fully customisable: text elements (title, subtitle, multi-line free text), GPS map, photo slot (zoom/pan with Ctrl+drag), separator lines; drag-to-reorder layers; preset save/load
+- **Interactive preview** — swap/pan/zoom photos, WYSIWYG caption editor, add/remove/reorder pages, recalculate menu, 2-page spread view; click-to-edit cover and divider pages directly from preview
+- **Album divider pages** — fully customisable: text elements (title, subtitle, multi-line free text), GPS map, photo slot (zoom/pan), separator lines; drag-to-reorder layers; preset save/load
+- **Cover editor** — front, back, spine, inside pages with independent backgrounds, photos and text; spread export or separate PDF
 - **GPS maps** — static map slots with configurable tile style, marker shape/colour/size, route; Stadia Maps or OSM fallback
 - **Generation options** — duplicate removal (dHash + burst detection), quality filter, auto-captions toggle, named option presets
 - **Projects** — save and resume named projects across sessions
-- **Export** — PDF with bleed/crop marks, SVG ZIP with embedded photos; both respect pan/zoom/crop and caption styles
+- **Export modal** — per-export settings: DPI (150–600), paper weight (body and cover), color profile (sRGB, FOGRA39…), spine width, crop marks, spread or separate cover; progress bar with cancel
 - **Localisation** — Italian and English built-in
 
 ---

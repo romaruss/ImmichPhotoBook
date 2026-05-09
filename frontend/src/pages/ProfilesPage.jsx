@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, createContext, useContext } from 'react'
 import axios from 'axios'
 import { useT } from '../i18n.jsx'
 import PageTypeEditor from '../components/PageTypeEditor'
-import CoverStyleEditor, { DEFAULT_COVER } from '../components/CoverEditor'
+import { DEFAULT_COVER_CONFIG, DEFAULT_COVER_FRONT, DEFAULT_COVER_BACK, migrateCoverConfig, calcSpineWidthMm } from '../components/CoverConfig'
 import DividerEditor from '../components/DividerEditor'
+import CoverEditorModal from '../components/CoverEditorModal'
 
 // Standard page sizes with mm dimensions
 const STANDARD_SIZES = [
@@ -57,7 +58,9 @@ const DEFAULT_PROFILE = {
   export_dpi: 300,
   color_profile: 'srgb',
   caption_style:{ font:'Georgia, serif', size:13, color:'#e8e6e0', align:'center', valign:'center', bg:'#111116', italic:true, bold:false },
-  cover_style: { ...DEFAULT_COVER },
+  cover_style: null,
+  cover: null,
+  body_paper_gsm: 90,
   map_style: { ...DEFAULT_MAP_STYLE },
 }
 
@@ -180,13 +183,13 @@ function MarginInput({ side, label, formValue, onCommit }) {
   }
   return (
     <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:3}}>
-      <label style={{fontSize:10,color:'var(--text3)',fontFamily:'var(--font-mono)'}}>{label}</label>
+      <label style={{fontSize:10,color:'var(--text3)',textAlign:'center',lineHeight:1.3,maxWidth:90}}>{label}</label>
       <input type="number" className="form-input" min={0} max={50} step={0.5}
         value={txt}
         onChange={e => { setTxt(e.target.value); commit(e.target.value) }}
         onBlur={e => { commit(e.target.value) }}
         onKeyDown={e => { if(e.key==='Enter') { commit(e.target.value); e.target.blur() } }}
-        style={{width:64,textAlign:'center'}}/>
+        style={{width:76,textAlign:'center'}}/>
       <span style={{fontSize:9,color:'var(--text3)'}}>mm</span>
     </div>
   )
@@ -243,10 +246,11 @@ export default function ProfilesPage() {
   const [toast, setToast]             = useState(null)
   const [showCustomSizeMgr, setShowCustomSizeMgr] = useState(false)
   const [ptKey, setPtKey]             = useState(0)
-  const [marginLocked, setMarginLocked] = useState(true)
+  const [marginLocked, setMarginLocked] = useState(() => localStorage.getItem('pb_margin_locked') !== '0')
   const [mapPreviewUrl, setMapPreviewUrl]   = useState(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [autoSaveStatus, setAutoSaveStatus] = useState('idle') // 'idle'|'pending'|'saving'|'saved'|'error'
+  const [coverEditorOpen, setCoverEditorOpen] = useState(false)
   const previewTimerRef   = useRef(null)
   const autoSaveTimerRef  = useRef(null)
   const originalFormRef   = useRef(null)  // snapshot at edit-start for "Scarta modifiche"
@@ -568,6 +572,27 @@ export default function ProfilesPage() {
                 <input type="checkbox" checked={form.duplex} onChange={e=>set('duplex',e.target.checked)}/>
                 {p.duplexLabel}
               </label>
+              {form.duplex && (
+                <p className="text-xs text-muted" style={{marginTop:4,marginLeft:22}}>
+                  {p.duplexHint}
+                </p>
+              )}
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Grammatura pagine interne (gsm)
+                <span className="text-xs text-muted" style={{fontWeight:400,marginLeft:6}}>
+                  usata per stimare spessore dorso
+                </span>
+              </label>
+              <input type="number" className="form-input" style={{width:100}}
+                min={40} max={350} step={10}
+                value={form.body_paper_gsm ?? 90}
+                onChange={e=>set('body_paper_gsm', +e.target.value)}
+                onBlur={e=>set('body_paper_gsm', Math.max(40,Math.min(350,+e.target.value||90)))}/>
+              <span className="text-xs text-muted" style={{marginLeft:6}}>
+                Tipico: 90–130 gsm (offset), 170–250 gsm (patinata)
+              </span>
             </div>
           </CollapsibleCard>
 
@@ -587,77 +612,100 @@ export default function ProfilesPage() {
                 }
               }
               const mv = (side) => form[side] ?? form.margin_mm ?? 5
+              const toggleLocked = (val) => {
+                setMarginLocked(val)
+                localStorage.setItem('pb_margin_locked', val ? '1' : '0')
+              }
               return (
                 <div>
-                  <div style={{display:'flex',alignItems:'center',gap:4,marginBottom:10}}>
-                    <span className="text-xs text-muted">Margini (mm)</span>
-                    <button onClick={()=>setMarginLocked(l=>!l)}
-                      style={{padding:'2px 8px',borderRadius:5,border:'1px solid var(--border)',
-                        cursor:'pointer',fontSize:10,
+                  {/* Mode toggle — segmented control */}
+                  <div style={{display:'flex',borderRadius:7,overflow:'hidden',
+                    border:'1px solid var(--border)',marginBottom:14,fontSize:11}}>
+                    <button onClick={()=>toggleLocked(true)}
+                      style={{flex:1,padding:'8px 0',border:'none',borderRight:'1px solid var(--border)',
+                        cursor:'pointer',fontWeight:marginLocked?600:400,
                         background:marginLocked?'var(--gold-dim)':'var(--bg3)',
-                        color:marginLocked?'var(--gold)':'var(--text3)'}}>
-                      {marginLocked?p.marginLocked:p.marginUnlocked}
+                        color:marginLocked?'var(--gold)':'var(--text3)',transition:'background 0.15s,color 0.15s'}}>
+                      🔒 Margine unico
+                    </button>
+                    <button onClick={()=>toggleLocked(false)}
+                      style={{flex:1,padding:'8px 0',border:'none',
+                        cursor:'pointer',fontWeight:!marginLocked?600:400,
+                        background:!marginLocked?'rgba(100,160,200,0.13)':'var(--bg3)',
+                        color:!marginLocked?'#7eb8d4':'var(--text3)',transition:'background 0.15s,color 0.15s'}}>
+                      🔓 Margini indipendenti
                     </button>
                   </div>
-                  <div style={{display:'flex',flexDirection:'column',gap:8,maxWidth:320}}>
-                    <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                      <MarginInput side="margin_top" label={p.marginTop} formValue={mv('margin_top')} onCommit={handleMargin}/>
-                      <div style={{flex:1,height:1,background:'var(--border)'}}/>
+
+                  {/* Margin inputs */}
+                  {marginLocked ? (
+                    <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:12}}>
+                      <MarginInput side="margin_top" label="Alto · Basso · Esterno · Interno"
+                        formValue={mv('margin_top')} onCommit={handleMargin}/>
+                      <span style={{fontSize:10,color:'var(--text3)',lineHeight:1.5}}>
+                        Tutti e quattro i margini<br/>impostati allo stesso valore
+                      </span>
                     </div>
-                    <div style={{display:'flex',gap:6,alignItems:'flex-end'}}>
-                      <MarginInput side="margin_left" label={p.marginOuter} formValue={mv('margin_left')} onCommit={handleMargin}/>
-                      <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:3,padding:'0 4px'}}>
-                        <span style={{fontSize:9,color:'var(--text3)',textAlign:'center',lineHeight:1.3}}>Rilegatura → interno</span>
-                        <div style={{width:'100%',height:1,background:'var(--border)'}}/>
-                        <span style={{fontSize:9,color:'var(--text3)',textAlign:'center'}}>← esterno</span>
+                  ) : (
+                    <div>
+                      <div style={{display:'flex',gap:10,alignItems:'flex-end',marginBottom:6,flexWrap:'wrap'}}>
+                        <MarginInput side="margin_top"    label="↑ Alto"     formValue={mv('margin_top')}    onCommit={handleMargin}/>
+                        <MarginInput side="margin_bottom" label="↓ Basso"    formValue={mv('margin_bottom')} onCommit={handleMargin}/>
+                        <MarginInput side="margin_left"   label="← Esterno"  formValue={mv('margin_left')}   onCommit={handleMargin}/>
+                        <MarginInput side="margin_right"  label="Interno →"  formValue={mv('margin_right')}  onCommit={handleMargin}/>
                       </div>
-                      <MarginInput side="margin_right" label={p.marginInner} formValue={mv('margin_right')} onCommit={handleMargin}/>
+                      <p style={{fontSize:10,color:'var(--text3)',lineHeight:1.4,marginBottom:12}}>
+                        ⓘ Interno = lato rilegatura — sulle pagine pari è a destra, sulle dispari a sinistra
+                      </p>
                     </div>
-                    <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                      <MarginInput side="margin_bottom" label={p.marginBottom} formValue={mv('margin_bottom')} onCommit={handleMargin}/>
-                      <div style={{flex:1,height:1,background:'var(--border)'}}/>
+                  )}
+
+                  {/* Gap + Bleed + Crop marks — compact row */}
+                  <div style={{display:'flex',gap:0,alignItems:'stretch',flexWrap:'wrap',
+                    paddingTop:12,borderTop:'1px solid var(--border)'}}>
+                    {/* Spazio tra foto */}
+                    <div style={{display:'flex',flexDirection:'column',gap:5,
+                      paddingRight:20,marginRight:20,borderRight:'1px solid var(--border)'}}>
+                      <label style={{fontSize:10,color:'var(--text3)'}}>Spazio tra foto</label>
+                      <div style={{display:'flex',alignItems:'center',gap:5}}>
+                        <input type="number" className="form-input" min={0} max={30} step={0.5}
+                          defaultValue={form.gap_mm} style={{width:76}}
+                          onBlur={e=>{ const v=parseFloat(e.target.value); if(!isNaN(v)) set('gap_mm',v) }}
+                          onKeyDown={e=>{ if(e.key==='Enter'){ const v=parseFloat(e.target.value); if(!isNaN(v)) set('gap_mm',v); e.target.blur() }}}/>
+                        <span style={{fontSize:10,color:'var(--text3)'}}>mm</span>
+                      </div>
                     </div>
-                    <p style={{fontSize:10,color:'var(--text3)',lineHeight:1.4,marginTop:2}}>
-                      {p.marginBindingNote}
-                    </p>
+
+                    {/* Abbondanza */}
+                    <div style={{display:'flex',flexDirection:'column',gap:5,
+                      paddingRight:20,marginRight:20,borderRight:'1px solid var(--border)'}}>
+                      <label style={{fontSize:10,color:'var(--text3)'}}>Abbondanza</label>
+                      <div style={{display:'flex',alignItems:'center',gap:6}}>
+                        <label className="checkbox-label" style={{flexShrink:0}}>
+                          <input type="checkbox" checked={form.bleed} onChange={e=>set('bleed',e.target.checked)}/>
+                          Attiva
+                        </label>
+                        <input type="number" className="form-input" min={0} max={10} step={0.5}
+                          value={form.bleed_mm} disabled={!form.bleed}
+                          onChange={e=>set('bleed_mm',parseFloat(e.target.value))}
+                          style={{width:70,opacity:form.bleed?1:0.4}}/>
+                        <span style={{fontSize:10,color:'var(--text3)',opacity:form.bleed?1:0.4}}>mm</span>
+                      </div>
+                    </div>
+
+                    {/* Crocini di stampa */}
+                    <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                      <label style={{fontSize:10,color:'var(--text3)'}}>Crocini di stampa</label>
+                      <label className="checkbox-label" style={{fontSize:11}}>
+                        <input type="checkbox" checked={!!form.crop_marks}
+                          onChange={e=>set('crop_marks',e.target.checked)}/>
+                        Attiva
+                      </label>
+                    </div>
                   </div>
                 </div>
               )
             })()}
-            <div className="form-row" style={{marginTop:16}}>
-              <div className="form-group">
-                <label className="form-label">{p.gapLabel}</label>
-                <input type="number" className="form-input" min={0} max={30} step={0.5}
-                  defaultValue={form.gap_mm}
-                  onBlur={e=>{ const v=parseFloat(e.target.value); if(!isNaN(v)) set('gap_mm',v) }}
-                  onKeyDown={e=>{ if(e.key==='Enter'){ const v=parseFloat(e.target.value); if(!isNaN(v)) set('gap_mm',v); e.target.blur() }}}/>
-                <p className="text-xs text-muted mt-1">{p.gapHint}</p>
-              </div>
-              <div className="form-group">
-                <label className="form-label">{p.bleedLabel}</label>
-                <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                  <label className="checkbox-label" style={{ flexShrink:0 }}>
-                    <input type="checkbox" checked={form.bleed} onChange={e=>set('bleed',e.target.checked)}/>
-                    {p.bleedActive}
-                  </label>
-                  <input type="number" className="form-input" min={0} max={10} step={0.5}
-                    value={form.bleed_mm} disabled={!form.bleed}
-                    onChange={e=>set('bleed_mm',parseFloat(e.target.value))}
-                    style={{ opacity:form.bleed?1:0.4 }}/>
-                </div>
-                <p className="text-xs text-muted mt-1">{p.bleedHint}</p>
-              </div>
-              <div className="form-group">
-                <label className="checkbox-label">
-                  <input type="checkbox" checked={!!form.crop_marks}
-                    onChange={e=>set('crop_marks', e.target.checked)}/>
-                  {p.cropMarksLabel || 'Crocini di stampa'}
-                </label>
-                <p className="text-xs text-muted mt-1">
-                  {p.cropMarksHint || 'Segni di taglio agli angoli per la tipografia. Richiede abbondanza attiva.'}
-                </p>
-              </div>
-            </div>
           </CollapsibleCard>
 
           {/* ── PDF export ──────────────────────────────────────────────────── */}
@@ -1091,50 +1139,135 @@ export default function ProfilesPage() {
 
           </CollapsibleCard>
 
-          {/* ── Cover editor ────────────────────────────────────────────────── */}
-          <CollapsibleCard title="Stile copertina" defaultOpen={false}
+          {/* ── Copertina settings ──────────────────────────────────────────── */}
+          <CollapsibleCard title="Copertina" defaultOpen={false}
             actions={<>
-              <button className="btn btn-sm" style={{fontSize:10}} title="Esporta stile copertina"
+              <button className="btn btn-sm btn-primary" style={{fontSize:10}}
+                onClick={()=>setCoverEditorOpen(true)}>
+                ✏ Modifica elementi
+              </button>
+              <button className="btn btn-sm" style={{fontSize:10}} title="Esporta configurazione copertina"
                 onClick={()=>{
-                  const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(form.cover_style||{},null,2))
-                  a.download=`cover-style-${(form.name||'profilo').replace(/\s+/g,'_')}.json`;a.click()
-                }}>⬇ Esporta stile</button>
-              <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}} title="Importa stile copertina">
-                ⬆ Importa stile
+                  const cov = migrateCoverConfig(form.cover, form.cover_style)
+                  const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(cov,null,2))
+                  a.download=`cover-${(form.name||'profilo').replace(/\s+/g,'_')}.json`;a.click()
+                }}>⬇ Esporta</button>
+              <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}} title="Importa configurazione copertina">
+                ⬆ Importa
                 <input type="file" accept=".json" style={{display:'none'}} onChange={e=>{
                   const file=e.target.files?.[0]; if(!file) return
                   const r=new FileReader(); r.onload=ev=>{
-                    try{const d=JSON.parse(ev.target.result);set('cover_style',d);showToast(p.importCoverOk,'success')}
+                    try{const d=JSON.parse(ev.target.result);set('cover',d);showToast(p.importCoverOk,'success')}
                     catch{showToast(p.importCoverErr,'error')}
                   };r.readAsText(file);e.target.value=''
                 }}/>
               </label>
             </>}>
             <p className="text-sm text-muted mb-4">
-              Imposta il layout visivo della copertina per questo profilo. Puoi salvare stili personalizzati riutilizzabili.
+              Configura le 5 aree della copertina (fronte, seconda, terza, quarta, dorso) e le impostazioni di stampa.
+              L'editor grafico è disponibile nell'impaginato con il pulsante "Modifica copertina".
             </p>
+
+            {/* Dorso */}
+            <div style={{display:'flex',flexDirection:'column',gap:10,padding:'12px',
+              background:'var(--bg3)',borderRadius:8,border:'1px solid var(--border)',marginBottom:12}}>
+              <p style={{margin:0,fontSize:12,fontWeight:600,color:'var(--text)'}}>Dorso</p>
+              {(()=>{
+                const cover     = migrateCoverConfig(form.cover, form.cover_style)
+                const numPages  = 100  // stima (il valore reale dipende dall'album)
+                const bodyGsm   = form.body_paper_gsm ?? 90
+                const estimated = calcSpineWidthMm(numPages, bodyGsm)
+                const override  = cover.spine_width_mm
+                const displayW  = override ?? estimated
+                return (
+                  <>
+                    <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
+                      <div className="form-group" style={{marginBottom:0,flex:'1 1 140px'}}>
+                        <label className="form-label" style={{fontSize:11}}>Larghezza dorso (mm)</label>
+                        <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                          <input type="number" className="form-input" style={{width:80}}
+                            min={1} max={80} step={0.5}
+                            value={displayW}
+                            onChange={e=>set('cover',{...cover,spine_width_mm:Math.max(1,Math.min(80,+e.target.value||5))})}/>
+                          <button className="btn btn-sm" style={{fontSize:10}}
+                            title="Ripristina calcolo automatico"
+                            onClick={()=>set('cover',{...cover,spine_width_mm:null})}>
+                            Auto {override!==null&&override!==undefined?'(override)':'✓'}
+                          </button>
+                        </div>
+                        <p className="text-xs text-muted" style={{marginTop:2}}>
+                          Stima: {estimated} mm (con {bodyGsm} gsm · 100 pag. di riferimento).
+                          Il valore esatto si vede nell'impaginato.
+                        </p>
+                      </div>
+                      <div className="form-group" style={{marginBottom:0,flex:'1 1 140px'}}>
+                        <label className="form-label" style={{fontSize:11}}>Grammatura copertina (gsm)</label>
+                        <input type="number" className="form-input" style={{width:80}}
+                          min={100} max={600} step={10}
+                          value={cover.cover_paper_gsm ?? 300}
+                          onChange={e=>set('cover',{...cover,cover_paper_gsm:+e.target.value})}
+                          onBlur={e=>set('cover',{...cover,cover_paper_gsm:Math.max(100,Math.min(600,+e.target.value||300))})}/>
+                        <span className="text-xs text-muted" style={{marginLeft:6}}>Tipico: 300–350 gsm</span>
+                      </div>
+                    </div>
+                  </>
+                )
+              })()}
+            </div>
+
+            {/* Export options — mutually exclusive */}
             {(()=>{
-              const sizeEntry = allSizes.find(s => s.id === form.page_size) || {w:200,h:300}
-              let [pw, ph] = [sizeEntry.w, sizeEntry.h]
-              if (form.orientation === 'landscape') [pw, ph] = [ph, pw]
-              const maxD = 160
-              const isLand = form.orientation === 'landscape'
-              const cW = isLand ? maxD : Math.round(maxD * pw / ph)
-              const cH = isLand ? Math.round(maxD * ph / pw) : maxD
+              const cover = migrateCoverConfig(form.cover, form.cover_style)
+              const setExportMode = (mode) => set('cover', {
+                ...cover,
+                export_as_spread:      mode === 'spread',
+                export_cover_separate: mode === 'separate',
+              })
+              const mode = cover.export_as_spread ? 'spread' : cover.export_cover_separate ? 'separate' : 'none'
               return (
-                <CoverStyleEditor
-                  value={form.cover_style || DEFAULT_COVER}
-                  onChange={cs => set('cover_style', cs)}
-                  albumName={form.name || p.namePlaceholder.replace('es. ','')}
-                  coverWidth={cW}
-                  coverHeight={cH}
-                  mapUrl={null}/>
+                <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                  <label className="checkbox-label">
+                    <input type="radio" name="cover_export_mode" value="none"
+                      checked={mode==='none'} onChange={()=>setExportMode('none')}/>
+                    <span>Nessuna opzione speciale</span>
+                  </label>
+                  <label className="checkbox-label">
+                    <input type="radio" name="cover_export_mode" value="spread"
+                      checked={mode==='spread'} onChange={()=>setExportMode('spread')}/>
+                    <span>
+                      Esporta copertina come spread
+                      <span className="text-xs text-muted" style={{marginLeft:6,fontWeight:400}}>
+                        (pag.1: fronte+dorso+quarta · pag.2: seconda+spazio+terza)
+                      </span>
+                    </span>
+                  </label>
+                  <label className="checkbox-label">
+                    <input type="radio" name="cover_export_mode" value="separate"
+                      checked={mode==='separate'} onChange={()=>setExportMode('separate')}/>
+                    <span>
+                      Esporta copertina in file PDF separato
+                      <span className="text-xs text-muted" style={{marginLeft:6,fontWeight:400}}>
+                        (genera _album.pdf e _copertina.pdf)
+                      </span>
+                    </span>
+                  </label>
+                </div>
               )
             })()}
           </CollapsibleCard>
 
         </div>
         {toast&&<div className={`toast ${toast.type}`}>{toast.msg}</div>}
+        {coverEditorOpen && (
+          <CoverEditorModal
+            cover={form.cover}
+            onChange={newCover => set('cover', newCover)}
+            onClose={() => setCoverEditorOpen(false)}
+            profile={form}
+            albumInfo={{ albumName: form.name || 'Profilo', assetCount: 0, dateRange: '' }}
+            numBodyPages={100}
+          />
+        )}
         {editing !== 'new' && autoSaveStatus !== 'idle' && (
           <div style={{
             position:'fixed', bottom:24, right:24, zIndex:9999,

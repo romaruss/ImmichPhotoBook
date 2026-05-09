@@ -14,9 +14,13 @@ import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { useT } from '../i18n.jsx'
-import CoverStyleEditor, { CoverPreview, DEFAULT_COVER } from '../components/CoverEditor'
+import { DEFAULT_COVER_CONFIG, DEFAULT_COVER_FRONT, DEFAULT_COVER_INSIDE, DEFAULT_COVER_BACK, DEFAULT_SPINE, migrateCoverConfig, calcSpineWidthMm } from '../components/CoverConfig'
+import CoverEditorModal from '../components/CoverEditorModal'
 import LogViewer from '../components/LogViewer'
 import { DividerCanvas, DividerEditorModal, migrateDividerStyle } from '../components/DividerEditor'
+import ExportModal from '../components/ExportModal'
+import ProjectModal from '../components/ProjectModal'
+import RecalcMenu from '../components/RecalcMenu'
 
 // ── Page geometry ─────────────────────────────────────────────────────────────
 const PAGE_SIZES_PT = {
@@ -1066,6 +1070,85 @@ function LayoutPickerDropdown({ allPageTypes, currentId, profile, onChange }) {
 // Replica pixel-perfect il layout di EditablePage: stesso ResizeObserver,
 // stesso calcolo scale, stesso toolbar invisibile (visibility:hidden ma
 // con le stesse dimensioni del toolbar reale → allineamento garantito da CSS).
+// ── SpineStrip ─────────────────────────────────────────────────────────────────
+// Narrow vertical strip rendered beside copertina fronte (left) or quarta (right).
+// rotate(-90deg): row left → visual bottom, row right → visual top.
+// So: top-positioned items → rightZone (flex-end), bottom → leftZone (flex-start).
+function SpineStrip({ spine, albumName, albumYear, widthPx, heightPx }) {
+  const s   = spine || {}
+  const bg  = s.bg || '#0a0a0e'
+  const cap = (pct, def) => Math.max(6, Math.min(Math.round(widthPx * 0.72), Math.round(heightPx * (pct || def) / 100)))
+
+  const allItems = [
+    s.title_enabled !== false && albumName
+      ? { pos: s.title_pos||'center', text: albumName, color: s.title_color||'#f0ede6',
+          sz: cap(s.title_size_pct, 2.5), font:'var(--font-display, Georgia, serif)', ls:'0.04em' }
+      : null,
+    s.subtitle_enabled && albumName
+      ? { pos: s.subtitle_pos||'center', text: '—', color: s.subtitle_color||'#b8b0a0',
+          sz: cap(s.subtitle_size_pct, 1.8), font:'var(--font-body, sans-serif)', ls:0 }
+      : null,
+    s.year_enabled !== false && albumYear
+      ? { pos: s.year_pos||'center', text: albumYear, color: s.year_color||'#d4aa5a',
+          sz: cap(s.year_size_pct, 1.5), font:'var(--font-mono, monospace)', ls:0 }
+      : null,
+    s.custom_text_enabled && s.custom_text
+      ? { pos: s.custom_text_pos||'center', text: s.custom_text, color: s.custom_text_color||'#fff',
+          sz: cap(s.custom_text_size_pct, 1.8), font:'var(--font-body, sans-serif)', ls:0 }
+      : null,
+  ].filter(Boolean)
+
+  const zone = (pos) => allItems.filter(i => i.pos === pos)
+  const renderSpan = (item, i) => (
+    <span key={i} style={{ fontSize:item.sz, color:item.color, fontFamily:item.font,
+      letterSpacing:item.ls, whiteSpace:'nowrap' }}>
+      {item.text}
+    </span>
+  )
+
+  const rot180 = !!s.spine_rotate_180
+  // rotate(-90deg): row-left → visual bottom, row-right → visual top
+  // rotate( 90deg): row-left → visual top,    row-right → visual bottom
+  const rotDeg = rot180 ? 90 : -90
+  const leftZone  = rot180 ? zone('top')    : zone('bottom')
+  const rightZone = rot180 ? zone('bottom') : zone('top')
+
+  const centerItems = zone('center')
+  return (
+    <div style={{ width:widthPx, height:heightPx, background:bg, flexShrink:0,
+      overflow:'hidden', borderRadius:2, position:'relative' }}>
+      {/* Left/right zones via rotated row — center slot is a blank spacer */}
+      <div style={{
+        position:'absolute', left:'50%', top:'50%',
+        width:heightPx,
+        transform:`translate(-50%,-50%) rotate(${rotDeg}deg)`,
+        display:'flex', flexDirection:'row', alignItems:'center',
+        padding:'0 6px', boxSizing:'border-box',
+      }}>
+        <div style={{ flex:1, display:'flex', justifyContent:'flex-start', gap:3, overflow:'hidden' }}>
+          {leftZone.map(renderSpan)}
+        </div>
+        <div style={{ flex:1 }} />
+        <div style={{ flex:1, display:'flex', justifyContent:'flex-end', gap:3, overflow:'hidden' }}>
+          {rightZone.map(renderSpan)}
+        </div>
+      </div>
+      {/* Center items: own div anchored at spine midpoint so group is always centered */}
+      {centerItems.length > 0 && (
+        <div style={{
+          position:'absolute', left:'50%', top:'50%',
+          transform:`translate(-50%,-50%) rotate(${rotDeg}deg)`,
+          display:'flex', flexDirection:'row', alignItems:'center',
+          gap:3, whiteSpace:'nowrap',
+          maxWidth: Math.round(heightPx * 0.34), overflow:'hidden',
+        }}>
+          {centerItems.map(renderSpan)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function BlankPage({ profile, allPageTypes, label, maxW=570, zoomFactor=1 }) {
   const [pw,ph]=getPageDims(profile)
   const containerRef = useRef(null)
@@ -1102,6 +1185,66 @@ function BlankPage({ profile, allPageTypes, label, maxW=570, zoomFactor=1 }) {
         <p style={{fontSize:11,color:'#c0bbb2',fontFamily:'var(--font-mono)',fontStyle:'italic'}}>
           {label || 'pagina vuota'}
         </p>
+      </div>
+    </div>
+  )
+}
+
+// ── Blank page factory (used to pad pages.length to even) ─────────────────────
+function makeBlankPage(profile) {
+  const pts = (profile?.page_types) || []
+  const defaultPT = pts[0] || { id:'blank', label:'Vuota', slots:[{x:0,y:0,w:100,h:100}] }
+  return {
+    page_type_id: defaultPT.id,
+    page_type: defaultPT,
+    items: defaultPT.slots.map(slot => ({ slot, item: null }))
+  }
+}
+function ensureEvenPages(pagesArr, profile) {
+  if (!pagesArr || pagesArr.length % 2 === 0) return pagesArr
+  return [...pagesArr, makeBlankPage(profile)]
+}
+
+// ── CoverSpreadPage: DividerCanvas in spread with ghost toolbar for alignment ──
+function CoverSpreadPage({ coverStyle, albumInfo, profile, allPageTypes, dividerMapUrl, onClick }) {
+  const [pw, ph] = getPageDims(profile)
+  const containerRef = useRef(null)
+  const [containerW, setContainerW] = useState(570)
+
+  useEffect(() => {
+    if (!containerRef.current) return
+    const ro = new ResizeObserver(([e]) => setContainerW(e.contentRect.width || 570))
+    ro.observe(containerRef.current)
+    return () => ro.disconnect()
+  }, [])
+
+  const maxH_px = typeof window !== 'undefined' ? window.innerHeight * 0.65 : 600
+  const scale = Math.min(containerW / pw, maxH_px / ph)
+  const W = Math.round(pw * scale)
+  const H = Math.round(ph * scale)
+  // Match LayoutPickerDropdown button height: SlotPreview SVG height + padding
+  const slotPreviewH = Math.round(ph / pw * 52)
+
+  return (
+    <div ref={containerRef} style={{ width:'100%', display:'flex', flexDirection:'column', alignItems:'center' }}>
+      {allPageTypes.length > 0 && (
+        <div style={{ display:'flex', gap:6, alignItems:'center', marginBottom:8, flexShrink:0, visibility:'hidden' }}>
+          <span className="text-xs text-muted" style={{ flexShrink:0 }}>Layout:</span>
+          <div style={{ flex:1, minWidth:0, display:'flex', alignItems:'center', gap:6,
+            fontSize:11, padding:'3px 6px',
+            background:'var(--bg3)', border:'1px solid var(--border)',
+            color:'var(--text)', borderRadius:5, minHeight: slotPreviewH }}>—</div>
+          <button className="btn btn-sm" style={{ fontSize:10, flexShrink:0, padding:'3px 8px' }}>+ Slot</button>
+        </div>
+      )}
+      <div style={{ borderRadius:2, overflow:'hidden', boxShadow:'0 8px 32px rgba(0,0,0,0.4)',
+        cursor: onClick ? 'pointer' : 'default' }}
+        onClick={onClick}>
+        <DividerCanvas
+          style={coverStyle}
+          albumInfo={albumInfo}
+          canvasW={W} canvasH={H}
+          readOnly dividerMapUrl={dividerMapUrl}/>
       </div>
     </div>
   )
@@ -1342,17 +1485,20 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
       <>
       <div ref={containerRef} style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}>
         {/* Ghost toolbar — same height as photo-page toolbar so spread alignment matches */}
-        {allPageTypes.length>0 && (
-          <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8,flexShrink:0,visibility:'hidden'}}>
-            <span className="text-xs text-muted" style={{flexShrink:0}}>Layout:</span>
-            <div style={{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:6,
-              fontSize:11,padding:'3px 6px',
-              background:'var(--bg3)',border:'1px solid var(--border)',
-              color:'var(--text)',borderRadius:5}}>—</div>
-            <button className="btn btn-sm" style={{fontSize:10,flexShrink:0,padding:'3px 8px'}}>+ Slot</button>
-          </div>
-        )}
-        <div style={{position:'relative',flexShrink:0}}>
+        {allPageTypes.length>0 && (()=>{
+          const slotPreviewH = Math.round(ph/pw * 52)
+          return (
+            <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8,flexShrink:0,visibility:'hidden'}}>
+              <span className="text-xs text-muted" style={{flexShrink:0}}>Layout:</span>
+              <div style={{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:6,
+                fontSize:11,padding:'3px 6px',
+                background:'var(--bg3)',border:'1px solid var(--border)',
+                color:'var(--text)',borderRadius:5,minHeight:slotPreviewH}}>—</div>
+              <button className="btn btn-sm" style={{fontSize:10,flexShrink:0,padding:'3px 8px'}}>+ Slot</button>
+            </div>
+          )
+        })()}
+        <div style={{position:'relative',flexShrink:0,cursor:'pointer'}} onClick={()=>setDividerEditOpen(true)}>
           <div style={{width:W,height:H,borderRadius:2,boxShadow:'0 16px 64px rgba(0,0,0,0.55)',overflow:'hidden'}}>
             <DividerCanvas
               style={ds}
@@ -1363,22 +1509,8 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
             />
           </div>
         </div>
+        <p className="text-xs text-muted" style={{marginTop:6}}>Clicca sulla pagina per modificare</p>
       </div>
-      {/* Button always on top via portal */}
-      {isActive && createPortal(
-        <button
-          onClick={()=>setDividerEditOpen(true)}
-          style={{
-            position:'fixed', bottom:24, left:'50%', transform:'translateX(-50%)',
-            padding:'8px 22px', fontSize:12, fontWeight:500,
-            background:'rgba(18,18,24,0.96)', border:'1px solid rgba(255,255,255,0.22)',
-            borderRadius:8, cursor:'pointer', color:'#fff',
-            boxShadow:'0 4px 20px rgba(0,0,0,0.6)', zIndex:8500,
-            whiteSpace:'nowrap', letterSpacing:'0.02em',
-          }}
-        >✏ Modifica stile divisore</button>,
-        document.body
-      )}
       {dividerEditOpen && (
         <DividerEditorModal
           value={ds}
@@ -1973,532 +2105,6 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
   )
 }
 
-// ── Export panel ──────────────────────────────────────────────────────────────
-function ExportPanel({ layout, onExport, exporting }) {
-  const t = useT(); const tp = t.preview
-  const [open, setOpen]       = useState(false)
-  const [quality, setQuality] = useState('hires')   // 'hires' | 'preview'
-  const [progress, setProgress] = useState(null)    // {pct, step} | null
-  const pollRef = useRef(null)
-  const p = layout?.profile || {}
-
-  // Start polling progress when export begins, stop when done
-  useEffect(() => {
-    if (exporting) {
-      setProgress({ pct: 0, step: tp.exportStart })
-      pollRef.current = setInterval(async () => {
-        try {
-          const r = await axios.get('/api/export/progress')
-          setProgress({ pct: r.data.pct, step: r.data.step })
-          if (r.data.done) {
-            clearInterval(pollRef.current)
-            setTimeout(() => setProgress(null), 1500)
-          }
-        } catch {}
-      }, 600)
-    } else {
-      clearInterval(pollRef.current)
-    }
-    return () => clearInterval(pollRef.current)
-  }, [exporting])
-
-  const pct = progress?.pct || 0
-
-  return (
-    <div style={{ padding:12, borderTop:'1px solid var(--border)', flexShrink:0 }}>
-      {/* Main button with progress fill */}
-      <button
-        className="btn btn-primary w-full"
-        style={{
-          justifyContent:'center', fontSize:12, position:'relative',
-          overflow:'hidden', transition:'background 0.3s',
-        }}
-        onClick={() => setOpen(o => !o)}
-        disabled={exporting}>
-        {/* Progress fill layer */}
-        {exporting && pct > 0 && (
-          <div style={{
-            position:'absolute', left:0, top:0, bottom:0,
-            width:`${pct}%`,
-            background:'rgba(255,255,255,0.18)',
-            transition:'width 0.5s ease',
-            pointerEvents:'none',
-          }}/>
-        )}
-        {/* Label */}
-        <span style={{ position:'relative', zIndex:1 }}>
-          {exporting
-            ? <>{progress?.step || tp.exporting} {pct > 0 ? `(${pct}%)` : ''}</>
-            : <>📄 Esporta</>}
-        </span>
-      </button>
-
-      {open && !exporting && (
-        <div style={{ marginTop:8, background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:8, padding:12 }}>
-          {/* Profile info */}
-          {(()=>{
-            const base2 = p.margin_mm || 5
-            const mTop    = p.margin_top    ?? base2
-            const mBot    = p.margin_bottom ?? base2
-            const mEst    = p.margin_left   ?? base2   // ← Esterno
-            const mInt    = p.margin_right  ?? base2   // Interno →
-            const rows = [
-              ['📐 Formato', tp.exportFormat(p.page_size, p.orientation==='landscape'?tp.exportLandscape:tp.exportPortrait)],
-              ['📐 Orientamento', p.orientation==='landscape' ? tp.exportLandscape : tp.exportPortrait],
-              ['↑ Alto', `${mTop}mm`],
-              ['↓ Basso', `${mBot}mm`],
-              ['← Esterno', `${mEst}mm`],
-              ['→ Interno', `${mInt}mm`],
-              ['↔ Spazio foto', `${p.gap_mm ?? 3}mm`],
-              p.bleed ? ['✂ Abbondanza', `${p.bleed_mm}mm`] : null,
-              p.crop_marks ? ['✂ Crocini', 'Sì'] : null,
-              ['📄 Pagine', `${(layout?.pages?.length||0)+1}`],
-            ].filter(Boolean)
-            return rows.map(([k,v]) => (
-              <div key={k} style={{ fontSize:11, fontFamily:'var(--font-mono)', color:'var(--text2)',
-                display:'flex', justifyContent:'space-between', padding:'2px 0',
-                borderBottom:'1px solid var(--border)' }}>
-                <span>{k}</span><strong style={{ color:'var(--text)', maxWidth:'60%', textAlign:'right', wordBreak:'break-word' }}>{v}</strong>
-              </div>
-            ))
-          })()}
-
-          {/* Quality toggle */}
-          <div style={{ marginTop:10, display:'flex', gap:4, padding:'6px 0' }}>
-            {[["hires",tp.qualityHires,tp.qualityHiresDesc],
-              ["preview",tp.qualityPreview,tp.qualityPreviewDesc]
-            ].map(([v,lbl,hint]) => (
-              <button key={v} onClick={() => setQuality(v)}
-                title={hint}
-                style={{ flex:1, padding:'5px 4px', fontSize:10, borderRadius:5,
-                  border:`1px solid ${quality===v?'var(--gold)':'var(--border)'}`,
-                  background: quality===v?'var(--gold-dim)':'var(--bg3)',
-                  color: quality===v?'var(--gold)':'var(--text3)',
-                  cursor:'pointer', lineHeight:1.3 }}>
-                {lbl}
-              </button>
-            ))}
-          </div>
-          {quality === 'hires' && (
-            <p style={{ fontSize:9, color:'var(--text3)', marginBottom:8, textAlign:'center' }}>
-              ⏳ L'esportazione hi-res può richiedere qualche minuto
-            </p>
-          )}
-
-          {/* Export buttons */}
-          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-            <button className="btn btn-primary" style={{ justifyContent:'center', fontSize:12 }}
-              onClick={() => onExport('pdf', quality)}>
-              📄 Esporta PDF
-            </button>
-            <button className="btn" style={{ justifyContent:'center', fontSize:12 }}
-              onClick={() => onExport('svg', quality)}
-              title="ZIP con SVG modificabili (Illustrator, Scribus, InDesign)">
-              🎨 Esporta SVG / Illustrator
-            </button>
-          </div>
-          <p style={{ textAlign:'center', fontSize:9, color:'var(--text3)', marginTop:6, fontFamily:'var(--font-mono)' }}>
-            SVG: compatibile con Illustrator, Scribus, InDesign
-          </p>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── Project save / load modal ────────────────────────────────────────────────
-function ProjectModal({ mode, layout, photoTransforms, currentPage, onClose, onLoad }) {
-  // mode: 'save' | 'load'
-  const t = useT(); const tp = t.preview
-  const [projects, setProjects]   = useState([])
-  const [loading, setLoading]     = useState(false)
-  const [projectName, setProjectName] = useState(() => {
-    const storedName = sessionStorage.getItem('photobook_project_name')
-    const storedId   = sessionStorage.getItem('photobook_project_id')
-    if (storedId && storedName) return storedName
-    return layout ? tp.projectDefaultName(layout.album?.albumName) : ''
-  })
-  const [saving, setSaving]       = useState(false)
-  const [savedId, setSavedId]     = useState(null)   // current open project ID (for update)
-  const [toast, setToast]         = useState(null)
-  const nameRef = useRef()
-
-  useEffect(() => {
-    const stored = sessionStorage.getItem('photobook_project_id')
-    if (stored) setSavedId(stored)
-    loadList()   // carica lista in entrambe le modalità
-    if (mode === 'save' && nameRef.current) setTimeout(()=>nameRef.current?.select(), 100)
-  }, [mode])
-
-  const loadList = async () => {
-    setLoading(true)
-    try {
-      const list = (await axios.get('/api/projects')).data
-      setProjects(list)
-      // Pre-fill project name from the currently open project (not generic album name)
-      if (mode === 'save') {
-        const sid = sessionStorage.getItem('photobook_project_id')
-        if (sid) {
-          const existing = list.find(p => String(p.id) === String(sid))
-          if (existing) setProjectName(existing.name)
-        }
-      }
-    }
-    catch { setToast({ type:'error', msg:tp.projectListError }) }
-    finally { setLoading(false) }
-  }
-
-  const handleSave = async () => {
-    if (!projectName.trim()) return
-    setSaving(true)
-    try {
-      const payload = {
-        name: projectName.trim(),
-        album: layout.album,
-        profile: layout.profile,
-        pages: layout.pages,
-        locations: layout.locations || [],
-        photo_transforms: photoTransforms,
-        current_page: currentPage,
-      }
-      // Read from sessionStorage (not state) so handleSaveNew (which removes the key) works correctly
-      const sid = sessionStorage.getItem('photobook_project_id')
-      let res
-      if (sid) {
-        res = await axios.put(`/api/projects/${sid}`, payload)
-        setToast({ type:'success', msg:tp.projectSavedOk })
-      } else {
-        res = await axios.post('/api/projects', payload)
-        sessionStorage.setItem('photobook_project_id', res.data.id)
-        setSavedId(res.data.id)
-        setToast({ type:'success', msg:tp.projectNewSavedOk })
-      }
-      sessionStorage.setItem('photobook_project_name', projectName.trim())
-      setTimeout(onClose, 1200)
-    } catch {
-      setToast({ type:'error', msg:tp.projectSaveError })
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleSaveNew = async () => {
-    setSavedId(null)
-    sessionStorage.removeItem('photobook_project_id')
-    sessionStorage.removeItem('photobook_project_name')
-    await handleSave()
-  }
-
-  // In save mode: select project as overwrite target (never loads/replaces current work)
-  const handleSelectForSave = (pid) => {
-    const project = projects.find(p => String(p.id) === String(pid))
-    if (!project) return
-    setProjectName(project.name)
-    setSavedId(String(pid))
-    sessionStorage.setItem('photobook_project_id', String(pid))
-    sessionStorage.setItem('photobook_project_name', project.name)
-    if (nameRef.current) { nameRef.current.focus(); nameRef.current.select() }
-  }
-
-  // In load mode: actually loads the project (replaces current work)
-  const handleLoad = async (pid) => {
-    try {
-      const r = await axios.get(`/api/projects/${pid}`)
-      sessionStorage.setItem('photobook_layout', JSON.stringify({
-        album: r.data.album,
-        profile: r.data.profile,
-        pages: r.data.pages,
-        locations: r.data.locations || [],
-      }))
-      sessionStorage.setItem('photobook_project_id', pid)
-      sessionStorage.setItem('photobook_project_name', r.data.name || '')
-      onLoad(r.data)   // parent aggiorna stato
-      onClose()
-    } catch {
-      setToast({ type:'error', msg:tp.projectLoadError })
-    }
-  }
-
-  const handleDelete = async (pid, name, e) => {
-    e.stopPropagation()
-    if (!window.confirm(`Eliminare il progetto "${name}"?`)) return
-    await axios.delete(`/api/projects/${pid}`)
-    setProjects(p => p.filter(x => x.id !== pid))
-  }
-
-  const fmt = iso => {
-    if (!iso) return ''
-    const d = new Date(iso)
-    return d.toLocaleDateString('it-IT') + ' ' + d.toLocaleTimeString('it-IT', { hour:'2-digit', minute:'2-digit' })
-  }
-
-  return createPortal(
-    <>
-      <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', zIndex:8000 }}
-        onClick={e => e.target===e.currentTarget && onClose()}/>
-      <div style={{
-        position:'fixed', top:'50%', left:'50%',
-        transform:'translate(-50%,-50%)',
-        width: 520, maxHeight:'80vh',
-        background:'var(--bg2)', border:'1px solid var(--border)',
-        borderRadius:12, boxShadow:'0 24px 80px rgba(0,0,0,0.7)',
-        zIndex:8001, display:'flex', flexDirection:'column', overflow:'hidden',
-      }}>
-        {/* Header */}
-        <div style={{ padding:'18px 24px 14px', borderBottom:'1px solid var(--border)',
-          display:'flex', justifyContent:'space-between', alignItems:'center',
-          background:'var(--bg3)', flexShrink:0 }}>
-          <div>
-            <h3 style={{ fontFamily:'var(--font-display)', fontWeight:300, fontSize:20, marginBottom:2 }}>
-              {mode === 'save' ? '💾 Salva progetto' : '📂 Apri progetto'}
-            </h3>
-            <p style={{ fontSize:11, color:'var(--text3)', fontFamily:'var(--font-mono)' }}>
-              {mode === 'save'
-                ? 'Salva il layout corrente per riprendere in un altro momento'
-                : 'Seleziona un progetto salvato per caricarlo'}
-            </p>
-          </div>
-          <button onClick={onClose} style={{ background:'none', border:'none',
-            color:'var(--text3)', fontSize:20, cursor:'pointer', padding:'0 4px' }}>✕</button>
-        </div>
-
-        {/* Body */}
-        <div style={{ flex:1, overflowY:'auto', padding:24 }}>
-
-          {mode === 'save' && (
-            <div>
-              <label className="form-label">Nome del progetto</label>
-              <input ref={nameRef} className="form-input" value={projectName}
-                onChange={e => setProjectName(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSave()}
-                placeholder="es. Vacanze estate 2024"/>
-              <p className="text-xs text-muted" style={{ marginTop:6 }}>
-                {savedId
-                  ? `Premi "Aggiorna" per sovrascrivere, oppure "Salva come nuovo" per una copia`
-                  : 'Verrà creato un nuovo progetto'}
-              </p>
-
-              <div style={{ display:'flex', gap:10, marginTop:20 }}>
-                {savedId && (
-                  <button className="btn btn-primary" style={{ flex:1, justifyContent:'center' }}
-                    onClick={handleSave} disabled={saving || !projectName.trim()}>
-                    {saving ? <><span className="spinner" style={{width:13,height:13}}/> Salvataggio…</> : '💾 Aggiorna'}
-                  </button>
-                )}
-                <button className={`btn ${savedId ? '' : 'btn-primary'}`}
-                  style={{ flex:1, justifyContent:'center' }}
-                  onClick={savedId ? handleSaveNew : handleSave}
-                  disabled={saving || !projectName.trim()}>
-                  {saving ? <><span className="spinner" style={{width:13,height:13}}/> Salvataggio…</>
-                    : savedId ? tp.projectSaveNewBtn : '💾 Salva'}
-                </button>
-              </div>
-
-              <hr className="divider"/>
-              <p className="text-xs text-muted mb-4">
-                Sovrascivi un progetto esistente — <em>clicca per selezionare</em>
-              </p>
-              {loading && <div style={{ textAlign:'center', padding:16 }}><span className="spinner"/></div>}
-              {!loading && projects.length === 0 && (
-                <p className="text-sm text-muted" style={{ textAlign:'center', padding:16 }}>
-                  Nessun progetto salvato
-                </p>
-              )}
-              {!loading && projects.map(p => (
-                <ProjectRow key={p.id} project={p} fmt={fmt}
-                  selected={String(p.id) === String(savedId)}
-                  onLoad={handleSelectForSave} onDelete={handleDelete}/>
-              ))}
-              {!loading && projects.length === 0 && (
-                <button className="btn btn-sm" onClick={loadList} style={{ marginTop:8 }}>
-                  Aggiorna lista
-                </button>
-              )}
-            </div>
-          )}
-
-          {mode === 'load' && (
-            <div>
-              {loading && <div style={{ textAlign:'center', padding:32 }}><span className="spinner" style={{ width:24, height:24 }}/></div>}
-              {!loading && projects.length === 0 && (
-                <div className="empty-state" style={{ padding:'40px 0' }}>
-                  <div className="icon" style={{ fontSize:36 }}>📭</div>
-                  <h3 style={{ fontSize:18 }}>Nessun progetto salvato</h3>
-                  <p>Usa "Salva progetto" dall'anteprima per conservare il tuo lavoro</p>
-                </div>
-              )}
-              {!loading && projects.map(p => (
-                <ProjectRow key={p.id} project={p} fmt={fmt} onLoad={handleLoad} onDelete={handleDelete}/>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {toast && (
-          <div style={{ padding:'12px 24px', borderTop:'1px solid var(--border)',
-            background: toast.type==='success' ? 'rgba(74,197,133,0.1)' : 'rgba(197,74,74,0.1)',
-            color: toast.type==='success' ? 'var(--success)' : 'var(--danger)',
-            fontSize:13, flexShrink:0 }}>
-            {toast.msg}
-          </div>
-        )}
-      </div>
-    </>,
-    document.body
-  )
-}
-
-function ProjectRow({ project, fmt, onLoad, onDelete, selected }) {
-  const t = useT(); const tp = t.preview
-  return (
-    <div
-      onClick={() => onLoad(project.id)}
-      style={{
-        display:'flex', gap:12, alignItems:'center',
-        padding:'12px 14px', borderRadius:8, cursor:'pointer',
-        border: selected ? '1px solid var(--gold)' : '1px solid var(--border)',
-        marginBottom:8,
-        transition:'background 0.12s, border-color 0.12s',
-        background: selected ? 'var(--gold-dim,rgba(212,175,55,0.08))' : 'var(--bg3)',
-      }}
-      onMouseEnter={e => { if (!selected) { e.currentTarget.style.background='var(--bg)'; e.currentTarget.style.borderColor='var(--gold)' } }}
-      onMouseLeave={e => { if (!selected) { e.currentTarget.style.background='var(--bg3)'; e.currentTarget.style.borderColor='var(--border)' } }}>
-      <span style={{ fontSize:24, flexShrink:0 }}>📖</span>
-      <div style={{ flex:1, minWidth:0 }}>
-        <p style={{ fontSize:14, fontWeight:500, color:'var(--text)', marginBottom:2,
-          overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-          {project.name}
-        </p>
-        <p style={{ fontSize:11, color:'var(--text3)', fontFamily:'var(--font-mono)' }}>
-          {project.album_name} · {project.page_count} pag.
-          {project.profile_name ? ` · ${project.profile_name}` : ''}
-        </p>
-        <p style={{ fontSize:10, color:'var(--text3)', fontFamily:'var(--font-mono)', marginTop:2 }}>
-          {project.saved_at ? `Salvato: ${fmt(project.saved_at)}` : ''}
-        </p>
-      </div>
-      <button
-        onClick={e => onDelete(project.id, project.name, e)}
-        title="Elimina progetto"
-        style={{ background:'none', border:'1px solid var(--border)',
-          color:'var(--text3)', borderRadius:5, padding:'4px 8px',
-          cursor:'pointer', fontSize:12, flexShrink:0 }}>
-        🗑️
-      </button>
-    </div>
-  )
-}
-
-// ── Recalculate menu — rendered via Portal to escape sidebar overflow ─────────────
-// anchorRef: ref del bottone trigger, usato per calcolare la posizione sullo schermo
-function RecalcMenu({ anchorRef, currentPage, totalPages, busy, onAction, onClose }) {
-  const t = useT(); const tp = t.preview
-  const fromIdx = Math.max(0, currentPage)
-  const atTitle = currentPage === -1
-  const isFirst  = fromIdx === 0
-
-  const [pos, setPos] = useState(null)
-  const SECTIONS = tp.recalcSections(fromIdx, totalPages, atTitle, isFirst)
-
-  useEffect(() => {
-    if (!anchorRef?.current) return
-    const update = () => {
-      const r = anchorRef.current.getBoundingClientRect()
-      setPos({ top: r.top, left: r.right + 8 })
-    }
-    update()
-    window.addEventListener('resize', update)
-    return () => window.removeEventListener('resize', update)
-  }, [anchorRef])
-
-
-  if (!pos) return null
-
-  const menuTop  = Math.min(pos.top,  window.innerHeight - 560)
-  const menuLeft = Math.min(pos.left, window.innerWidth  - 360)
-  const maxH     = window.innerHeight - menuTop - 20
-
-  return createPortal(
-    <>
-      {/* Backdrop per chiudere cliccando fuori */}
-      <div style={{position:'fixed',inset:0,zIndex:9998}} onClick={onClose}/>
-
-      {/* Pannello menu — fuori dalla gerarchia del sidebar */}
-      <div style={{
-        position:'fixed', top:menuTop, left:menuLeft, width:348,
-        background:'var(--bg2)', border:'1px solid var(--border)',
-        borderRadius:10, boxShadow:'0 24px 72px rgba(0,0,0,0.72)',
-        zIndex:9999, overflow:'hidden',
-      }}>
-        {/* Header */}
-        <div style={{
-          padding:'11px 16px 9px', borderBottom:'1px solid var(--border)',
-          display:'flex', justifyContent:'space-between', alignItems:'center',
-          background:'var(--bg3)',
-        }}>
-          <span style={{fontFamily:'var(--font-mono)',fontSize:11,color:'var(--text3)',
-            textTransform:'uppercase',letterSpacing:'0.1em',fontWeight:500}}>
-            {tp.recalcTitle}
-          </span>
-          <div style={{display:'flex',alignItems:'center',gap:10}}>
-            <span style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--font-mono)'}}>
-              {atTitle ? tp.recalcCover : `pag. ${fromIdx + 1} / ${totalPages}`}
-            </span>
-            <button onClick={onClose}
-              style={{background:'none',border:'none',color:'var(--text3)',
-                fontSize:16,cursor:'pointer',lineHeight:1,padding:'0 2px',
-                display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
-          </div>
-        </div>
-
-        <div style={{maxHeight:maxH, overflowY:'auto'}}>
-          {SECTIONS.map((section, si) => (
-            <div key={si} style={{borderBottom: si < SECTIONS.length - 1 ? '1px solid var(--border)' : 'none'}}>
-              <div style={{padding:'8px 16px 2px', fontSize:10, fontFamily:'var(--font-mono)',
-                color:'var(--text3)', letterSpacing:'0.09em', textTransform:'uppercase'}}>
-                {section.title}
-              </div>
-              {section.items.map(opt => (
-                <button key={opt.id}
-                  disabled={busy || opt.disabled}
-                  onClick={() => onAction(opt.id)}
-                  style={{
-                    width:'100%', display:'flex', gap:11, padding:'10px 16px',
-                    alignItems:'flex-start', background:'transparent', border:'none',
-                    borderTop:'1px solid var(--border)',
-                    cursor: (busy || opt.disabled) ? 'not-allowed' : 'pointer',
-                    textAlign:'left', opacity: opt.disabled ? 0.38 : 1,
-                    transition:'background 0.12s',
-                  }}
-                  onMouseEnter={e => { if (!opt.disabled && !busy) e.currentTarget.style.background = 'var(--bg3)' }}
-                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                  <span style={{fontSize:19,flexShrink:0,lineHeight:1.3}}>{opt.icon}</span>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{
-                      fontSize:13, fontWeight:500, marginBottom:3, lineHeight:1.2,
-                      color: opt.danger ? 'var(--danger)' : opt.highlight ? 'var(--gold2)' : 'var(--text)',
-                    }}>{opt.label}</div>
-                    <div style={{fontSize:11,color:'var(--text3)',lineHeight:1.45}}>{opt.desc}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          ))}
-        </div>
-
-        {busy && (
-          <div style={{padding:'10px 16px', borderTop:'1px solid var(--border)',
-            display:'flex', alignItems:'center', gap:8, background:'var(--bg3)'}}>
-            <span className="spinner" style={{width:14,height:14}}/>
-            <span style={{fontSize:12,color:'var(--text2)'}}>Operazione in corso…</span>
-          </div>
-        )}
-      </div>
-    </>,
-    document.body
-  )
-}
-
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function PreviewPage() {
   const t = useT(); const tp = t.preview
@@ -2538,14 +2144,19 @@ export default function PreviewPage() {
   const zoomMax=2.5
   const [sidebarDrag,setSidebarDrag]=useState(null)
   const [leftSidebarOpen,setLeftSidebarOpen]=useState(true)
-  const [coverStyleOpen,setCoverStyleOpen]=useState(false)
+  const [coverEditOpen,setCoverEditOpen]=useState(false)  // false | tab-index 0-4
+  const [exportModalOpen,setExportModalOpen]=useState(false)
   const [highlightedAsset,setHighlightedAsset]=useState(null)  // asset_id highlighted in right panel
   const highlightRef=useRef(null)  // ref to highlighted element in AlbumPanel
 
   useEffect(() => {
     const stored = sessionStorage.getItem('photobook_layout')
     if (!stored) return
-    const data = JSON.parse(stored); setLayout(data)
+    let data = JSON.parse(stored)
+    if (data.pages && data.pages.length % 2 === 1) {
+      data = { ...data, pages: ensureEvenPages(data.pages, data.profile) }
+    }
+    setLayout(data)
     // Load face-aware transforms from smart layout (if any)
     const storedTransforms = sessionStorage.getItem('photobook_transforms')
     if (storedTransforms) {
@@ -2665,8 +2276,8 @@ export default function PreviewPage() {
       if(e.target.tagName==='TEXTAREA'||e.target.tagName==='INPUT') return
       if(!layout) return
       if(e.key==='ArrowRight'||e.key==='ArrowDown') setCurrentPage(p=>{
-        if(spreadView&&p>=0){const l=p%2===0?p-1:p;return Math.min(layout.pages.length-1,l+2)}
-        return Math.min(layout.pages.length-1,p+1)
+        if(spreadView&&p>=0&&p<layout.pages.length){const l=p%2===0?p-1:p;return Math.min(layout.pages.length,l+2)}
+        return Math.min(layout.pages.length,p+1)
       })
       if(e.key==='ArrowLeft'||e.key==='ArrowUp') setCurrentPage(p=>{
         if(spreadView&&p>=0){const l=p%2===0?p-1:p;return Math.max(-1,l-2)}
@@ -2728,7 +2339,7 @@ export default function PreviewPage() {
     setLayout(prev=>{
       const pages=[...prev.pages]
       pages.splice(afterIdx+1,0,newPage)
-      return persist({...prev,pages})
+      return persist({...prev,pages:ensureEvenPages(pages,prev.profile)})
     })
     setCurrentPage(afterIdx+1)
     setHasChanges(true)
@@ -2737,7 +2348,7 @@ export default function PreviewPage() {
   const removePage = (idx) => {
     if (!confirm(tp.confirmRemovePage)) return
     setLayout(prev=>{
-      const pages=prev.pages.filter((_,i)=>i!==idx)
+      const pages=ensureEvenPages(prev.pages.filter((_,i)=>i!==idx),prev.profile)
       return persist({...prev,pages})
     })
     setCurrentPage(p=>Math.max(-1,Math.min(p,layout.pages.length-2)))
@@ -3060,24 +2671,43 @@ export default function PreviewPage() {
     map[id]?.()
   }
 
-  const exportBook=async(format='pdf', quality='hires')=>{
+  const exportBook=async(format='pdf', quality='hires', settingsOverride=null)=>{
     if(!layout) return; setExporting(true)
     try{
+      const baseCover = layout.profile?.cover || {}
+      const coverOverride = settingsOverride ? {
+        ...baseCover,
+        cover_paper_gsm:       settingsOverride.cover_paper_gsm,
+        spine_width_mm:        settingsOverride.spine_width_mm,
+        export_as_spread:      settingsOverride.export_as_spread,
+        export_cover_separate: settingsOverride.export_cover_separate,
+      } : (baseCover || null)
+      const profileOverride = settingsOverride ? {
+        body_paper_gsm: settingsOverride.body_paper_gsm,
+        export_dpi:     settingsOverride.export_dpi,
+        color_profile:  settingsOverride.color_profile,
+      } : null
+      const isCoverSeparate = settingsOverride?.export_cover_separate ?? baseCover?.export_cover_separate
       const r=await axios.post('/api/export',{
         album_id:layout.album.id,
         profile_id:layout.profile.id,
         pages:layout.pages,
         locations:layout.locations||[],
         photo_transforms:photoTransforms,
+        cover_override:coverOverride,
+        profile_override:profileOverride,
         format,
         quality,
       },{responseType:'blob'})
       const url=URL.createObjectURL(r.data)
       const a=document.createElement('a');a.href=url
-      a.download=`${layout.album.albumName||'fotolibro'}${format==='svg'?'_svg.zip':'.pdf'}`
+      const ext = format==='svg' ? '_svg.zip' : isCoverSeparate ? '_export.zip' : '.pdf'
+      a.download=`${layout.album.albumName||'fotolibro'}${ext}`
       a.click(); URL.revokeObjectURL(url)
       showToast(format==='svg'?tp.svgDownloaded:tp.pdfDownloaded,'success')
-    }catch{showToast(tp.exportError,'error')}
+    }catch(e){
+      if(e?.response?.status !== 499) showToast(tp.exportError,'error')
+    }
     finally{setExporting(false)}
   }
 
@@ -3189,20 +2819,19 @@ export default function PreviewPage() {
           )}
         </div>
         <div ref={sidebarListRef} style={{flex:1,overflowY:'auto',padding:'8px 8px 0'}}>
-          {/* Cover thumb */}
-          <div className={`page-thumb-item${currentPage===-1?' active':''}`} onClick={()=>setCurrentPage(-1)}>
-            <span className="page-num">T</span>
+          {/* Copertina fronte thumb */}
+          <div className={`page-thumb-item${currentPage===-1?' active':''}`} onClick={()=>setCurrentPage(-1)}
+            style={{outline:currentPage===-1?'2px solid #4ac585':'none',outlineOffset:'-2px'}}>
+            <span className="page-num">C</span>
             {(()=>{
               const [pw,ph]=getPageDims(profile)
               const isL=profile?.orientation==='landscape'
               const tw=isL?44:28, th=isL?28:40
-              return (
-                <div style={{width:tw,height:th,background:'#0f0f14',borderRadius:2,overflow:'hidden',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
-                  {mapUrl?<img src={mapUrl} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/>:<span style={{fontSize:12}}>🗺️</span>}
-                </div>
-              )
+              const cover=migrateCoverConfig(layout.profile?.cover,layout.profile?.cover_style)
+              const bg=(cover.front||DEFAULT_COVER_FRONT).bg||'#0a0a0e'
+              return <div style={{width:tw,height:th,background:bg,borderRadius:2,flexShrink:0}}/>
             })()}
-            <span className="text-xs text-muted">Copertina</span>
+            <span className="text-xs text-muted">Fronte</span>
           </div>
 
           {/* Page thumbs — draggable for reorder */}
@@ -3258,7 +2887,7 @@ export default function PreviewPage() {
 
           {/* Add page at end */}
           <div
-            style={{margin:'6px 0 12px',padding:'6px 8px',borderRadius:6,border:'1px dashed var(--border)',
+            style={{margin:'6px 0 6px',padding:'6px 8px',borderRadius:6,border:'1px dashed var(--border)',
               cursor:'pointer',display:'flex',alignItems:'center',gap:6,
               color:'var(--text3)',fontSize:11,
             }}
@@ -3268,8 +2897,33 @@ export default function PreviewPage() {
             <span style={{fontSize:14}}>+</span>
             <span>{tp.addPageHint}</span>
           </div>
+
+          {/* Quarta di copertina thumb */}
+          <div className={`page-thumb-item${currentPage===pages.length?' active':''}`}
+            onClick={()=>setCurrentPage(pages.length)}
+            style={{marginBottom:8,outline:currentPage===pages.length?'2px solid #4ac585':'none',outlineOffset:'-2px'}}>
+            <span className="page-num">Q</span>
+            {(()=>{
+              const [pw,ph]=getPageDims(profile)
+              const isL=profile?.orientation==='landscape'
+              const tw=isL?44:28, th=isL?28:40
+              const cover=migrateCoverConfig(layout.profile?.cover,layout.profile?.cover_style)
+              const bg=(cover.back||DEFAULT_COVER_BACK).bg||'#0a0a0e'
+              return <div style={{width:tw,height:th,background:bg,borderRadius:2,flexShrink:0}}/>
+            })()}
+            <span className="text-xs text-muted">Quarta</span>
+          </div>
         </div>
-        <ExportPanel layout={layout} onExport={exportBook} exporting={exporting}/>
+        <div style={{padding:'8px 12px',borderTop:'1px solid var(--border)',flexShrink:0}}>
+          <button className="btn btn-primary w-full" style={{justifyContent:'center',fontSize:12}}
+            onClick={()=>setExportModalOpen(true)} disabled={exporting}>
+            {exporting ? <><span className="spinner" style={{width:12,height:12}}/> Esportazione…</> : '📄 Esporta'}
+          </button>
+        </div>
+        {exportModalOpen && (
+          <ExportModal layout={layout} onExport={exportBook} exporting={exporting}
+            onClose={()=>setExportModalOpen(false)}/>
+        )}
 
         </>)}
       </div>
@@ -3301,8 +2955,8 @@ export default function PreviewPage() {
           }
           if(e.deltaY>0){
             setCurrentPage(p=>{
-              if(spreadView&&p>=0){const l=p%2===0?p-1:p;return Math.min(layout.pages.length-1,l+2)}
-              return Math.min(layout.pages.length-1,p+1)
+              if(spreadView&&p>=0&&p<layout.pages.length){const l=p%2===0?p-1:p;return Math.min(layout.pages.length,l+2)}
+              return Math.min(layout.pages.length,p+1)
             })
           } else {
             setCurrentPage(p=>{
@@ -3354,7 +3008,10 @@ export default function PreviewPage() {
         }}>
           <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px'}}
             onClick={()=>{
-              if(spreadView&&currentPage>=0){
+              if(currentPage===pages.length){
+                // From quarta: go to last body page (or last spread in spread mode)
+                setCurrentPage(pages.length-1)
+              } else if(spreadView&&currentPage>=0){
                 // In spread: step back by 2 (to prev pair), snap to odd index (left of pair).
                 // l===1 means "spread 1" → go to spread 0 (currentPage=0, divider), not cover.
                 const leftIdx=currentPage%2===0?currentPage-1:currentPage
@@ -3366,7 +3023,7 @@ export default function PreviewPage() {
 
           <div style={{display:'flex',alignItems:'center',gap:6,flex:1,justifyContent:'center'}}>
             <span className="text-sm font-mono text-muted" style={{minWidth:90,textAlign:'center'}}>
-              {currentPage===-1?tp.coverPage:tp.pageOf(currentPage+1, pages.length)}
+              {currentPage===-1?'Copertina fronte':currentPage===pages.length?'Quarta di copertina':tp.pageOf(currentPage+1, pages.length)}
             </span>
             {/* View zoom */}
             <div style={{display:'flex',gap:2,alignItems:'center',background:'var(--bg3)',borderRadius:5,padding:'2px 6px',border:'1px solid var(--border)'}}>
@@ -3392,114 +3049,101 @@ export default function PreviewPage() {
                   color:spreadView?'var(--text)':'var(--text3)'}}>□□</button>
             </div>
             {/* +Pag and Elim always rendered for stable toolbar width;
-                disabled/grey on cover page so layout doesn't shift */}
+                disabled/grey on cover/quarta pages so layout doesn't shift */}
             <button className="btn btn-sm"
               style={{fontSize:10,padding:'2px 8px',
-                opacity: currentPage>=0 ? 1 : 0.3,
-                pointerEvents: currentPage>=0 ? 'auto' : 'none'}}
-              title={currentPage>=0 ? "Aggiungi pagina vuota dopo questa" : "Non disponibile sulla copertina"}
-              onClick={()=>currentPage>=0&&addPage(currentPage)}>+ Pag.</button>
+                opacity: currentPage>=0&&currentPage<pages.length ? 1 : 0.3,
+                pointerEvents: currentPage>=0&&currentPage<pages.length ? 'auto' : 'none'}}
+              title={currentPage>=0&&currentPage<pages.length ? "Aggiungi pagina vuota dopo questa" : "Non disponibile su copertina/quarta"}
+              onClick={()=>currentPage>=0&&currentPage<pages.length&&addPage(currentPage)}>+ Pag.</button>
             <button className="btn btn-sm"
               style={{fontSize:10,padding:'2px 8px',
-                background: currentPage>=0&&pages.length>1 ? 'rgba(197,74,74,0.12)' : 'var(--bg3)',
-                borderColor: currentPage>=0&&pages.length>1 ? 'rgba(197,74,74,0.4)' : 'var(--border)',
-                color: currentPage>=0&&pages.length>1 ? '#e05050' : 'var(--text3)',
-                opacity: currentPage>=0&&pages.length>1 ? 1 : 0.3,
-                pointerEvents: currentPage>=0&&pages.length>1 ? 'auto' : 'none'}}
-              title={currentPage>=0&&pages.length>1 ? "Elimina questa pagina" : "Non disponibile sulla copertina"}
-              onClick={()=>currentPage>=0&&pages.length>1&&removePage(currentPage)}>× Elim.</button>
+                background: currentPage>=0&&currentPage<pages.length&&pages.length>1 ? 'rgba(197,74,74,0.12)' : 'var(--bg3)',
+                borderColor: currentPage>=0&&currentPage<pages.length&&pages.length>1 ? 'rgba(197,74,74,0.4)' : 'var(--border)',
+                color: currentPage>=0&&currentPage<pages.length&&pages.length>1 ? '#e05050' : 'var(--text3)',
+                opacity: currentPage>=0&&currentPage<pages.length&&pages.length>1 ? 1 : 0.3,
+                pointerEvents: currentPage>=0&&currentPage<pages.length&&pages.length>1 ? 'auto' : 'none'}}
+              title={currentPage>=0&&currentPage<pages.length&&pages.length>1 ? "Elimina questa pagina" : "Non disponibile su copertina/quarta"}
+              onClick={()=>currentPage>=0&&currentPage<pages.length&&pages.length>1&&removePage(currentPage)}>× Elim.</button>
           </div>
 
           <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px'}}
             onClick={()=>{
-              if(spreadView&&currentPage>=0){
+              if(spreadView&&currentPage>=0&&currentPage<pages.length){
                 // In spread: step forward by 2 (to next pair), snap to odd index
                 const leftIdx=currentPage%2===0?currentPage-1:currentPage
-                setCurrentPage(Math.min(pages.length-1,leftIdx+2))
+                setCurrentPage(Math.min(pages.length,leftIdx+2))
               } else {
-                setCurrentPage(p=>Math.min(pages.length-1,p+1))
+                setCurrentPage(p=>Math.min(pages.length,p+1))
               }
-            }} disabled={currentPage>=pages.length-1}>{tp.nextBtn}</button>
+            }} disabled={currentPage>=pages.length}>{tp.nextBtn}</button>
         </div>
 
         {/* Canvas area — fills all remaining height, centers content */}
         <div style={{flex:1,overflow:'auto',display:'flex',alignItems:'center',justifyContent:'center',padding:'16px 8px'}}>
 
-        {currentPage===-1?(
-          <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:12}}>
-            {/* Live cover preview */}
-            <div style={{position:'relative'}}>
-              {(()=>{
-                const [pw,ph] = getPageDims(layout.profile)
-                const isLandscape = layout.profile?.orientation === 'landscape'
-                // Fit the cover preview to ~320px on its longest dimension
-                const maxDim = 320
-                const coverW = isLandscape ? maxDim : Math.round(maxDim * pw / ph)
-                const coverH = isLandscape ? Math.round(maxDim * ph / pw) : maxDim
-                return (
-                  <CoverPreview
-                    style={layout.profile?.cover_style||DEFAULT_COVER}
-                    albumName={album.albumName}
-                    assetCount={album.assetCount}
-                    mapUrl={mapUrl}
-                    width={coverW}
-                    height={coverH}/>
-                )
-              })()}
-              <button
-                onClick={()=>setCoverStyleOpen(o=>!o)}
-                style={{position:'absolute',top:8,right:8,padding:'4px 10px',fontSize:11,
-                  background:'rgba(0,0,0,0.7)',border:'1px solid rgba(255,255,255,0.2)',
-                  color:'#fff',borderRadius:5,cursor:'pointer'}}>
-                {coverStyleOpen ? tp.coverCloseBtn : tp.coverEditBtn}
-              </button>
-            </div>
-
-            {/* Inline cover editor */}
-            {coverStyleOpen && (
-              <div style={{background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:10,
-                padding:20,width:'100%',maxWidth:720,boxShadow:'0 8px 40px rgba(0,0,0,0.5)'}}>
-                {(()=>{
-                  const [cpw,cph]=getPageDims(layout.profile)
-                  const isLand=layout.profile?.orientation==='landscape'
-                  const maxD=280
-                  const cW=isLand?maxD:Math.round(maxD*cpw/cph)
-                  const cH=isLand?Math.round(maxD*cph/cpw):maxD
-                  return (
-                    <CoverStyleEditor
-                      value={layout.profile?.cover_style||DEFAULT_COVER}
-                      albumName={album.albumName}
-                      assetCount={album.assetCount}
-                      mapUrl={mapUrl}
-                      assets={albumAssets}
-                      compact={true}
-                      coverWidth={cW}
-                      coverHeight={cH}
-                      onChange={cs=>{
-                        setLayout(prev=>persist({...prev,profile:{...prev.profile,cover_style:cs}}))
-                        setHasChanges(true)
-                      }}/>
-                  )
-                })()}
-                <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:14,paddingTop:12,borderTop:'1px solid var(--border)'}}>
-                  <button className="btn" onClick={()=>setCoverStyleOpen(false)}>✕ Chiudi</button>
+        {(currentPage===-1||currentPage===pages.length)?(
+          /* ── Copertina fronte (−1) or Quarta di copertina (pages.length) ── */
+          (()=>{
+            const [pw,ph] = getPageDims(layout.profile)
+            const maxH_px_cov = typeof window !== 'undefined' ? window.innerHeight * 0.65 : 600
+            const scale_cov   = Math.min(570 / pw, maxH_px_cov / ph) * viewZoom
+            const coverW  = Math.round(pw * scale_cov)
+            const coverH  = Math.round(ph * scale_cov)
+            const cover   = migrateCoverConfig(layout.profile?.cover, layout.profile?.cover_style)
+            const pw_mm   = pw / 2.835
+            const spMm    = cover.spine_width_mm ?? calcSpineWidthMm(pages.length, layout.profile?.body_paper_gsm ?? 90)
+            const spW     = Math.max(6, Math.round(coverW * spMm / pw_mm))
+            const albumYear = album.dateRange ? album.dateRange.slice(-4) : String(new Date().getFullYear())
+            const albumInfo = { albumName:album.albumName, assetCount:album.assetCount, dateRange:album.dateRange }
+            const isFronte  = currentPage === -1
+            const coverStyle = isFronte ? (cover.front || DEFAULT_COVER_FRONT) : (cover.back || DEFAULT_COVER_BACK)
+            const spine     = cover.spine || DEFAULT_SPINE
+            return (
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:10}}>
+                <div style={{display:'flex',flexDirection:'row',alignItems:'stretch',gap:0,
+                  boxShadow:'0 16px 64px rgba(0,0,0,0.55)',borderRadius:2,overflow:'hidden',
+                  cursor:'pointer'}}
+                  onClick={()=>setCoverEditOpen(isFronte ? 0 : 3)}>
+                  {/* Dorso a sinistra per fronte, a destra per quarta */}
+                  {isFronte && (
+                    <SpineStrip spine={spine} albumName={album.albumName} albumYear={albumYear}
+                      widthPx={spW} heightPx={coverH}/>
+                  )}
+                  <DividerCanvas
+                    style={coverStyle}
+                    albumInfo={albumInfo}
+                    canvasW={coverW} canvasH={coverH}
+                    readOnly
+                    dividerMapUrl={mapUrl}/>
+                  {!isFronte && (
+                    <SpineStrip spine={spine} albumName={album.albumName} albumYear={albumYear}
+                      widthPx={spW} heightPx={coverH}/>
+                  )}
                 </div>
+                <p className="text-xs text-muted">
+                  {isFronte ? 'Copertina fronte' : 'Quarta di copertina'}
+                  {' · '}dorso stimato {spMm} mm
+                </p>
+                <p className="text-xs text-muted">Clicca sulla pagina per modificare</p>
               </div>
-            )}
-            <p className="text-xs text-muted">{tp.coverAuto}</p>
-          </div>
+            )
+          })()
         ) : spreadView ? (
           /* ── Spread view: 2 pages side by side, fill available space ── */
           (() => {
+            const cover   = migrateCoverConfig(layout.profile?.cover, layout.profile?.cover_style)
             const leftIdx  = currentPage % 2 === 0 ? currentPage - 1 : currentPage
             const rightIdx = leftIdx + 1
             const leftPage  = leftIdx >= 0 ? pages[leftIdx]  : null
             const rightPage = rightIdx < pages.length ? pages[rightIdx] : null
+            const isSeconda = leftIdx < 0
+            const isTerza   = rightIdx >= pages.length
+            const albumInfo = { albumName:album.albumName, assetCount:album.assetCount, dateRange:album.dateRange }
             return (
               <div style={{display:'flex',gap:12,alignItems:'flex-start',justifyContent:'center',width:'100%'}}>
                 {/* Left page */}
-                <div style={{display:'flex',flexDirection:'column',alignItems:'center',flex:1,minWidth:0}}
-                  onClick={()=>setCurrentPage(leftIdx)}>
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center',flex:1,minWidth:0}}>
                   {leftPage ? (
                     <EditablePage
                       page={leftPage} pageIdx={leftIdx}
@@ -3520,15 +3164,19 @@ export default function PreviewPage() {
                       assetById={assetById}
                       onSaveCustomLayout={saveCustomLayout}/>
                   ) : (
-                    <BlankPage profile={profile} allPageTypes={allPageTypes} label="pagina vuota" zoomFactor={viewZoom}/>
+                    <CoverSpreadPage
+                      coverStyle={cover.inside_front||DEFAULT_COVER_INSIDE}
+                      albumInfo={albumInfo}
+                      profile={profile} allPageTypes={allPageTypes}
+                      dividerMapUrl={mapUrl}
+                      onClick={()=>setCoverEditOpen(1)}/>
                   )}
                   {leftPage
                     ? <p className="text-xs text-muted mt-1">Pagina {leftIdx+1}</p>
-                    : <p className="text-xs text-muted mt-1">Seconda di copertina</p>}
+                    : <><p className="text-xs text-muted mt-1">Seconda di copertina</p><p className="text-xs text-muted">Clicca sulla pagina per modificare</p></>}
                 </div>
                 {/* Right page */}
-                <div style={{display:'flex',flexDirection:'column',alignItems:'center',flex:1,minWidth:0}}
-                  onClick={()=>setCurrentPage(rightIdx)}>
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center',flex:1,minWidth:0}}>
                   {rightPage ? (
                     <EditablePage
                       page={rightPage} pageIdx={rightIdx}
@@ -3549,11 +3197,16 @@ export default function PreviewPage() {
                       assetById={assetById}
                       onSaveCustomLayout={saveCustomLayout}/>
                   ) : (
-                    <BlankPage profile={profile} allPageTypes={allPageTypes} label="pagina vuota" zoomFactor={viewZoom}/>
+                    <CoverSpreadPage
+                      coverStyle={cover.inside_back||DEFAULT_COVER_INSIDE}
+                      albumInfo={albumInfo}
+                      profile={profile} allPageTypes={allPageTypes}
+                      dividerMapUrl={mapUrl}
+                      onClick={()=>setCoverEditOpen(2)}/>
                   )}
                   {rightPage
                     ? <p className="text-xs text-muted mt-1">Pagina {rightIdx+1}</p>
-                    : <p className="text-xs text-muted mt-1">Terza di copertina</p>}
+                    : <><p className="text-xs text-muted mt-1">Terza di copertina</p><p className="text-xs text-muted">Clicca sulla pagina per modificare</p></>}
                 </div>
               </div>
             )
@@ -3668,6 +3321,22 @@ export default function PreviewPage() {
       currentPage={currentPage - 1}
       onNavigate={(idx)=>{ setCurrentPage(idx + 1) }}
       onClose={()=>setLogViewerOpen(false)}
+    />
+  )}
+  {coverEditOpen !== false && (
+    <CoverEditorModal
+      cover={layout.profile?.cover}
+      onChange={newCover=>{
+        setLayout(prev=>persist({...prev,profile:{...prev.profile,cover:newCover}}))
+        setHasChanges(true)
+      }}
+      onClose={()=>setCoverEditOpen(false)}
+      profile={layout.profile}
+      albumInfo={{ albumName:album.albumName, assetCount:album.assetCount, dateRange:album.dateRange }}
+      mapUrl={mapUrl}
+      assets={albumAssets}
+      numBodyPages={pages.length}
+      initialTab={coverEditOpen}
     />
   )}
     </div>

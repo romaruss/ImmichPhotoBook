@@ -72,7 +72,8 @@ export default {
     orientLabel:    'Orientation',
     portrait:       'Portrait (vertical)',
     landscape:      'Landscape (horizontal)',
-    duplexLabel:    'Duplex printing — adds a blank page after each pair',
+    duplexLabel:    'Duplex printing (front & back)',
+    duplexHint:     'Binding margins (inner/outer) alternate per page: odd pages have the binding on the right, even pages on the left. If the total page count is odd, a blank page is added at the end to complete the last pair.',
 
     marginsCard:    'Margins & spacing',
     marginLabel:    'Margin (mm)',

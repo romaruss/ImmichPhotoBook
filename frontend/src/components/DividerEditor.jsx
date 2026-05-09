@@ -213,10 +213,10 @@ export function DividerCanvas({
       return
     }
 
-    // Ctrl+drag on photo block → pan
+    // Ctrl+drag on photo block → pan (works for both manual and auto/best photo)
     if (e.ctrlKey) {
       const el = (ds.elements||[]).find(x => x.id === id)
-      if (el?.type === 'photo' && el.photo_id) {
+      if (el?.type === 'photo' && (el.photo_id || ai.best_photo_id)) {
         const zoom   = el.photo_zoom || 1
         const blockW = (el.w||40) / 100 * rect.width
         const blockH = (el.h||30) / 100 * rect.height
@@ -266,6 +266,8 @@ export function DividerCanvas({
                userSelect:'none', WebkitUserSelect:'none', flexShrink:0 }}
       onClick={() => onSelect?.(null)}
     >
+      {/* Transparent overlay in readOnly — lets clicks pass through to parent (click-to-edit) */}
+      {readOnly && <div style={{position:'absolute',inset:0,zIndex:1000}}/>}
       {sortedItems.map((item, zPos) => {
         const zIdx = 3 + zPos
 
@@ -776,6 +778,12 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
     setSelectedId(ne.id)
   }
 
+  const addPhoto = () => {
+    const ne = { id:uid(), type:'photo', enabled:true, x:50, y:50, w:40, h:30, opacity:100 }
+    commit({ elements:[...(ds.elements||[]), ne], layer_order:[...getOrder(), ne.id] })
+    setSelectedId(ne.id)
+  }
+
   const deleteLine = (id) => {
     commit({
       lines: (ds.lines||[]).filter(l => l.id !== id),
@@ -891,6 +899,11 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
               background:'var(--bg3)', border:'1px solid var(--border)',
               borderRadius:4, cursor:'pointer', color:'var(--text)' }}>
               + Testo
+            </button>
+            <button onClick={addPhoto} style={{ fontSize:10, padding:'2px 7px',
+              background:'var(--bg3)', border:'1px solid var(--border)',
+              borderRadius:4, cursor:'pointer', color:'var(--text)' }}>
+              + Foto
             </button>
           </div>
           <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
@@ -1017,7 +1030,7 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
 
 // ── DividerEditorModal ────────────────────────────────────────────────────────
 
-export function DividerEditorModal({ value, onChange, onClose, profile, albumInfo, dividerMapUrl, assets }) {
+export function DividerEditorModal({ value, onChange, onClose, profile, albumInfo, dividerMapUrl, assets, title: modalTitle }) {
   const [local, setLocal] = useState(() => migrateDividerStyle(value))
   const [size, setSize]   = useState({ w: null, h: null })
   const modalRef          = useRef(null)
@@ -1071,7 +1084,7 @@ export function DividerEditorModal({ value, onChange, onClose, profile, albumInf
         <div style={{ padding:'13px 18px', borderBottom:'1px solid var(--border)',
           display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
           <h3 style={{ fontFamily:'var(--font-display)', fontWeight:300, fontSize:17, margin:0 }}>
-            Stile pagina divisore
+            {modalTitle || 'Stile pagina divisore'}
           </h3>
           <div style={{ display:'flex', gap:8 }}>
             <button className="btn btn-sm btn-primary"

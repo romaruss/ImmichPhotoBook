@@ -72,7 +72,8 @@ export default {
     orientLabel:    'Orientamento',
     portrait:       'Verticale (Portrait)',
     landscape:      'Orizzontale (Landscape)',
-    duplexLabel:    'Stampa fronte/retro (duplex) — aggiunge una pagina vuota dopo ogni coppia',
+    duplexLabel:    'Stampa fronte/retro (duplex)',
+    duplexHint:     'I margini di rilegatura (interno/esterno) si alternano a ogni pagina: le pagine dispari hanno la rilegatura a destra, le pari a sinistra. Se il numero di pagine è dispari, viene aggiunta automaticamente una pagina bianca in fondo per completare l\'ultima coppia.',
 
     marginsCard:    'Margini e spaziatura',
     marginLabel:    'Margine (mm)',

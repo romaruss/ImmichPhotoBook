@@ -1,10 +1,10 @@
-import json, os, uuid, asyncio, logging, time, secrets
+import io, json, os, uuid, asyncio, logging, time, secrets, zipfile
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Depends
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
-from fastapi.responses import Response, FileResponse, StreamingResponse
+from fastapi.responses import Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -240,7 +240,9 @@ class Profile(BaseModel):
         "italic": True,
         "bold": False,
     }
-    cover_style: dict | None = None
+    cover_style: dict | None = None        # legacy — kept for backward compat
+    cover: dict | None = None              # new 5-element cover structure
+    body_paper_gsm: float = 90.0           # inner pages gsm — used for spine width estimate
     divider_style: dict | None = None  # layout della pagina divisore album
     map_style: dict | None = None
     export_dpi: int = 300
@@ -375,8 +377,7 @@ async def sync_caption_description(asset_id: str, body: CaptionSyncRequest):
 
 # ─── NEW UNIFIED LAYOUT GENERATOR ────────────────────────────────────────────
 
-from album_generator import generate_album, DEFAULT_CONFIG
-import tempfile, os as _os
+from album_generator import generate_album
 
 # In-memory store for last generation log (keyed by session, simplified to one global)
 _last_log: dict[str, str] = {}
@@ -444,6 +445,7 @@ async def generate_layout_new(req: GenerateRequest, _rl: None = Depends(rl_gener
             if stored != asset_thumbhash:
                 cache_path.unlink(missing_ok=True)
                 hash_path.unlink(missing_ok=True)
+                (CACHE_DIR / f"{aid}_preview.jpg").unlink(missing_ok=True)
         else:
             # No thumbhash in response: fall back to updatedAt
             updated_at = a.get("updatedAt") or ""
@@ -453,6 +455,7 @@ async def generate_layout_new(req: GenerateRequest, _rl: None = Depends(rl_gener
                     if asset_ts > cache_path.stat().st_mtime + 5:
                         cache_path.unlink(missing_ok=True)
                         hash_path.unlink(missing_ok=True)
+                        (CACHE_DIR / f"{aid}_preview.jpg").unlink(missing_ok=True)
                 except Exception:
                     pass
 
@@ -741,16 +744,42 @@ class ExportRequest(BaseModel):
     photo_transforms: dict = {}
     format: str = "pdf"           # "pdf" | "svg"
     quality: str = "hires"        # "hires" | "preview"
+    cover_override:   dict | None = None  # live cover config from frontend (overrides saved profile)
+    profile_override: dict | None = None  # hot-editable fields from export modal (dpi, color, gsm…)
 
-# ── Export progress tracking (in-memory, single-session) ─────────────────────
+# ── Export progress + cancel tracking ────────────────────────────────────────
 _export_progress: dict[str, Any] = {"pct": 0, "step": "", "done": False, "error": ""}
+_export_cancel: bool = False
 
 @app.get("/api/export/progress")
 async def export_progress():
     return _export_progress
 
+@app.delete("/api/export")
+async def cancel_export():
+    global _export_cancel
+    _export_cancel = True
+    return {"ok": True}
+
+@app.get("/api/export/color_profiles")
+async def get_color_profiles():
+    from pdf_generator import ICC_PROFILES, _icc_path
+    result = {}
+    for pid, path in ICC_PROFILES.items():
+        if path is None:
+            result[pid] = {"available": False, "reason": "File ICC non incluso in questa installazione. Verrà usato sRGB come fallback."}
+        elif _icc_path(pid) is not None:
+            result[pid] = {"available": True, "reason": ""}
+        else:
+            result[pid] = {"available": False, "reason": f"File ICC mancante sul server ({path}). Verrà usato sRGB come fallback."}
+    return result
+
 def _set_progress(pct: int, step: str):
     _export_progress.update({"pct": pct, "step": step, "done": False, "error": ""})
+
+def _check_cancel():
+    if _export_cancel:
+        raise HTTPException(499, "Export annullato dall'utente")
 
 # Max foto hi-res in RAM contemporaneamente (evita OOM)
 # 200 foto × ~4MB preview JPEG ≈ 800MB — limite ragionevole per un server entry-level
@@ -787,9 +816,12 @@ async def _fetch_photos(asset_ids: set, hires: bool = False) -> dict:
 
 @app.post("/api/export")
 async def export_book(req: ExportRequest, _rl: None = Depends(rl_export)):
+    global _export_cancel
+    _export_cancel = False
     _export_progress.update({"pct": 0, "step": "Avvio…", "done": False, "error": ""})
     try:
         _set_progress(2, "Caricamento album da Immich…")
+        _check_cancel()
         try:
             album = await ic.get_album_detail(req.album_id)
         except Exception as e:
@@ -799,6 +831,15 @@ async def export_book(req: ExportRequest, _rl: None = Depends(rl_export)):
         if not path.exists():
             raise HTTPException(404, "Profile not found")
         profile = json.loads(path.read_text())
+        # Apply live cover config from frontend (unsaved editor changes)
+        if req.cover_override is not None:
+            profile['cover'] = req.cover_override
+        # Apply hot-editable profile fields from export modal
+        if req.profile_override:
+            ALLOWED_PROFILE_OVERRIDES = {"body_paper_gsm", "export_dpi", "color_profile", "crop_marks"}
+            for k, v in req.profile_override.items():
+                if k in ALLOWED_PROFILE_OVERRIDES:
+                    profile[k] = v
 
         # Collect asset IDs from all pages (photos in slots + divider best_photo_id)
         asset_ids = set()
@@ -813,8 +854,10 @@ async def export_book(req: ExportRequest, _rl: None = Depends(rl_export)):
                     asset_ids.add(pid)
 
         _set_progress(8, f"Download {len(asset_ids)} foto…")
+        _check_cancel()
         hires = (req.quality != "preview")
         photo_cache = await _fetch_photos(asset_ids, hires=hires)
+        _check_cancel()
 
         _set_progress(72, "Generazione mappa GPS…")
         map_image = None
@@ -904,6 +947,20 @@ async def export_book(req: ExportRequest, _rl: None = Depends(rl_export)):
             raise HTTPException(500, f"PDF error: {e}")
 
         _export_progress.update({"pct": 100, "step": "Completato", "done": True, "error": ""})
+
+        # export_cover_separate: pdf_bytes is a (body_bytes, cover_bytes) tuple
+        if isinstance(pdf_bytes, tuple):
+            body_pdf, cover_pdf = pdf_bytes
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr(f"{album_slug}_album.pdf",     body_pdf)
+                zf.writestr(f"{album_slug}_copertina.pdf", cover_pdf)
+            buf.seek(0)
+            return Response(
+                buf.read(), media_type="application/zip",
+                headers={"Content-Disposition": f'attachment; filename="{album_slug}_export.zip"'}
+            )
+
         return Response(
             pdf_bytes, media_type="application/pdf",
             headers={"Content-Disposition": f'attachment; filename="{album_slug}.pdf"'}

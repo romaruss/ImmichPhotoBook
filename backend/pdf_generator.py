@@ -317,10 +317,18 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
     date_range  = album_info.get("dateRange", "")
     description = album_info.get("description", "")
 
-    # ── Background ────────────────────────────────────────────────────────────
+    # ── Background + clip to content area (margins) ───────────────────────────
     bg = ds.get("bg", "#13141a")
+    content_x = ml
+    content_y = mb
+    content_w = max(1.0, pw - ml - mr)
+    content_h = max(1.0, ph - mt - mb)
+    c.saveState()
+    clip = c.beginPath()
+    clip.rect(content_x, content_y, content_w, content_h)
+    c.clipPath(clip, stroke=0)
     c.setFillColorRGB(*_hex_to_rgb(bg))
-    c.rect(0, 0, pw, ph, fill=1, stroke=0)
+    c.rect(content_x, content_y, content_w, content_h, fill=1, stroke=0)
 
     elements = ds.get("elements") or []
     lines    = ds.get("lines") or []
@@ -343,6 +351,7 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
         if asset_count:
             c.setFont("Helvetica", _mm(5))
             c.drawCentredString(pw / 2, cy - _mm(18), f"{asset_count} fotografie")
+        c.restoreState()
         return
 
     # ── Build unified item list sorted by layer_order (index 0 = backmost) ────
@@ -450,8 +459,13 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
             eh = el.get("h", 30) / 100 * ph
             rect_x = ex - ew / 2
             rect_y = ey - eh / 2
-            photo_id  = el.get("photo_id") or album_info.get("best_photo_id")
-            cache_key = (photo_id, round(ew), round(eh), 50, 50, 100) if photo_id else None
+            photo_id    = el.get("photo_id") or album_info.get("best_photo_id")
+            pan_x_el    = float(el.get("photo_pan_x") or 0)
+            pan_y_el    = float(el.get("photo_pan_y") or 0)
+            zoom_el     = float(el.get("photo_zoom") or 1.0)
+            px_cache    = 50.0 + pan_x_el
+            py_cache    = 50.0 + pan_y_el
+            cache_key   = (photo_id, round(ew), round(eh), round(px_cache), round(py_cache), round(zoom_el * 100)) if photo_id else None
             img_data  = processed_cache.get(cache_key) if cache_key else None
             if img_data:
                 jpeg_bytes, ox, oy, dw, dh = img_data
@@ -478,6 +492,8 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
                 c.rect(rect_x, rect_y, ew, eh, fill=1, stroke=0)
                 c.restoreState()
 
+    c.restoreState()  # release content-area clip
+
 
 def _hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
     """Convert #rrggbb to (r, g, b) floats 0-1."""
@@ -485,6 +501,91 @@ def _hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
     if len(h) != 6:
         return (0.08, 0.08, 0.10)
     return tuple(int(h[i:i+2], 16) / 255 for i in (0, 2, 4))
+
+
+def _draw_style_page(c: canvas.Canvas,
+                     style: dict,
+                     album_info: dict,
+                     processed_cache: dict,
+                     pw: float, ph: float,
+                     bleed: float,
+                     crop_marks: bool,
+                     map_image: Optional[bytes] = None) -> None:
+    """Render a cover page from a divider_style dict (no margins — full bleed)."""
+    page = {"_divider_style": style, "_album_info": album_info}
+    _draw_divider_page(c, page, processed_cache, pw, ph,
+                       0, 0, 0, 0, 0, bleed, crop_marks, map_image=map_image)
+
+
+def _draw_spine_pdf(c: canvas.Canvas,
+                    spine: dict,
+                    album_info: dict,
+                    sx: float, sy: float, sw: float, sh: float) -> None:
+    """Draw spine strip (bg + rotated text) inside rect (sx, sy, sw, sh)."""
+    bg = spine.get("bg", "#0a0a0e")
+    c.setFillColorRGB(*_hex_to_rgb(bg))
+    c.rect(sx, sy, sw, sh, fill=1, stroke=0)
+
+    album_name = album_info.get("albumName", "")
+    date_range = album_info.get("dateRange", "")
+    album_year = date_range[-4:] if len(date_range) >= 4 else ""
+
+    rotate_180 = spine.get("spine_rotate_180", False)
+    # ReportLab rotate(90) = CCW = text reads bottom-to-top (standard spine)
+    # ReportLab rotate(-90) = CW = text reads top-to-bottom (180° rotated)
+    text_rot   = 90 if not rotate_180 else -90
+
+    items: list[dict] = []
+    if spine.get("title_enabled", True) and album_name:
+        items.append({"pos": spine.get("title_pos", "center"), "text": album_name,
+                       "color": spine.get("title_color", "#f0ede6"),
+                       "size": spine.get("title_size_pct", 2.5), "font": "Helvetica-Bold"})
+    if spine.get("subtitle_enabled") and album_name:
+        items.append({"pos": spine.get("subtitle_pos", "center"), "text": "—",
+                       "color": spine.get("subtitle_color", "#b8b0a0"),
+                       "size": spine.get("subtitle_size_pct", 1.8), "font": "Helvetica"})
+    if spine.get("year_enabled", True) and album_year:
+        items.append({"pos": spine.get("year_pos", "center"), "text": album_year,
+                       "color": spine.get("year_color", "#d4aa5a"),
+                       "size": spine.get("year_size_pct", 1.5), "font": "Courier"})
+    if spine.get("custom_text_enabled") and spine.get("custom_text"):
+        items.append({"pos": spine.get("custom_text_pos", "center"), "text": spine["custom_text"],
+                       "color": spine.get("custom_text_color", "#ffffff"),
+                       "size": spine.get("custom_text_size_pct", 1.8), "font": "Helvetica"})
+
+    spine_cx = sx + sw / 2
+
+    def _fs(size_pct):
+        return max(4.0, size_pct / 100 * sw * 8)
+
+    def _draw_group(group, y_center):
+        if not group:
+            return
+        total_h = sum(_fs(i["size"]) * 1.3 for i in group)
+        y = y_center + total_h / 2
+        for item in group:
+            fs = _fs(item["size"])
+            y -= fs
+            c.saveState()
+            c.setFillColorRGB(*_hex_to_rgb(item["color"]))
+            c.translate(spine_cx, y)
+            c.rotate(text_rot)
+            c.setFont(item["font"], fs)
+            c.drawCentredString(0, -fs * 0.35, item["text"])
+            c.restoreState()
+            y -= fs * 0.3
+
+    top_grp    = [i for i in items if i["pos"] == "top"]
+    center_grp = [i for i in items if i["pos"] == "center"]
+    bot_grp    = [i for i in items if i["pos"] == "bottom"]
+
+    if rotate_180:
+        top_grp, bot_grp = bot_grp, top_grp
+
+    _draw_group(top_grp,    sy + sh - _mm(6))
+    _draw_group(center_grp, sy + sh / 2)
+    _draw_group(bot_grp,    sy + _mm(6) + sum(_fs(i["size"]) * 1.3 for i in bot_grp) / 2)
+
 
 def _draw_title_page(c: canvas.Canvas, album: dict,
                      map_image: Optional[bytes],
@@ -574,73 +675,6 @@ def _draw_title_page(c: canvas.Canvas, album: dict,
     c.drawRightString(pw - margin, foot_y, f"{photo_count} fotografie")
 
 
-def _slot_geometry(slot, ux, uw, ph, mt, gap):
-    """Compute (sx, sy, sw, sh) for a slot dict within the page content area."""
-    left_edge  = slot["x"] < 0.5
-    top_edge   = slot["y"] < 0.5
-    right_edge = (slot["x"] + slot["w"]) > 99.5
-    bot_edge   = (slot["y"] + slot["h"]) > 99.5
-    sx     = ux + (slot["x"] / 100) * uw + (0 if left_edge  else gap / 2)
-    sy_top = (slot["y"] / 100) * (ph - mt) + (0 if top_edge else gap / 2)
-    sw     = (slot["w"] / 100) * uw - (0 if left_edge  else gap / 2) \
-                                     - (0 if right_edge else gap / 2)
-    sh     = (slot["h"] / 100) * (ph - mt) - (0 if top_edge else gap / 2) \
-                                            - (0 if bot_edge else gap / 2)
-    return sx, ph - mt - sy_top - sh, sw, sh
-
-
-def _draw_photo_page(c: canvas.Canvas, page: dict,
-                     photo_cache: dict,
-                     pw: float, ph: float,
-                     ml: float, mr: float, mt: float, mb: float,
-                     gap: float, bleed: float,
-                     dpi: int = 300,
-                     color_profile: str = "srgb",
-                     crop_marks: bool = False,
-                     profile_cs: dict | None = None) -> None:
-    """Legacy: render page using raw photo_cache (for SmartLayout preview path)."""
-    if bleed > 0 and crop_marks:
-        _draw_bleed_marks(c, pw, ph, bleed)
-    items = page.get("items", [])
-    if not items:
-        return
-    ux = ml
-    uw = pw - ml - mr
-    uh = ph - mt - mb
-    for item_data in items:
-        slot = item_data.get("slot", {"x":0,"y":0,"w":100,"h":100})
-        item = item_data.get("item")
-        left_edge  = slot["x"] < 0.5
-        top_edge   = slot["y"] < 0.5
-        right_edge = (slot["x"] + slot["w"]) > 99.5
-        bot_edge   = (slot["y"] + slot["h"]) > 99.5
-        sx     = ux + (slot["x"] / 100) * uw + (0 if left_edge  else gap / 2)
-        sy_top = (slot["y"] / 100) * uh       + (0 if top_edge   else gap / 2)
-        sw     = (slot["w"] / 100) * uw        - (0 if left_edge  else gap / 2) \
-                                                - (0 if right_edge else gap / 2)
-        sh     = (slot["h"] / 100) * uh        - (0 if top_edge   else gap / 2) \
-                                                - (0 if bot_edge   else gap / 2)
-        sy = ph - mt - sy_top - sh
-        if sw <= 0 or sh <= 0:
-            continue
-        if item is None:
-            c.setFillColorRGB(0.87, 0.85, 0.82)
-            c.rect(sx, sy, sw, sh, fill=1, stroke=0)
-            continue
-        if item["type"] == "caption":
-            _render_caption_slot(c, item, sx, sy, sw, sh, profile_cs=profile_cs)
-        else:
-            img_bytes = photo_cache.get(item.get("asset_id", ""))
-            if img_bytes:
-                _draw_cover_photo(c, img_bytes, sx, sy, sw, sh, dpi, color_profile)
-            else:
-                c.setFillColorRGB(0.80, 0.78, 0.75)
-                c.rect(sx, sy, sw, sh, fill=1, stroke=0)
-                c.setFillColorRGB(0.55, 0.53, 0.50)
-                c.setFont("Helvetica", _mm(5))
-                c.drawCentredString(sx + sw / 2, sy + sh / 2 - _mm(2.5), "📷")
-
-
 def _draw_photo_page_fast(c: canvas.Canvas, page: dict,
                           processed_cache: dict,
                           pw: float, ph: float,
@@ -680,9 +714,7 @@ def _draw_photo_page_fast(c: canvas.Canvas, page: dict,
         if sw <= 0 or sh <= 0:
             continue
         if item is None:
-            c.setFillColorRGB(0.87, 0.85, 0.82)
-            c.rect(sx, sy, sw, sh, fill=1, stroke=0)
-            continue
+            continue  # empty slot — no fill, leave paper white
         if item["type"] == "caption":
             _render_caption_slot(c, item, sx, sy, sw, sh, profile_cs=profile_cs)
             continue
@@ -707,15 +739,8 @@ def _draw_photo_page_fast(c: canvas.Canvas, page: dict,
                 c.restoreState()
             except Exception as e:
                 logger.warning(f"Draw error {aid}: {e}")
-                c.setFillColorRGB(0.80, 0.78, 0.75)
-                c.rect(sx, sy, sw, sh, fill=1, stroke=0)
         else:
-            # Fallback: gray placeholder
-            c.setFillColorRGB(0.80, 0.78, 0.75)
-            c.rect(sx, sy, sw, sh, fill=1, stroke=0)
-            c.setFillColorRGB(0.55, 0.53, 0.50)
-            c.setFont("Helvetica", _mm(5))
-            c.drawCentredString(sx + sw / 2, sy + sh / 2 - _mm(2.5), "📷")
+            logger.warning(f"Missing pre-processed image for {aid} — slot left blank")
 
 
 def _render_caption_slot(c: canvas.Canvas, item: dict,
@@ -907,7 +932,6 @@ def generate_pdf(
         _p1_counter += 1
 
     # Divider photo slots: add photo_id from each divider page's photo element to processing queue.
-    # Use center pan (50/50) and zoom=1 — no user-adjustable transforms on divider photos.
     for page_idx, page in enumerate(pages):
         if not page.get("_album_divider"):
             continue
@@ -921,7 +945,11 @@ def generate_pdf(
                 ew_pt = el.get("w", 40) / 100 * pw
                 eh_pt = el.get("h", 30) / 100 * ph
                 if ew_pt > 0 and eh_pt > 0:
-                    photo_jobs.append((photo_id, ew_pt, eh_pt, 50.0, 50.0, 1.0))
+                    # DividerEditor stores pan as -50..50 offset from center; convert to 0..100
+                    pan_x = 50.0 + float(el.get("photo_pan_x") or 0)
+                    pan_y = 50.0 + float(el.get("photo_pan_y") or 0)
+                    zoom  = float(el.get("photo_zoom") or 1.0)
+                    photo_jobs.append((photo_id, ew_pt, eh_pt, pan_x, pan_y, zoom))
 
     # Deduplicate by cache key (includes pan+zoom so edits produce distinct cached images)
     seen_keys: set = set()
@@ -988,52 +1016,165 @@ def generate_pdf(
         # TwoPageRight: page 1 is a right/cover page shown alone; pages 2+3, 4+5... pair normally.
         cv._doc._catalog.setPageLayout('TwoPageRight')
 
-        # Title page
-        _draw_title_page(cv, album, map_image, pw, ph, margin, bleed, crop_marks=crop_marks,
-                 ml=_mm(ml + bleed_mm), mr=_mm(mr + bleed_mm),
-                 mt=_mm(mt + bleed_mm), mb=_mm(mb + bleed_mm))
-        cv.showPage()
+        # ── Resolve cover config ──────────────────────────────────────────────
+        cover_cfg       = profile.get("cover") or {}
+        has_new_cover   = bool(cover_cfg.get("front"))
+        export_spread   = bool(cover_cfg.get("export_as_spread"))
+        export_separate = bool(cover_cfg.get("export_cover_separate"))
 
-        page_counter = 2
-        # Always emit a blank "seconda di copertina" page after the cover.
-        # This matches the screen spread view (leftIdx=-1 virtual blank + pages[0] divider).
-        # page_counter stays at 2 so pages[0] gets counter=2 (even=recto margins),
-        # consistent with frontend marginsForPage(pageIdx+2 = 0+2 = 2).
-        cv.showPage()
+        album_info = {
+            "albumName":  album.get("albumName", ""),
+            "assetCount": len(album.get("assets", [])),
+            "dateRange":  _date_range(album.get("assets", [])),
+        }
 
-        n_pages = len(pages)
-        for page_idx, page in enumerate(pages):
-            if on_page_progress:
-                on_page_progress(n_done + page_idx, n_jobs + n_pages)
-
-            if page.get("_album_cover") or page.get("_album_separator"):
-                cv.showPage()
+        # ── Helper: render body pages into canvas cv ──────────────────────────
+        def _render_body_pages(cv_out, start_counter):
+            page_counter = start_counter
+            n_pages = len(pages)
+            for page_idx, page in enumerate(pages):
+                if on_page_progress:
+                    on_page_progress(n_done + page_idx, n_jobs + n_pages)
+                if page.get("_album_cover") or page.get("_album_separator"):
+                    cv_out.showPage()
+                    page_counter += 1
+                    continue
+                ml_pt, mr_pt, mt_pt, mb_pt = margins_for_page(page_counter)
+                profile_cs = profile.get("caption_style") or {}
+                if page.get("_album_divider"):
+                    div_map = (divider_maps or {}).get(page_idx, map_image)
+                    _draw_divider_page(cv_out, page, processed_cache, pw, ph,
+                                       ml_pt, mr_pt, mt_pt, mb_pt, gap, bleed,
+                                       crop_marks=crop_marks, pan_offsets=pan_offsets,
+                                       page_idx=page_idx, profile_cs=profile_cs, map_image=div_map)
+                else:
+                    _draw_photo_page_fast(cv_out, page, processed_cache, pw, ph,
+                                          ml_pt, mr_pt, mt_pt, mb_pt, gap, bleed,
+                                          crop_marks=crop_marks, pan_offsets=pan_offsets,
+                                          page_idx=page_idx, profile_cs=profile_cs)
+                cv_out.showPage()
                 page_counter += 1
-                continue
+            return page_counter
 
-            ml_pt, mr_pt, mt_pt, mb_pt = margins_for_page(page_counter)
-            profile_cs = profile.get("caption_style") or {}
-            if page.get("_album_divider"):
-                div_map = (divider_maps or {}).get(page_idx, map_image)
-                _draw_divider_page(cv, page, processed_cache, pw, ph,
-                                   ml_pt, mr_pt, mt_pt, mb_pt, gap, bleed,
-                                   crop_marks=crop_marks,
-                                   pan_offsets=pan_offsets,
-                                   page_idx=page_idx,
-                                   profile_cs=profile_cs,
-                                   map_image=div_map)
+        def _cover_page_dict(style_key, default):
+            """Return (style_dict, page) for a cover face."""
+            s = cover_cfg.get(style_key) if has_new_cover else default
+            return s or default
+
+        if export_separate and has_new_cover:
+            # ── Two-file export: body PDF + cover PDF ─────────────────────────
+            # Body PDF (no cover pages; body only)
+            cv_body = canvas.Canvas(tmp_path, pagesize=(pw, ph))
+            cv_body.setTitle(album.get("albumName", "Fotolibro"))
+            cv_body._doc._catalog.setPageLayout('TwoPageRight')
+            body_ctr = _render_body_pages(cv_body, 1)
+            if duplex and body_ctr % 2 != 0:
+                cv_body.showPage()
+            cv_body.save()
+            with open(tmp_path, "rb") as f:
+                body_bytes = f.read()
+
+            # Cover PDF (fronte, seconda, terza, quarta)
+            cover_tmp = tmp_path + "_cov.pdf"
+            try:
+                cv_cov = canvas.Canvas(cover_tmp, pagesize=(pw, ph))
+                cv_cov.setTitle(f"{album.get('albumName', 'Copertina')} — copertina")
+                spine  = cover_cfg.get("spine") or {}
+                front  = _cover_page_dict("front",        {})
+                sec    = _cover_page_dict("inside_front", {})
+                tza    = _cover_page_dict("inside_back",  {})
+                back   = _cover_page_dict("back",         {})
+                for style in (front, sec, tza, back):
+                    _draw_style_page(cv_cov, style, album_info, processed_cache,
+                                     pw, ph, bleed, crop_marks, map_image)
+                    cv_cov.showPage()
+                cv_cov.save()
+                with open(cover_tmp, "rb") as f:
+                    cover_bytes = f.read()
+            finally:
+                try: os.unlink(cover_tmp)
+                except Exception: pass
+
+            processed_cache.clear(); gc.collect()
+            return (body_bytes, cover_bytes)
+
+        elif export_spread and has_new_cover:
+            # ── Spread cover: 2 wide pages prepended ─────────────────────────
+            spine_cfg  = cover_cfg.get("spine") or {}
+            body_gsm   = profile.get("body_paper_gsm", 90.0) or 90.0
+            n_leaves   = max(1, len(pages) // 2)
+            spine_mm_v = cover_cfg.get("spine_width_mm") or round(n_leaves * body_gsm / 800, 1)
+            spine_w    = _mm(spine_mm_v)
+            spread_w   = pw * 2 + spine_w
+
+            # Outer spread: quarta | dorso | fronte
+            # Individual pages rendered with crop_marks=False; spread-level marks drawn separately.
+            cv.setPageSize((spread_w, ph))
+            back_s  = _cover_page_dict("back",  {})
+            front_s = _cover_page_dict("front", {})
+            _draw_style_page(cv, back_s,  album_info, processed_cache, pw, ph, bleed, False, map_image)
+            _draw_spine_pdf(cv, spine_cfg, album_info, pw, 0, spine_w, ph)
+            cv.saveState(); cv.translate(pw + spine_w, 0)
+            _draw_style_page(cv, front_s, album_info, processed_cache, pw, ph, bleed, False, map_image)
+            cv.restoreState()
+            if bleed > 0 and crop_marks:
+                _draw_bleed_marks(cv, spread_w, ph, bleed)
+            cv.showPage()
+
+            # Inner spread: inside_front | blank spine | inside_back
+            cv.setPageSize((spread_w, ph))
+            sec_s = _cover_page_dict("inside_front", {})
+            tza_s = _cover_page_dict("inside_back",  {})
+            _draw_style_page(cv, sec_s, album_info, processed_cache, pw, ph, bleed, False, map_image)
+            bg_spine = spine_cfg.get("bg", "#0a0a0e")
+            cv.setFillColorRGB(*_hex_to_rgb(bg_spine)); cv.rect(pw, 0, spine_w, ph, fill=1, stroke=0)
+            cv.saveState(); cv.translate(pw + spine_w, 0)
+            _draw_style_page(cv, tza_s, album_info, processed_cache, pw, ph, bleed, False, map_image)
+            cv.restoreState()
+            if bleed > 0 and crop_marks:
+                _draw_bleed_marks(cv, spread_w, ph, bleed)
+            cv.showPage()
+
+            # Back to normal page size for body
+            cv.setPageSize((pw, ph))
+            page_counter = 2   # body counter starts at 2 (matches marginsForPage convention)
+            page_counter = _render_body_pages(cv, page_counter)
+            if duplex and page_counter % 2 != 0:
+                cv.showPage()
+
+        else:
+            # ── Standard single-PDF rendering ─────────────────────────────────
+            if has_new_cover:
+                front_s = _cover_page_dict("front", {})
+                sec_s   = _cover_page_dict("inside_front", {})
+                _draw_style_page(cv, front_s, album_info, processed_cache,
+                                 pw, ph, bleed, crop_marks, map_image)
+                cv.showPage()
+                _draw_style_page(cv, sec_s, album_info, processed_cache,
+                                 pw, ph, bleed, crop_marks, map_image)
+                cv.showPage()
             else:
-                _draw_photo_page_fast(cv, page, processed_cache, pw, ph,
-                                      ml_pt, mr_pt, mt_pt, mb_pt, gap, bleed,
-                                      crop_marks=crop_marks,
-                                      pan_offsets=pan_offsets,
-                                      page_idx=page_idx,
-                                      profile_cs=profile_cs)
-            cv.showPage()
-            page_counter += 1
+                _draw_title_page(cv, album, map_image, pw, ph, margin, bleed, crop_marks=crop_marks,
+                         ml=_mm(ml + bleed_mm), mr=_mm(mr + bleed_mm),
+                         mt=_mm(mt + bleed_mm), mb=_mm(mb + bleed_mm))
+                cv.showPage()
+                cv.showPage()  # blank seconda
 
-        if duplex and page_counter % 2 != 0:
-            cv.showPage()
+            page_counter = 2
+            page_counter = _render_body_pages(cv, page_counter)
+
+            if has_new_cover:
+                tza_s  = _cover_page_dict("inside_back", {})
+                back_s = _cover_page_dict("back", {})
+                _draw_style_page(cv, tza_s, album_info, processed_cache,
+                                 pw, ph, bleed, crop_marks, map_image)
+                cv.showPage()
+                _draw_style_page(cv, back_s, album_info, processed_cache,
+                                 pw, ph, bleed, crop_marks, map_image)
+                cv.showPage()
+
+            if duplex and page_counter % 2 != 0:
+                cv.showPage()
 
         cv.save()
         processed_cache.clear()
