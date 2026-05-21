@@ -26,6 +26,7 @@ import logging
 import xml.etree.ElementTree as ET
 from typing import Optional
 from PIL import Image as PILImage, ExifTags
+from config_loader import cfg
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +96,10 @@ def _fix_orientation(img: PILImage.Image) -> PILImage.Image:
     return img
 
 
-def _img_to_data_uri(img_bytes: bytes, max_px: int = 2400) -> str:
+def _img_to_data_uri(img_bytes: bytes, max_px: int | None = None) -> str:
     """Resize and encode image as base64 data URI."""
+    if max_px is None:
+        max_px = cfg('svg', 'max_image_dimension_px')
     try:
         pil = PILImage.open(io.BytesIO(img_bytes))
         pil = _fix_orientation(pil).convert("RGB")
@@ -104,7 +107,7 @@ def _img_to_data_uri(img_bytes: bytes, max_px: int = 2400) -> str:
         if max(pil.size) > max_px:
             pil.thumbnail((max_px, max_px), PILImage.LANCZOS)
         buf = io.BytesIO()
-        pil.save(buf, format="JPEG", quality=88, optimize=True)
+        pil.save(buf, format="JPEG", quality=cfg('svg', 'jpeg_quality'), optimize=True)
         b64 = base64.b64encode(buf.getvalue()).decode()
         return f"data:image/jpeg;base64,{b64}"
     except Exception as e:
@@ -198,7 +201,7 @@ def _build_page_svg(
                 img_el.set("height", f"{total_h_px * 0.45:.2f}")
                 img_el.set("preserveAspectRatio", "xMidYMid slice")
                 img_el.set("clip-path", f"url(#{map_clip_id})")
-                img_el.set("opacity", "0.6")
+                img_el.set("opacity", str(cfg('svg', 'title_page_map_opacity')))
                 img_el.set(f"{{{XLINK}}}href", uri)
         # Title text
         text_layer = ET.SubElement(root, f"{{{SVG_NS}}}g")
@@ -213,13 +216,13 @@ def _build_page_svg(
         # Title
         t = ET.SubElement(text_layer, f"{{{SVG_NS}}}text")
         t.set("x", f"{total_w_px/2:.2f}"); t.set("y", f"{total_h_px * 0.49:.2f}")
-        t.set("text-anchor", "middle"); t.set("font-size", "28")
+        t.set("text-anchor", "middle"); t.set("font-size", str(cfg('svg', 'title_font_size')))
         t.set("fill", "#f0ede6"); t.set("font-family", "Georgia, serif"); t.set("font-weight", "300")
         t.text = title or "Fotolibro"
         if description:
             desc_t = ET.SubElement(text_layer, f"{{{SVG_NS}}}text")
             desc_t.set("x", f"{total_w_px/2:.2f}"); desc_t.set("y", f"{total_h_px * 0.55:.2f}")
-            desc_t.set("text-anchor", "middle"); desc_t.set("font-size", "14")
+            desc_t.set("text-anchor", "middle"); desc_t.set("font-size", str(cfg('svg', 'description_font_size')))
             desc_t.set("fill", "#888"); desc_t.set("font-family", "Georgia, serif"); desc_t.set("font-style", "italic")
             desc_t.text = description
     else:
@@ -343,7 +346,7 @@ def _build_page_svg(
                 continue
 
             # font-size in SVG units (1 CSS px = 1 SVG unit in this coord system)
-            font_size = max(8.0, min(size_px, rh / 5))
+            font_size = max(cfg('svg', 'min_caption_font_size'), min(size_px, rh / 5))
             leading   = font_size * lh_mult
             pad_x     = _mm(5)
             pad_top   = _mm(5)
@@ -368,7 +371,7 @@ def _build_page_svg(
             # Wrap lines naively by word count (SVG has no text-wrap)
             words = text_content.split()
             # Estimate chars-per-line from slot width and font size
-            chars_per_line = max(10, int(inner_w / (font_size * 0.55)))
+            chars_per_line = max(10, int(inner_w / (font_size * cfg('svg', 'char_width_factor'))))
             lines = []
             line = ""
             for word in words:
@@ -401,8 +404,8 @@ def _build_page_svg(
         marks_layer = ET.SubElement(root, f"{{{SVG_NS}}}g")
         marks_layer.set("id", "cropmarks")
         marks_layer.set(f"{{{INKSCAPE_NS}}}label", "Segni di taglio")
-        mark_len = _mm(5)
-        gap = _mm(1.5)
+        mark_len = _mm(cfg('svg', 'crop_mark_length_mm'))
+        gap = _mm(cfg('svg', 'crop_mark_gap_mm'))
         corners = [
             (bleed_px, bleed_px, -1, -1),
             (total_w_px - bleed_px, bleed_px, 1, -1),

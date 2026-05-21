@@ -48,6 +48,7 @@ Configuration → Print profile → Generate layout → Edit preview → Export 
 - **GPS maps** — static map slots with configurable tile style, marker and route; Stadia Maps or OSM fallback
 - **Projects** — save and resume named projects across sessions
 - **Export options** — DPI (150–600), colour profile (sRGB, FOGRA39…), crop marks, spread or separate cover PDF
+- **Advanced config** — all internal algorithm parameters (quality weights, face detection thresholds, scoring penalties, map defaults) editable via UI without restart
 - **Localisation** — Italian and English built-in
 
 ---

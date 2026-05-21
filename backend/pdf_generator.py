@@ -25,6 +25,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
+from config_loader import cfg
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +212,7 @@ def _prepare_image(
 
     # ── Re-encode ─────────────────────────────────────────────────────────
     buf = io.BytesIO()
-    pil.save(buf, format="JPEG", quality=92, optimize=True, dpi=(dpi, dpi))
+    pil.save(buf, format="JPEG", quality=cfg('pdf', 'jpeg_quality'), optimize=True, dpi=(dpi, dpi))
     buf.seek(0)
     return buf.read(), ox, oy, draw_w, draw_h
 
@@ -239,8 +240,10 @@ def _draw_text_wrapped(c: canvas.Canvas, text: str,
                        x: float, y: float, max_w: float,
                        font: str, size: float, leading: float,
                        color: tuple = (0.95, 0.93, 0.88),
-                       max_lines: int = 20,
+                       max_lines: int | None = None,
                        align: str = "left") -> float:
+    if max_lines is None:
+        max_lines = cfg('pdf', 'max_text_lines')
     c.setFont(font, size)
     c.setFillColorRGB(*color)
 
@@ -278,8 +281,8 @@ def _draw_bleed_marks(c: canvas.Canvas, pw: float, ph: float, bleed: float) -> N
     c.saveState()
     c.setStrokeColorRGB(0, 0, 0)
     c.setLineWidth(0.5)
-    mark = _mm(5)
-    gap  = _mm(1.5)
+    mark = _mm(cfg('pdf', 'bleed_mark_length_mm'))
+    gap  = _mm(cfg('pdf', 'bleed_mark_gap_mm'))
     corners = [
         (bleed, bleed,        -1, -1),
         (pw - bleed, bleed,    1, -1),
@@ -359,7 +362,7 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
         c.setLineWidth(0.6)
         c.line(ml + _mm(10), cy, pw - mr - _mm(10), cy)
         c.setFillColorRGB(*_hex_to_rgb(text_color))
-        c.setFont("Helvetica-Bold", _mm(14))
+        c.setFont("Helvetica-Bold", _mm(cfg('pdf', 'title_font_size_mm')))
         c.drawCentredString(pw / 2, cy + _mm(8), album_name or "Album")
         if date_range:
             c.setFont("Helvetica", _mm(6))
@@ -401,7 +404,7 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
 
         if _kind == "line":
             ln = _item
-            opacity   = (ln.get("opacity", 50) or 0) / 100
+            opacity   = (ln.get("opacity", cfg('pdf', 'default_line_opacity_pct')) or 0) / 100
             color     = ln.get("color", "#d4aa5a")
             thickness = float(ln.get("thickness", 1))
             lx        = bleed + ln.get("x", 50) / 100 * _pw_c
@@ -431,7 +434,7 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
         color   = el.get("color", "#f0ede6")
         align   = el.get("align", "center")
 
-        fs_pct  = el.get("font_size", 3)
+        fs_pct  = el.get("font_size", cfg('pdf', 'default_element_font_size_pct'))
         fs_pt   = max(4.0, fs_pct / 100 * _ph_c)
 
         if etype in ("title", "subtitle", "date_range", "photo_count", "text_custom"):
@@ -627,8 +630,8 @@ def _draw_title_page(c: canvas.Canvas, album: dict,
     # Map image (upper 55%)
     if map_image:
         try:
-            map_h = content_h * 0.55
-            map_y = margin + content_h * 0.45
+            map_h = content_h * cfg('pdf', 'title_page_map_height_frac')
+            map_y = margin + content_h * (1.0 - cfg('pdf', 'title_page_map_height_frac'))
             pil = PILImage.open(io.BytesIO(map_image)).convert("RGB")
             buf = io.BytesIO()
             pil.save(buf, format="JPEG", quality=88)
@@ -647,11 +650,11 @@ def _draw_title_page(c: canvas.Canvas, album: dict,
             c.restoreState()
             c.setFillColorRGB(0.04, 0.04, 0.06)
             # Gradient-like fade at bottom of map
-            for i in range(20):
-                alpha = i / 20
+            for i in range(cfg('pdf', 'title_page_gradient_steps')):
+                alpha = i / cfg('pdf', 'title_page_gradient_steps')
                 c.setFillColorRGB(0.04, 0.04, 0.06)
                 c.setFillAlpha(alpha)
-                c.rect(margin, map_y, pw - 2 * margin, map_h * 0.3 * (i / 20))
+                c.rect(margin, map_y, pw - 2 * margin, map_h * 0.3 * (i / cfg('pdf', 'title_page_gradient_steps')))
             c.setFillAlpha(1)
         except Exception as e:
             logger.warning(f"Map draw error: {e}")
@@ -666,7 +669,7 @@ def _draw_title_page(c: canvas.Canvas, album: dict,
     title = album.get("albumName", "")
     if title:
         c.setFillColorRGB(0.94, 0.92, 0.86)
-        font_size = min(_mm(14), (pw - 2 * margin) / max(len(title), 1) * 1.6)
+        font_size = min(_mm(cfg('pdf', 'title_font_size_mm')), (pw - 2 * margin) / max(len(title), 1) * 1.6)
         font_size = max(font_size, _mm(7))
         max_title_w = pw - _ml - _mr
         c.setFont("Helvetica-Light" if "Helvetica-Light" in pdfmetrics.getRegisteredFontNames() else "Helvetica", font_size)
@@ -822,7 +825,7 @@ def _render_caption_slot(c: canvas.Canvas, item: dict,
     if not text:
         return
 
-    font_size = min(_mm(size_px * 0.42), h / 5)
+    font_size = min(_mm(size_px * cfg('pdf', 'caption_font_size_factor')), h / 5)
     font_size = max(font_size, _mm(3))
     leading   = font_size * lh_mult
     inner_x   = x + _mm(5)

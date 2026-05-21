@@ -8,6 +8,7 @@ from __future__ import annotations
 import math, hashlib, re
 from datetime import datetime, timedelta
 from typing import Any
+from config_loader import cfg
 
 Photo  = dict[str, Any]
 Slot   = dict[str, float]
@@ -182,7 +183,7 @@ def _get_all_faces(photo: Photo) -> list[dict]:
         x1, y1 = max(0.0, min(1.0, x1)), max(0.0, min(1.0, y1))
         x2, y2 = max(0.0, min(1.0, x2)), max(0.0, min(1.0, y2))
         size = max(x2 - x1, y2 - y1)
-        if size < 0.01:
+        if size < cfg('face', 'min_face_size'):
             return None
         return {"cx": (x1+x2)/2, "cy": (y1+y2)/2, "size": size,
                 "x1": x1, "y1": y1, "x2": x2, "y2": y2}
@@ -243,17 +244,17 @@ def _face_would_be_clipped(face: dict, photo_ar: float, slot_ar: float) -> bool:
     inferiore/destro e superiore/sinistro del bbox dentro lo slot con MARGIN.
     Se pan_min > pan_max non esiste pan valido → faccia tagliata.
     """
-    MARGIN = 0.05
+    MARGIN = cfg('face', 'clip_check_margin')
     x1, y1, x2, y2 = face["x1"], face["y1"], face["x2"], face["y2"]
 
-    if abs(photo_ar - slot_ar) < 0.1:
+    if abs(photo_ar - slot_ar) < cfg('face', 'clip_check_ar_tolerance'):
         return False
 
     if photo_ar >= slot_ar:
         # Fit sull'altezza: overflow orizzontale
         ratio_x   = photo_ar / slot_ar
         overflow_x = ratio_x - 1
-        if overflow_x < 0.01:
+        if overflow_x < cfg('face', 'clip_check_overflow_min'):
             return False
         pan_x_max = (x1 * ratio_x - MARGIN)       / overflow_x * 100
         pan_x_min = (x2 * ratio_x - (1 - MARGIN)) / overflow_x * 100
@@ -262,7 +263,7 @@ def _face_would_be_clipped(face: dict, photo_ar: float, slot_ar: float) -> bool:
         # Fit sulla larghezza: overflow verticale
         ratio_y   = slot_ar / photo_ar
         overflow_y = ratio_y - 1
-        if overflow_y < 0.01:
+        if overflow_y < cfg('face', 'clip_check_overflow_min'):
             return False
         pan_y_max = (y1 * ratio_y - MARGIN)       / overflow_y * 100
         pan_y_min = (y2 * ratio_y - (1 - MARGIN)) / overflow_y * 100
@@ -292,7 +293,7 @@ def _face_transform(faces: list[dict], photo_ar: float, slot_ar: float) -> dict:
         - Volto in basso (bb_y ~0.5): pan_target alto → clamped da pan_max → spinge su quanto possibile
         - Volto in alto (bb_y ~0.2): pan_target basso → non clamped → posizione naturale
     """
-    prominent = [f for f in faces if f.get("size", 0) >= 0.02] or faces
+    prominent = [f for f in faces if f.get("size", 0) >= cfg('face', 'prominent_threshold')] or faces
     if not prominent:
         return {"x": 50.0, "y": 50.0, "zoom": 1.0}
 
@@ -303,8 +304,8 @@ def _face_transform(faces: list[dict], photo_ar: float, slot_ar: float) -> dict:
     cx    = (bb_x1 + bb_x2) / 2
     cy    = (bb_y1 + bb_y2) / 2
 
-    MARGIN  = 0.05   # 5% margine minimo dai bordi slot
-    TARGET  = 0.38   # posiziona il centro dei volti al 38% dall'alto slot
+    MARGIN  = cfg('face', 'pan_margin')   # 5% margine minimo dai bordi slot
+    TARGET  = cfg('face', 'target_y_position')   # posiziona il centro dei volti al 38% dall'alto slot
 
     if photo_ar >= slot_ar:
         # ── Fit sull'altezza: pan X ───────────────────────────────────────────
@@ -332,8 +333,8 @@ def _face_transform(faces: list[dict], photo_ar: float, slot_ar: float) -> dict:
             pan_y = 50.0
         pan_x = 50.0
 
-    pan_x = max(5.0, min(95.0, pan_x))
-    pan_y = max(5.0, min(95.0, pan_y))
+    pan_x = max(cfg('face', 'pan_x_min'), min(cfg('face', 'pan_x_max'), pan_x))
+    pan_y = max(cfg('face', 'pan_x_min'), min(cfg('face', 'pan_x_max'), pan_y))
 
     return {"x": round(pan_x, 1), "y": round(pan_y, 1), "zoom": 1.0}
 
@@ -347,7 +348,7 @@ def _face_transform(faces: list[dict], photo_ar: float, slot_ar: float) -> dict:
 def _has_prominent_face(photo: Photo) -> bool:
     """True se la foto ha un volto che occupa almeno il 10% dell'immagine."""
     face = _get_face_region(photo)
-    return face is not None and face["size"] >= 0.02
+    return face is not None and face["size"] >= cfg('face', 'prominent_threshold')
 
 
 # ── Rimozione duplicati (corretta) ────────────────────────────────────────────
@@ -370,7 +371,7 @@ def _extract_gps(photos: list[Photo]) -> list[dict]:
                 continue
         except (TypeError, ValueError):
             continue
-        key = (round(lat, 3), round(lon, 3))
+        key = (round(lat, cfg('duplicates', 'gps_coord_rounding')), round(lon, cfg('duplicates', 'gps_coord_rounding')))
         if key in seen:
             continue
         seen.add(key)
@@ -450,8 +451,8 @@ def _filter_duplicates(photos: list[Photo], threshold: float, log: Log) -> tuple
     #   - dHash ≤ max_hamming (simile visivamente)
     #   - nome base uguale + entro finestra temporale (burst shot)
     # Foto senza dHash non vengono mai escluse (criterio visivo non verificabile).
-    max_hamming     = max(0, int((1 - threshold) * 128))
-    time_window_sec = max(30, int((1 - threshold) * 1200))
+    max_hamming     = max(0, int((1 - threshold) * cfg('duplicates', 'dhash_size') ** 2 * 2))
+    time_window_sec = max(30, int((1 - threshold) * cfg('duplicates', 'burst_time_window_base_sec')))
 
     all_remaining = sorted(after_cs + no_checksum, key=lambda p: _photo_dt(p) or datetime.min)
     kept: list[Photo] = []
@@ -526,14 +527,15 @@ def _compute_similarity_scores(photos: list[Photo]) -> dict[str, float | None]:
         if dh is None or len(photos) < 2:
             scores[pid] = None
             continue
-        min_dist = 128
+        _max_dist = cfg('duplicates', 'dhash_size') ** 2 * 2
+        min_dist = _max_dist
         for j, k in enumerate(photos):
             if i == j:
                 continue
             dh2 = k.get("_dhash")
             if dh2 is not None:
                 min_dist = min(min_dist, _hamming(dh, dh2))
-        scores[pid] = round(1 - min_dist / 128, 3)
+        scores[pid] = round(1 - min_dist / _max_dist, 3)
     return scores
 
 
@@ -757,7 +759,7 @@ def _score_page_type(
         if photo is not None and _photo_is_portrait(photo) != _slot_is_portrait(slot, page_ar):
             orientation_violations += 1
     if orientation_violations:
-        score += orientation_violations * 10_000
+        score += orientation_violations * cfg('layout_scoring', 'penalty_orientation_violation')
         detail.append(f"orient_viol={orientation_violations}×10000")
 
     # ── 1b. Caption slot matching ────────────────────────────────────────────
@@ -776,16 +778,16 @@ def _score_page_type(
         unfilled_cap_slots = n_caption_slots - captions_available
         if unfilled_cap_slots > 0:
             # Caption slot would stay empty: very heavy penalty
-            score += unfilled_cap_slots * 5_000
+            score += unfilled_cap_slots * cfg('layout_scoring', 'penalty_empty_caption_slot')
             detail.append(f"empty_caption_slot={unfilled_cap_slots}×5000")
         if captions_available > 0:
             # Layout has caption slot AND photos have descriptions: strong bonus
-            cap_bonus = captions_available * 200
+            cap_bonus = captions_available * cfg('layout_scoring', 'bonus_caption_match')
             score -= cap_bonus
             detail.append(f"caption_match_bonus={captions_available}×-200={-cap_bonus}")
     if n_caption_slots == 0 and n_caps_on_page > 0:
         # Photos have descriptions but layout has no caption slot: strong penalty
-        pen = n_caps_on_page * 300
+        pen = n_caps_on_page * cfg('layout_scoring', 'penalty_caption_no_slot')
         score += pen
         detail.append(f"has_caption_no_cap_slot={n_caps_on_page}×300={pen}")
 
@@ -794,7 +796,7 @@ def _score_page_type(
     empty_slots = max(0, n_photo_slots - n_photos)
     if empty_slots > 0:
         # Penalizza in proporzione: 1 slot vuoto ok, 2+ molto penalizzati
-        score += (empty_slots ** 2) * 200
+        score += (empty_slots ** 2) * cfg('layout_scoring', 'penalty_empty_photo_slot')
         detail.append(f"empty_slots={empty_slots}×{empty_slots*200}")
 
     # ── 3. Differenza dal target di slot ──────────────────────────────────────
@@ -804,7 +806,7 @@ def _score_page_type(
     slot_target = max(1, round(1 + (max_slots - 1) * (1 - density_target / 100)))
     slot_target = min(slot_target, n_photos)
     diff = abs(effective_slots - slot_target)
-    density_penalty = (diff ** 2) * 50
+    density_penalty = (diff ** 2) * cfg('layout_scoring', 'penalty_density_deviation')
     score += density_penalty
     detail.append(f"slot_diff=|{n_photo_slots}-{slot_target}|²×50={density_penalty}")
 
@@ -817,11 +819,11 @@ def _score_page_type(
             continue
         faces_all = _get_all_faces(photo)
         face = _merged_face(faces_all)
-        if face is not None and face["size"] >= 0.12:   # ignora volti piccoli/lontani
+        if face is not None and face["size"] >= cfg('layout_scoring', 'face_clip_penalty_min_size'):   # ignora volti piccoli/lontani
             p_ar = _photo_ar(photo)
             s_ar = _slot_ar(slot, page_ar)
             if _face_would_be_clipped(face, p_ar, s_ar):
-                face_penalty += 400 * face["size"]
+                face_penalty += cfg('layout_scoring', 'face_clip_penalty_weight') * face["size"]
     score += face_penalty
     if face_penalty > 0:
         detail.append(f"face_penalty={face_penalty:.1f}")
@@ -829,41 +831,41 @@ def _score_page_type(
     # ── 5. Diversità: penalizza layout già molto usati ────────────────────────
     pid   = pt.get("id", "")
     usage = usage_counter.get(pid, 0)
-    score += usage * 8
+    score += usage * cfg('layout_scoring', 'layout_reuse_penalty')
     detail.append(f"usage={usage}×8={usage*8}")
 
     # ── 6. Bonus per layout mai usato ────────────────────────────────────────
     if usage == 0:
-        score -= 30
+        score -= cfg('layout_scoring', 'unused_layout_bonus')
         detail.append("unused_bonus=-30")
 
     # ── 7. Ritmo visivo ───────────────────────────────────────────────────────
     if rhythm and prev_dense is not None:
         is_dense = ns >= 3
         if is_dense == prev_dense:
-            score += 4
+            score += cfg('layout_scoring', 'rhythm_alternation_penalty')
             detail.append("rhythm_penalty=4")
 
     if verbose_log is not None:
         verbose_log.append(f"      {pt.get('label','?'):25s} score={score:7.1f}  [{', '.join(detail)}]")
 
     if _return_breakdown:
-        no_cap_pen = (n_caps_on_page * 300) if (n_caption_slots == 0 and n_caps_on_page > 0) else 0
+        no_cap_pen = (n_caps_on_page * cfg('layout_scoring', 'penalty_caption_no_slot')) if (n_caption_slots == 0 and n_caps_on_page > 0) else 0
         return score, {
             'orient_violations': orientation_violations,
-            'orient_score':      orientation_violations * 10_000,
+            'orient_score':      orientation_violations * cfg('layout_scoring', 'penalty_orientation_violation'),
             'cap_unfilled':      unfilled_cap_slots,
-            'cap_score':         unfilled_cap_slots * 5_000,
+            'cap_score':         unfilled_cap_slots * cfg('layout_scoring', 'penalty_empty_caption_slot'),
             'cap_bonus':         cap_bonus,
             'no_cap_penalty':    no_cap_pen,
             'empty_slots':       empty_slots,
-            'empty_score':       (empty_slots**2)*200,
+            'empty_score':       (empty_slots**2)*cfg('layout_scoring', 'penalty_empty_photo_slot'),
             'slot_target':       slot_target,
             'slot_diff':         diff,
             'density_score':     density_penalty,
             'face_penalty':      round(face_penalty, 1),
             'usage':             usage,
-            'usage_score':       usage * 8,
+            'usage_score':       usage * cfg('layout_scoring', 'layout_reuse_penalty'),
             'unused_bonus':      usage == 0,
             'rhythm_penalty':    bool(rhythm and prev_dense is not None and (ns>=3) == prev_dense),
             'total':             round(score, 1),
@@ -1178,7 +1180,7 @@ def _make_pages_from_group(
                     transform = _face_transform(all_faces, p_ar, s_ar)
                     key = f"{page_num}_{si}"
                     transforms[key] = transform
-                    prominent = [f for f in all_faces if f.get("size",0) >= 0.02]
+                    prominent = [f for f in all_faces if f.get("size",0) >= cfg('face', 'prominent_threshold')]
                     clip_note = " ⚠ VOLTO TAGLIATO" if would_clip else ""
                     log.append(
                         f"    → {len(all_faces)} volto/i ({len(prominent)} in primo piano), "
@@ -1207,11 +1209,11 @@ def _make_pages_from_group(
             elif item2 and item2.get('type')=='photo':
                 pr2 = next((p for p in chunk if p.get('id')==item2.get('asset_id')),None)
                 faces2 = _get_all_faces(pr2) if pr2 else []
-                prom2  = [f for f in faces2 if f.get('size',0)>=0.02]
+                prom2  = [f for f in faces2 if f.get('size',0)>=cfg('face', 'prominent_threshold')]
                 p_ar2  = _photo_ar(pr2) if pr2 else 1.0
                 s_ar2  = _slot_ar(slot2, page_ar)
                 mf2    = _merged_face(prom2 or faces2)
-                clipped= _face_would_be_clipped(mf2,p_ar2,s_ar2) if mf2 and mf2.get('size',0)>=0.12 else False
+                clipped= _face_would_be_clipped(mf2,p_ar2,s_ar2) if mf2 and mf2.get('size',0)>=cfg('layout_scoring', 'face_clip_penalty_min_size') else False
                 tr2    = transforms.get(f'{pg_idx}_{si2}',{'x':50,'y':50,'zoom':1.0})
                 q_score  = round(_photo_quality(pr2), 3) if pr2 else None
                 sim_score = (similarity_scores or {}).get(item2.get('asset_id', ''))

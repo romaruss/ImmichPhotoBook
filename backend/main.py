@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+import config_loader
 import immich_client as ic
 from layout_engine import (build_flow, generate_layout, extract_gps_locations,
                            default_slot_grid, rebuild_flow_from_photos)
@@ -768,7 +769,7 @@ def _check_cancel():
 
 # Max foto hi-res in RAM contemporaneamente (evita OOM)
 # 200 foto × ~4MB preview JPEG ≈ 800MB — limite ragionevole per un server entry-level
-_MAX_HIRES_PHOTOS = 300
+# Value configured via config_loader cfg('performance', 'max_hires_photos')
 
 async def _fetch_photos(asset_ids: set, hires: bool = False) -> dict:
     """
@@ -780,9 +781,10 @@ async def _fetch_photos(asset_ids: set, hires: bool = False) -> dict:
     mode  = "preview hi-res" if hires else "thumbnail"
     logger.info(f"Fetching {total} photos [{mode}]")
 
-    if hires and total > _MAX_HIRES_PHOTOS:
+    _max_hires = config_loader.cfg('performance', 'max_hires_photos')
+    if hires and total > _max_hires:
         raise ValueError(
-            f"Troppo foto hi-res ({total} > {_MAX_HIRES_PHOTOS}). "
+            f"Troppo foto hi-res ({total} > {_max_hires}). "
             f"Usa la modalità 'Anteprima' oppure dividi l'album in parti più piccole."
         )
 
@@ -794,7 +796,7 @@ async def _fetch_photos(asset_ids: set, hires: bool = False) -> dict:
         ids,
         hires=hires,
         on_progress=on_progress,
-        max_concurrent=3 if hires else 8,
+        max_concurrent=config_loader.cfg('performance', 'concurrent_hires_downloads') if hires else config_loader.cfg('performance', 'concurrent_thumb_downloads'),
     )
     logger.info(f"Fetch done: {len(photo_cache)}/{total}")
     return photo_cache
@@ -893,7 +895,7 @@ async def export_book(req: ExportRequest, _rl: None = Depends(rl_export)):
         # PDF — run in thread executor so async loop stays responsive
         # Progress callback: called from worker thread, so use thread-safe update
         n_pages = len(req.pages)
-        pdf_timeout = max(300, n_pages * 8)   # at least 8s per page, min 5min
+        pdf_timeout = max(config_loader.cfg('performance', 'pdf_min_timeout_sec'), n_pages * config_loader.cfg('performance', 'pdf_timeout_per_page_sec'))   # at least 8s per page, min 5min
 
         def _pdf_progress(page_idx: int, total_pages: int):
             pct = 75 + int(page_idx / max(total_pages, 1) * 22)  # 75% → 97%
@@ -1012,9 +1014,32 @@ async def delete_preset(kind: str, name: str):
 
 # ─── HEALTHCHECK ─────────────────────────────────────────────────────────────
 
+def _read_version() -> str:
+    try:
+        pkg = Path(__file__).parent / 'package.json'
+        return json.loads(pkg.read_text()).get('version', 'unknown')
+    except Exception:
+        return 'unknown'
+
+_APP_VERSION = _read_version()
+
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.9.5"}
+    return {"status": "ok", "version": _APP_VERSION}
+
+@app.get("/api/deep-config")
+async def get_deep_config():
+    return {
+        "current": config_loader.get_all(),
+        "defaults": config_loader.get_defaults(),
+        "schema": config_loader.SCHEMA,
+    }
+
+@app.post("/api/deep-config")
+async def save_deep_config(request: Request):
+    data = await request.json()
+    config_loader.save_user(data)
+    return {"ok": True}
 
 # ─── PROJECTS (save / load / list / delete) ──────────────────────────────────
 

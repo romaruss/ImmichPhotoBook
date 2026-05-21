@@ -101,7 +101,6 @@ export default function HomePage() {
   const th = t.home
   const navigate = useNavigate()
   const [connected, setConnected] = useState(null)   // null=checking, true, false
-  const [version, setVersion]       = useState(null)
   const [profileCount, setProfileCount] = useState(null)
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
@@ -109,7 +108,6 @@ export default function HomePage() {
   useEffect(() => {
     Promise.all([
       axios.get('/api/config/test').then(r => setConnected(r.data.connected)).catch(() => setConnected(false)),
-      axios.get('/api/health').then(r => setVersion(r.data.version)).catch(() => {}),
       axios.get('/api/profiles').then(r => setProfileCount(r.data.length)).catch(() => setProfileCount(0)),
       axios.get('/api/projects').then(r => setProjects(r.data || [])).catch(() => setProjects([])),
     ]).finally(() => setLoading(false))
@@ -185,14 +183,6 @@ export default function HomePage() {
               color: 'var(--text2)', borderRadius: 5, cursor: 'pointer' }}>
             {th.configBtn}
           </button>
-        )}
-        {!connFail && version && (
-          <span style={{ marginLeft: 'auto', fontSize: 10,
-            color: 'var(--text3)', fontFamily: "'JetBrains Mono', monospace",
-            background: 'var(--bg3)', border: '1px solid var(--border)',
-            borderRadius: 4, padding: '2px 8px' }}>
-            v{version}
-          </span>
         )}
       </div>
 

@@ -1,0 +1,88 @@
+{
+  "quality": {
+    "sharpness_variance_divisor": 4000.0,
+    "brightness_target": 0.55,
+    "megapixel_reference": 24.0,
+    "histogram_bins": 8,
+    "histogram_thumb_size": 64,
+    "weight_resolution": 0.2,
+    "weight_sharpness": 0.6,
+    "weight_brightness": 0.2
+  },
+  "face": {
+    "min_face_size": 0.01,
+    "clip_check_margin": 0.05,
+    "clip_check_ar_tolerance": 0.1,
+    "clip_check_overflow_min": 0.01,
+    "prominent_threshold": 0.02,
+    "pan_margin": 0.05,
+    "target_y_position": 0.38,
+    "pan_x_min": 5.0,
+    "pan_x_max": 95.0,
+    "close_up_threshold": 0.30,
+    "lateral_position_min": 0.10,
+    "lateral_position_max": 0.90,
+    "vertical_position_min": 0.05,
+    "vertical_position_max": 0.70,
+    "large_face_threshold": 0.25
+  },
+  "duplicates": {
+    "dhash_size": 8,
+    "burst_time_window_base_sec": 1200,
+    "gps_coord_rounding": 3
+  },
+  "layout_scoring": {
+    "penalty_orientation_violation": 10000,
+    "penalty_empty_caption_slot": 5000,
+    "bonus_caption_match": 200,
+    "penalty_caption_no_slot": 300,
+    "penalty_empty_photo_slot": 200,
+    "penalty_density_deviation": 50,
+    "face_clip_penalty_min_size": 0.12,
+    "face_clip_penalty_weight": 400,
+    "layout_reuse_penalty": 8,
+    "unused_layout_bonus": 30,
+    "rhythm_alternation_penalty": 4
+  },
+  "map": {
+    "marker_color": "#d4aa5a",
+    "marker_size": 10,
+    "route_width": 2,
+    "background_color": "#0d1117",
+    "grid_color": "#19202a",
+    "grid_lines": 8,
+    "bbox_padding_deg": 0.05,
+    "single_location_expand_deg": 0.05,
+    "single_location_threshold_deg": 0.01
+  },
+  "pdf": {
+    "jpeg_quality": 92,
+    "max_text_lines": 20,
+    "bleed_mark_length_mm": 5.0,
+    "bleed_mark_gap_mm": 1.5,
+    "default_line_opacity_pct": 50,
+    "default_element_font_size_pct": 3,
+    "title_page_map_height_frac": 0.55,
+    "title_page_gradient_steps": 20,
+    "title_font_size_mm": 14.0,
+    "caption_font_size_factor": 0.42
+  },
+  "svg": {
+    "max_image_dimension_px": 2400,
+    "jpeg_quality": 88,
+    "title_page_map_opacity": 0.6,
+    "title_font_size": 28,
+    "description_font_size": 14,
+    "min_caption_font_size": 8.0,
+    "char_width_factor": 0.55,
+    "crop_mark_length_mm": 5.0,
+    "crop_mark_gap_mm": 1.5
+  },
+  "performance": {
+    "max_hires_photos": 300,
+    "concurrent_hires_downloads": 3,
+    "concurrent_thumb_downloads": 8,
+    "pdf_timeout_per_page_sec": 8,
+    "pdf_min_timeout_sec": 300
+  }
+}

@@ -17,6 +17,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 from PIL import Image, ImageFilter
+from config_loader import cfg
 
 # Re-use the production-quality face detection from album_generator
 from album_generator import (
@@ -115,7 +116,7 @@ def _sharpness(img: Image.Image) -> float:
         pixels = list(lap.getdata())
         mean = sum(pixels) / len(pixels)
         var  = sum((p - mean)**2 for p in pixels) / len(pixels)
-        return min(1.0, var / 4000.0)
+        return min(1.0, var / cfg('quality', 'sharpness_variance_divisor'))
     except Exception:
         return 0.5
 
@@ -124,7 +125,7 @@ def _brightness(img: Image.Image) -> float:
     try:
         gray = img.convert("L")
         mean = sum(gray.getdata()) / (img.width * img.height) / 255.0
-        return max(0.0, 1.0 - 2.0 * abs(mean - 0.55))
+        return max(0.0, 1.0 - 2.0 * abs(mean - cfg('quality', 'brightness_target')))
     except Exception:
         return 0.5
 
@@ -137,7 +138,7 @@ def _resolution_score(asset: dict) -> float:
     if mp <= 0:
         fs = asset.get("fileSize") or asset.get("originalFileSize") or 0
         mp = max(0.5, fs / 500_000)
-    return min(1.0, mp / 24.0)
+    return min(1.0, mp / cfg('quality', 'megapixel_reference'))
 
 
 def score_quality(asset: dict, img_bytes: Optional[bytes] = None) -> float:
@@ -146,15 +147,18 @@ def score_quality(asset: dict, img_bytes: Optional[bytes] = None) -> float:
         thumb = _load_thumb(img_bytes)
         if thumb:
             # Sharpness (blur detection) weighted 3× more than resolution
-            return 0.2 * res + 0.6 * _sharpness(thumb) + 0.2 * _brightness(thumb)
+            return cfg('quality', 'weight_resolution') * res + cfg('quality', 'weight_sharpness') * _sharpness(thumb) + cfg('quality', 'weight_brightness') * _brightness(thumb)
     return 0.3 * res + 0.7 * 0.5
 
 
 # ─── 3. Rimozione duplicati ────────────────────────────────────────────────────
 
-def _color_histogram(img: Image.Image, bins: int = 8) -> list[float]:
+def _color_histogram(img: Image.Image, bins: int | None = None) -> list[float]:
     """Istogramma per canale normalizzato a [0,1] per canale (somma per canale = 1)."""
-    img_sm = img.resize((64, 64), Image.LANCZOS)
+    if bins is None:
+        bins = cfg('quality', 'histogram_bins')
+    _thumb_size = cfg('quality', 'histogram_thumb_size')
+    img_sm = img.resize((_thumb_size, _thumb_size), Image.LANCZOS)
     hist: list[float] = []
     for ch in range(3):
         channel = [p[ch] for p in img_sm.getdata()]
@@ -276,12 +280,12 @@ def _face_fits_slot(face: Optional[dict], photo_ar: float, slot_ar: float) -> bo
     face_size = face["size"]
 
     # Se il volto occupa >30% dell'immagine, è un primo piano importante
-    if face_size > 0.30:
+    if face_size > cfg('face', 'close_up_threshold'):
         # Il volto deve stare entro l'80% centrale dello slot
         cx, cy = face["cx"], face["cy"]
-        if cx < 0.10 or cx > 0.90:
+        if cx < cfg('face', 'lateral_position_min') or cx > cfg('face', 'lateral_position_max'):
             return False   # volto troppo ai bordi laterali
-        if cy < 0.05 or cy > 0.70:
+        if cy < cfg('face', 'vertical_position_min') or cy > cfg('face', 'vertical_position_max'):
             return False   # testa troppo vicina al bordo superiore
     return True
 
@@ -330,7 +334,7 @@ def _is_favorite(asset: dict) -> bool:
 def _has_large_face(asset: dict) -> bool:
     """True se la foto ha un volto in primo piano (size > 25%)."""
     face = _get_face_region(asset)
-    return face is not None and face["size"] > 0.25
+    return face is not None and face["size"] > cfg('face', 'large_face_threshold')
 
 
 def _slot_is_portrait(slot: dict) -> bool:

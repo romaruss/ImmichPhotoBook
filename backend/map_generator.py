@@ -16,6 +16,7 @@ import logging
 import os
 from PIL import Image, ImageDraw
 import PIL.Image
+from config_loader import cfg
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
@@ -71,6 +72,20 @@ def _hex_to_rgb(hex_str: str) -> tuple:
     except Exception:
         return (136, 136, 136)
 
+
+def _default_map_style() -> dict:
+    return {
+        "tile_style":    "alidade_smooth",
+        "marker_color":  cfg('map', 'marker_color'),
+        "marker_size":   cfg('map', 'marker_size'),
+        "marker_shape":  "circle",   # circle | square | diamond | pin
+        "show_route":    True,
+        "route_color":   "#b48a3a",
+        "route_width":   cfg('map', 'route_width'),
+        "bg_color":      cfg('map', 'background_color'),
+        "grid_color":    cfg('map', 'grid_color'),
+        "label_color":   "#c8b994",
+    }
 
 DEFAULT_MAP_STYLE = {
     "tile_style":    "alidade_smooth",
@@ -165,7 +180,7 @@ def generate_map_image(
     if not locations:
         return None
 
-    s = {**DEFAULT_MAP_STYLE, **(map_style or {})}
+    s = {**_default_map_style(), **(map_style or {})}
 
     tile_style   = s.get("tile_style", "alidade_smooth")
     marker_color = s.get("marker_color", "#d4aa5a")
@@ -189,7 +204,9 @@ def generate_map_image(
     try:
         from staticmap import StaticMap, CircleMarker
 
-        m = StaticMap(width, height, url_template=url)
+        m = StaticMap(width, height, url_template=url, headers={
+            'User-Agent': 'ImmichPhotoBook/0.9.5 (https://github.com/romaruss/ImmichPhotoBook; self-hosted photobook generator)',
+        })
         # Add 1 px markers only for bounding-box / zoom computation — not drawn visibly
         for loc in locations:
             m.add_marker(CircleMarker((loc["lon"], loc["lat"]), marker_color, 1))
@@ -218,7 +235,7 @@ def _draw_minimal_map(
     height: int,
     style: dict | None = None,
 ) -> bytes:
-    s = {**DEFAULT_MAP_STYLE, **(style or {})}
+    s = {**_default_map_style(), **(style or {})}
 
     BG         = _hex_to_rgb(s["bg_color"])
     GRID       = _hex_to_rgb(s["grid_color"])
@@ -245,10 +262,10 @@ def _draw_minimal_map(
     min_lat, max_lat = min(lats), max(lats)
     min_lon, max_lon = min(lons), max(lons)
 
-    if max_lat - min_lat < 0.01:
-        min_lat -= 0.05; max_lat += 0.05
-    if max_lon - min_lon < 0.01:
-        min_lon -= 0.05; max_lon += 0.05
+    if max_lat - min_lat < cfg('map', 'single_location_threshold_deg'):
+        min_lat -= cfg('map', 'single_location_expand_deg'); max_lat += cfg('map', 'single_location_expand_deg')
+    if max_lon - min_lon < cfg('map', 'single_location_threshold_deg'):
+        min_lon -= cfg('map', 'single_location_expand_deg'); max_lon += cfg('map', 'single_location_expand_deg')
 
     lat_span = max_lat - min_lat
     lon_span = max_lon - min_lon
@@ -262,7 +279,7 @@ def _draw_minimal_map(
     draw = ImageDraw.Draw(img, "RGBA")
 
     # Grid
-    n_grid = 8
+    n_grid = cfg('map', 'grid_lines')
     for i in range(1, n_grid):
         gx = i * width  // n_grid
         gy = i * height // n_grid

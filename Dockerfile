@@ -27,6 +27,9 @@ COPY backend/ ./
 # Copy built frontend
 COPY --from=frontend-builder /build/frontend/dist ./frontend/dist
 
+# Copy package.json so backend can read the version
+COPY --from=frontend-builder /build/frontend/package.json ./package.json
+
 # Data directory
 VOLUME ["/data"]
 

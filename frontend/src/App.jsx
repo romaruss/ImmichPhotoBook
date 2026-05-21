@@ -20,6 +20,7 @@ import HomePage from './pages/HomePage'
 import ProfilesPage from './pages/ProfilesPage'
 import AlbumsPage from './pages/AlbumsPage'
 import PreviewPage from './pages/PreviewPage'
+import DeepConfigPage from './pages/DeepConfigPage'
 
 function Shell() {
   const t = useT()
@@ -50,6 +51,7 @@ function Shell() {
     { path: '/profiles', label: t.nav.profiles,   icon: '📐' },
     { path: '/albums',   label: t.nav.albums,     icon: '🖼️' },
     { path: '/preview',  label: t.nav.preview,    icon: '📖' },
+    { path: '/deep-config', label: t.nav.deepConfig, icon: '🔧' },
   ]
 
   const currentPath = '/' + location.pathname.split('/')[1]
@@ -141,6 +143,7 @@ function Shell() {
           <Route path="/profiles/:pid" element={<ProfilesPage />} />
           <Route path="/albums"   element={<AlbumsPage />} />
           <Route path="/preview"  element={<PreviewPage />} />
+          <Route path="/deep-config" element={<DeepConfigPage />} />
         </Routes>
       </main>
     </div>
