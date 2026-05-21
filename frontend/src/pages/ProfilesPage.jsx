@@ -19,12 +19,17 @@ const STANDARD_SIZES = [
 ]
 
 const TILE_STYLES = [
-  { id:'alidade_smooth',      label:'Alidade Smooth',       desc:'Scuro minimalista (default)' },
-  { id:'alidade_smooth_dark', label:'Alidade Dark',          desc:'Molto scuro, alto contrasto' },
-  { id:'stamen_terrain',      label:'Terrain',              desc:'Rilievi e contorni naturali' },
-  { id:'stamen_toner',        label:'Toner',                desc:'Bianco e nero ad alto contrasto' },
-  { id:'osm_bright',          label:'OSM Bright',           desc:'Classico OpenStreetMap chiaro' },
-  { id:'outdoors',            label:'Outdoors',             desc:'Stile escursionistico/outdoor' },
+  // Stadia Maps — richiedono API key (gratuita su stadiamaps.com)
+  { id:'alidade_smooth',      label:'Alidade Smooth',      desc:'Scuro minimalista',               provider:'stadia' },
+  { id:'alidade_smooth_dark', label:'Alidade Dark',        desc:'Molto scuro, alto contrasto',     provider:'stadia' },
+  { id:'stamen_terrain',      label:'Terrain',             desc:'Rilievi e contorni naturali',     provider:'stadia' },
+  { id:'stamen_toner',        label:'Toner',               desc:'Bianco e nero ad alto contrasto', provider:'stadia' },
+  { id:'outdoors',            label:'Outdoors',            desc:'Stile escursionistico/outdoor',   provider:'stadia' },
+  // Gratuiti — nessuna API key richiesta
+  { id:'osm',                 label:'OpenStreetMap',       desc:'Classico OSM — gratuito',         provider:'free' },
+  { id:'carto_light',         label:'CartoDB Light',       desc:'Pulito chiaro — gratuito',        provider:'free' },
+  { id:'carto_dark',          label:'CartoDB Dark',        desc:'Scuro moderno — gratuito',        provider:'free' },
+  { id:'minimal',             label:'Minimale (PIL)',       desc:'Nessun tile, solo grafica vettoriale', provider:'free' },
 ]
 
 const DEFAULT_MAP_STYLE = {
@@ -112,6 +117,7 @@ function CollapsibleCard({ title, defaultOpen = true, actions, children }) {
 
 // ── Custom size manager panel ─────────────────────────────────────────────────
 function CustomSizeManager({ customSizes, onAdd, onDelete }) {
+  const pc = useT().profiles
   const [newName, setNewName] = useState('')
   const [newW, setNewW]       = useState(200)
   const [newH, setNewH]       = useState(300)
@@ -126,29 +132,29 @@ function CustomSizeManager({ customSizes, onAdd, onDelete }) {
     <div style={{ background:'var(--bg3)', border:'1px solid var(--border)',
       borderRadius:8, padding:16, marginBottom:12 }}>
       <p style={{ fontSize:11, fontWeight:600, color:'var(--text)', marginBottom:10 }}>
-        Aggiungi formato personalizzato
+        {pc.addCustomFormatTitle}
       </p>
       <div style={{ display:'flex', gap:10, alignItems:'flex-end', flexWrap:'wrap', marginBottom:12 }}>
         <div>
-          <label className="form-label">Nome formato</label>
-          <input className="form-input" style={{ width:150 }} placeholder="es. 21×21 quadrato"
+          <label className="form-label">{pc.formatNameLabel}</label>
+          <input className="form-input" style={{ width:150 }} placeholder={pc.formatNamePlaceholder}
             value={newName} onChange={e=>setNewName(e.target.value)}
             onKeyDown={e=>e.key==='Enter'&&handleAdd()}/>
         </div>
         <div>
-          <label className="form-label">Larghezza (mm)</label>
+          <label className="form-label">{pc.formatWidthLabel}</label>
           <input type="number" className="form-input" style={{ width:80 }}
             min={50} max={1200} value={newW} onChange={e=>setNewW(+e.target.value||200)}/>
         </div>
         <div style={{ marginTop:20, color:'var(--text3)' }}>×</div>
         <div>
-          <label className="form-label">Altezza (mm)</label>
+          <label className="form-label">{pc.formatHeightLabel}</label>
           <input type="number" className="form-input" style={{ width:80 }}
             min={50} max={1200} value={newH} onChange={e=>setNewH(+e.target.value||300)}/>
         </div>
         <button className="btn btn-primary btn-sm" onClick={handleAdd}
           disabled={!newName.trim()} style={{ marginBottom:1 }}>
-          + Aggiungi
+          {pc.formatAddBtn}
         </button>
       </div>
 
@@ -197,9 +203,10 @@ function MarginInput({ side, label, formValue, onCommit }) {
 
 // ── Map live preview panel ────────────────────────────────────────────────────
 function MapPreviewPanel({ previewUrl, loading, onRefresh }) {
+  const pm = useT().profiles
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:8, position:'sticky', top:20 }}>
-      <label className="form-label" style={{marginBottom:0}}>Anteprima live · Torino</label>
+      <label className="form-label" style={{marginBottom:0}}>{pm.mapPreviewLabel}</label>
       <div style={{
         width:300, height:300, borderRadius:8, overflow:'hidden',
         background:'var(--bg3)', border:'1px solid var(--border)',
@@ -219,17 +226,17 @@ function MapPreviewPanel({ previewUrl, loading, onRefresh }) {
               style={{width:'100%', height:'100%', objectFit:'cover', display:'block'}}/>
           : !loading && (
             <span style={{color:'var(--text3)', fontSize:12, textAlign:'center', padding:16}}>
-              Clicca "Aggiorna" per generare l'anteprima
+              {pm.mapPreviewClickHint}
             </span>
           )
         }
       </div>
       <button className="btn btn-sm" onClick={onRefresh} disabled={loading}
         style={{fontSize:11, opacity: loading ? 0.6 : 1}}>
-        {loading ? '⟳ Caricamento…' : '↺ Aggiorna anteprima'}
+        {pm.mapPreviewRefresh(loading)}
       </button>
       <p className="text-xs text-muted" style={{margin:0}}>
-        Usa il renderer PIL (fallback). Le tile online si vedono nell'album.
+        {pm.mapPreviewHint}
       </p>
     </div>
   )
@@ -249,6 +256,7 @@ export default function ProfilesPage() {
   const [marginLocked, setMarginLocked] = useState(() => localStorage.getItem('pb_margin_locked') !== '0')
   const [mapPreviewUrl, setMapPreviewUrl]   = useState(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [stadiaKeySet, setStadiaKeySet]     = useState(false)
   const [autoSaveStatus, setAutoSaveStatus] = useState('idle') // 'idle'|'pending'|'saving'|'saved'|'error'
   const [coverEditorOpen, setCoverEditorOpen] = useState(false)
   const previewTimerRef   = useRef(null)
@@ -273,6 +281,7 @@ export default function ProfilesPage() {
   useEffect(() => {
     loadProfiles()
     loadCustomSizes()
+    axios.get('/api/config').then(r => setStadiaKeySet(!!r.data.stadia_api_key_set)).catch(() => {})
   }, [])
 
   const loadProfiles = async () => {
@@ -292,7 +301,7 @@ export default function ProfilesPage() {
   const addCustomSize = async (size) => {
     const r = await axios.post('/api/custom-sizes', size)
     setCustomSizes(prev => [...prev, r.data])
-    showToast(`Formato "${size.name}" aggiunto ✓`, 'success')
+    showToast(p.formatAddedOk(size.name), 'success')
   }
 
   const deleteCustomSize = async (sid) => {
@@ -357,8 +366,8 @@ export default function ProfilesPage() {
       formInitKeyRef.current = JSON.stringify(originalFormRef.current)
       setPtKey(k => k + 1)
       setAutoSaveStatus('idle')
-      showToast('Modifiche scartate ✓', 'success')
-    } catch { showToast('Errore nel ripristino', 'error') }
+      showToast(p.discardOk, 'success')
+    } catch { showToast(p.discardError, 'error') }
   }
 
   // Close: flush any pending auto-save, then exit editor
@@ -443,16 +452,16 @@ export default function ProfilesPage() {
               <span className="text-muted">{p.subtitle2}</span>
             </div>
             <div className="flex gap-2">
-              <button className="btn btn-sm" style={{fontSize:11}} title="Esporta profilo completo come JSON"
+              <button className="btn btn-sm" style={{fontSize:11}} title={p.exportProfileBtn}
                 onClick={()=>{
                   const data={...form,_exported_from:'photobook-studio',_version:1,date:new Date().toISOString()}
                   const a=document.createElement('a')
                   a.href='data:application/json,'+encodeURIComponent(JSON.stringify(data,null,2))
                   a.download=`profilo-${(form.name||'profilo').replace(/\s+/g,'_')}.json`
                   a.click()
-                }}>⬇ Esporta profilo</button>
-              <label className="btn btn-sm" style={{fontSize:11,cursor:'pointer'}} title="Importa profilo da JSON">
-                ⬆ Importa profilo
+                }}>{p.exportProfileBtn}</button>
+              <label className="btn btn-sm" style={{fontSize:11,cursor:'pointer'}} title={p.importProfileBtn}>
+                {p.importProfileBtn}
                 <input type="file" accept=".json" style={{display:'none'}} onChange={e=>{
                   const file=e.target.files?.[0]; if(!file) return
                   const reader=new FileReader()
@@ -465,9 +474,9 @@ export default function ProfilesPage() {
                         delete imported.id
                         setForm(imported)
                         setPtKey(k => k + 1)
-                        showToast(`✓ Profilo "${d.name||'?'}" importato`, 'success')
-                      } else showToast('File non valido: non è un profilo PhotoBook','error')
-                    }catch{showToast('Errore nel leggere il file JSON','error')}
+                        showToast(p.profileImported(d.name||'?'), 'success')
+                      } else showToast(p.invalidProfile,'error')
+                    }catch{showToast(p.importJsonErr,'error')}
                   }
                   reader.readAsText(file)
                   e.target.value=''
@@ -486,16 +495,16 @@ export default function ProfilesPage() {
                     color: autoSaveStatus==='error' ? '#e05050'
                          : autoSaveStatus==='saving'||autoSaveStatus==='pending' ? 'var(--gold)'
                          : autoSaveStatus==='saved' ? '#4ac585' : 'transparent' }}>
-                    {autoSaveStatus==='pending' ? '⟳ In attesa…'
-                   : autoSaveStatus==='saving'  ? '⟳ Salvataggio…'
-                   : autoSaveStatus==='saved'   ? '✓ Salvato'
-                   : autoSaveStatus==='error'   ? '⚠ Errore salvataggio' : '·'}
+                    {autoSaveStatus==='pending' ? p.autoSavePending
+                   : autoSaveStatus==='saving'  ? p.autoSaveSaving
+                   : autoSaveStatus==='saved'   ? p.autoSaved
+                   : autoSaveStatus==='error'   ? p.autoSaveError : '·'}
                   </span>
-                  <button className="btn btn-sm" onClick={discardChanges} title="Ripristina lo stato all'apertura della sessione di modifica">
-                    ↺ Scarta modifiche
+                  <button className="btn btn-sm" onClick={discardChanges} title={p.discardBtnTitle}>
+                    {p.discardBtn}
                   </button>
                   <button className="btn btn-primary" onClick={handleClose}>
-                    ← Chiudi
+                    {p.closeEditorBtn}
                   </button>
                 </>
               )}
@@ -521,7 +530,7 @@ export default function ProfilesPage() {
                   <span>{p.pageSizeLabel}</span>
                   <button className="btn btn-sm" style={{ fontSize:10 }}
                     onClick={()=>setShowCustomSizeMgr(s=>!s)}>
-                    {showCustomSizeMgr ? '✕ Chiudi' : '+ Formato custom'}
+                    {showCustomSizeMgr ? p.closeCustomFormat : p.addCustomFormat}
                   </button>
                 </label>
 
@@ -553,7 +562,7 @@ export default function ProfilesPage() {
                 </div>
                 {selectedSizeObj && (
                   <p className="text-xs text-muted mt-2">
-                    Selezionato: <strong>{selectedSizeObj.name}</strong> — {selectedSizeObj.w}×{selectedSizeObj.h}mm
+                    {p.selectedSizeInfo(selectedSizeObj.name, selectedSizeObj.w, selectedSizeObj.h)}
                   </p>
                 )}
               </div>
@@ -580,9 +589,9 @@ export default function ProfilesPage() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Grammatura pagine interne (gsm)
+              <label className="form-label">{p.bodyGsmLabel}
                 <span className="text-xs text-muted" style={{fontWeight:400,marginLeft:6}}>
-                  usata per stimare spessore dorso
+                  {p.bodyGsmHint2}
                 </span>
               </label>
               <input type="number" className="form-input" style={{width:100}}
@@ -591,7 +600,7 @@ export default function ProfilesPage() {
                 onChange={e=>set('body_paper_gsm', +e.target.value)}
                 onBlur={e=>set('body_paper_gsm', Math.max(40,Math.min(350,+e.target.value||90)))}/>
               <span className="text-xs text-muted" style={{marginLeft:6}}>
-                Tipico: 90–130 gsm (offset), 170–250 gsm (patinata)
+                {p.bodyGsmTypical}
               </span>
             </div>
           </CollapsibleCard>
@@ -626,36 +635,36 @@ export default function ProfilesPage() {
                         cursor:'pointer',fontWeight:marginLocked?600:400,
                         background:marginLocked?'var(--gold-dim)':'var(--bg3)',
                         color:marginLocked?'var(--gold)':'var(--text3)',transition:'background 0.15s,color 0.15s'}}>
-                      🔒 Margine unico
+                      {p.singleMarginBtn}
                     </button>
                     <button onClick={()=>toggleLocked(false)}
                       style={{flex:1,padding:'8px 0',border:'none',
                         cursor:'pointer',fontWeight:!marginLocked?600:400,
                         background:!marginLocked?'rgba(100,160,200,0.13)':'var(--bg3)',
                         color:!marginLocked?'#7eb8d4':'var(--text3)',transition:'background 0.15s,color 0.15s'}}>
-                      🔓 Margini indipendenti
+                      {p.multiMarginBtn}
                     </button>
                   </div>
 
                   {/* Margin inputs */}
                   {marginLocked ? (
                     <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:12}}>
-                      <MarginInput side="margin_top" label="Alto · Basso · Esterno · Interno"
+                      <MarginInput side="margin_top" label={p.singleMarginDesc}
                         formValue={mv('margin_top')} onCommit={handleMargin}/>
                       <span style={{fontSize:10,color:'var(--text3)',lineHeight:1.5}}>
-                        Tutti e quattro i margini<br/>impostati allo stesso valore
+                        {p.singleMarginNote}
                       </span>
                     </div>
                   ) : (
                     <div>
                       <div style={{display:'flex',gap:10,alignItems:'flex-end',marginBottom:6,flexWrap:'wrap'}}>
-                        <MarginInput side="margin_top"    label="↑ Alto"     formValue={mv('margin_top')}    onCommit={handleMargin}/>
-                        <MarginInput side="margin_bottom" label="↓ Basso"    formValue={mv('margin_bottom')} onCommit={handleMargin}/>
-                        <MarginInput side="margin_left"   label="← Esterno"  formValue={mv('margin_left')}   onCommit={handleMargin}/>
-                        <MarginInput side="margin_right"  label="Interno →"  formValue={mv('margin_right')}  onCommit={handleMargin}/>
+                        <MarginInput side="margin_top"    label={p.marginTop}    formValue={mv('margin_top')}    onCommit={handleMargin}/>
+                        <MarginInput side="margin_bottom" label={p.marginBottom} formValue={mv('margin_bottom')} onCommit={handleMargin}/>
+                        <MarginInput side="margin_left"   label={p.marginOuter}  formValue={mv('margin_left')}   onCommit={handleMargin}/>
+                        <MarginInput side="margin_right"  label={p.marginInner}  formValue={mv('margin_right')}  onCommit={handleMargin}/>
                       </div>
                       <p style={{fontSize:10,color:'var(--text3)',lineHeight:1.4,marginBottom:12}}>
-                        ⓘ Interno = lato rilegatura — sulle pagine pari è a destra, sulle dispari a sinistra
+                        {p.innerMarginHint}
                       </p>
                     </div>
                   )}
@@ -666,7 +675,7 @@ export default function ProfilesPage() {
                     {/* Spazio tra foto */}
                     <div style={{display:'flex',flexDirection:'column',gap:5,
                       paddingRight:20,marginRight:20,borderRight:'1px solid var(--border)'}}>
-                      <label style={{fontSize:10,color:'var(--text3)'}}>Spazio tra foto</label>
+                      <label style={{fontSize:10,color:'var(--text3)'}}>{p.gapSubLabel}</label>
                       <div style={{display:'flex',alignItems:'center',gap:5}}>
                         <input type="number" className="form-input" min={0} max={30} step={0.5}
                           defaultValue={form.gap_mm} style={{width:76}}
@@ -679,11 +688,11 @@ export default function ProfilesPage() {
                     {/* Abbondanza */}
                     <div style={{display:'flex',flexDirection:'column',gap:5,
                       paddingRight:20,marginRight:20,borderRight:'1px solid var(--border)'}}>
-                      <label style={{fontSize:10,color:'var(--text3)'}}>Abbondanza</label>
+                      <label style={{fontSize:10,color:'var(--text3)'}}>{p.bleedSubLabel}</label>
                       <div style={{display:'flex',alignItems:'center',gap:6}}>
                         <label className="checkbox-label" style={{flexShrink:0}}>
                           <input type="checkbox" checked={form.bleed} onChange={e=>set('bleed',e.target.checked)}/>
-                          Attiva
+                          {p.bleedActiveLabel}
                         </label>
                         <input type="number" className="form-input" min={0} max={10} step={0.5}
                           value={form.bleed_mm} disabled={!form.bleed}
@@ -695,11 +704,11 @@ export default function ProfilesPage() {
 
                     {/* Crocini di stampa */}
                     <div style={{display:'flex',flexDirection:'column',gap:5}}>
-                      <label style={{fontSize:10,color:'var(--text3)'}}>Crocini di stampa</label>
+                      <label style={{fontSize:10,color:'var(--text3)'}}>{p.cropMarksSubLabel}</label>
                       <label className="checkbox-label" style={{fontSize:11}}>
                         <input type="checkbox" checked={!!form.crop_marks}
                           onChange={e=>set('crop_marks',e.target.checked)}/>
-                        Attiva
+                        {p.bleedActiveLabel}
                       </label>
                     </div>
                   </div>
@@ -709,10 +718,10 @@ export default function ProfilesPage() {
           </CollapsibleCard>
 
           {/* ── PDF export ──────────────────────────────────────────────────── */}
-          <CollapsibleCard title="Esportazione PDF">
+          <CollapsibleCard title={p.pdfExportCard}>
             <div className="form-row-3">
               <div className="form-group">
-                <label className="form-label">Risoluzione foto</label>
+                <label className="form-label">{p.dpiLabel2}</label>
                 <div style={{display:'flex',gap:6,alignItems:'center'}}>
                   <input type="number" className="form-input" min={72} max={600} step={1}
                     defaultValue={form.export_dpi||300}
@@ -725,51 +734,40 @@ export default function ProfilesPage() {
               </div>
 
               <div className="form-group" style={{gridColumn:'span 2'}}>
-                <label className="form-label">Profilo colore</label>
+                <label className="form-label">{p.colorProfileLabel2}</label>
                 <div style={{display:'flex',flexDirection:'column',gap:6}}>
                   <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
                     <div style={{display:'flex',flexDirection:'column',gap:3}}>
-                      <span style={{fontSize:9,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.06em'}}>RGB</span>
+                      <span style={{fontSize:9,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.06em'}}>{p.colorGroupRgb}</span>
                       <div style={{display:'flex',gap:4}}>
-                        {[
-                          ['srgb',      'sRGB IEC61966',   'Standard web e consumer.'],
-                          ['adobe_rgb', 'Adobe RGB (1998)', 'Gamut più ampio. Per laboratori professionali.'],
-                        ].map(([v,lbl,hint])=>(
-                          <button key={v} onClick={()=>set('color_profile',v)} title={hint}
+                        {['srgb','adobe_rgb'].map(v=>(
+                          <button key={v} onClick={()=>set('color_profile',v)} title={p.colorProfileDesc[v]}
                             style={{padding:'4px 8px',fontSize:10,borderRadius:5,cursor:'pointer',
                               border:`1px solid ${form.color_profile===v?'var(--gold)':'var(--border)'}`,
                               background:form.color_profile===v?'var(--gold-dim)':'var(--bg3)',
                               color:form.color_profile===v?'var(--gold)':'var(--text2)'}}>
-                            {lbl}
+                            {p.colorProfiles[v]}
                           </button>
                         ))}
                       </div>
                     </div>
                     <div style={{display:'flex',flexDirection:'column',gap:3}}>
-                      <span style={{fontSize:9,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.06em'}}>CMYK — per offset professionale</span>
+                      <span style={{fontSize:9,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.06em'}}>{p.colorGroupCmyk2}</span>
                       <div style={{display:'flex',gap:4}}>
-                        {[
-                          ['fogra39', 'FOGRA39', 'ISO Coated v2 — standard europeo.'],
-                          ['fogra51', 'FOGRA51', 'PSO Coated v3 — versione aggiornata.'],
-                          ['swop',    'SWOP',    'US Web Coated — standard USA.'],
-                        ].map(([v,lbl,hint])=>(
-                          <button key={v} onClick={()=>set('color_profile',v)} title={hint}
+                        {['fogra39','fogra51','swop'].map(v=>(
+                          <button key={v} onClick={()=>set('color_profile',v)} title={p.colorProfileDesc[v]}
                             style={{padding:'4px 8px',fontSize:10,borderRadius:5,cursor:'pointer',
                               border:`1px solid ${form.color_profile===v?'#7eb8d4':'var(--border)'}`,
                               background:form.color_profile===v?'rgba(126,184,212,0.15)':'var(--bg3)',
                               color:form.color_profile===v?'#7eb8d4':'var(--text2)'}}>
-                            {lbl}
+                            {p.colorProfiles[v]}
                           </button>
                         ))}
                       </div>
                     </div>
                   </div>
                   <p className="text-xs text-muted" style={{lineHeight:1.5}}>
-                    {form.color_profile==='fogra39' && '✓ FOGRA39 (ISO Coated v2) — profilo disponibile sul sistema'}
-                    {form.color_profile==='fogra51' && '⚠ FOGRA51 — richiede ICC file installato sul server.'}
-                    {form.color_profile==='swop'    && '⚠ SWOP — richiede ICC file installato sul server.'}
-                    {form.color_profile==='adobe_rgb' && '⚠ Adobe RGB — verifica con il laboratorio.'}
-                    {form.color_profile==='srgb'    && 'sRGB: profilo standard, compatibile con tutti i laboratori.'}
+                    {p.colorProfileStatus[form.color_profile]}
                   </p>
                 </div>
               </div>
@@ -777,10 +775,10 @@ export default function ProfilesPage() {
           </CollapsibleCard>
 
           {/* ── Divisore di album ────────────────────────────────────────────── */}
-          <CollapsibleCard title="Divisore di album"
+          <CollapsibleCard title={p.dividerCard}
             actions={
               <p className="text-xs text-muted" style={{margin:0,whiteSpace:'nowrap'}}>
-                Pagina separatrice tra album — sempre su pagina dispari (destra)
+                {p.dividerCardHint}
               </p>
             }>
             <DividerEditor
@@ -794,14 +792,14 @@ export default function ProfilesPage() {
           {/* ── Page types ──────────────────────────────────────────────────── */}
           <CollapsibleCard title={p.pageTypesCard}
             actions={<>
-              <button className="btn btn-sm" style={{fontSize:10}} title="Esporta layout pagine come JSON"
+              <button className="btn btn-sm" style={{fontSize:10}} title={p.exportLayoutsTitle}
                 onClick={()=>{
                   const data={page_types:form.page_types,exported_from:form.name,date:new Date().toISOString()}
                   const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(data,null,2))
                   a.download=`layouts-${(form.name||'profilo').replace(/\s+/g,'_')}.json`;a.click()
-                }}>⬇ Esporta layout</button>
-              <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}} title="Importa layout da JSON">
-                ⬆ Importa layout
+                }}>{p.exportLayouts}</button>
+              <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}} title={p.importLayoutsTitle}>
+                {p.importLayouts}
                 <input type="file" accept=".json" style={{display:'none'}} onChange={e=>{
                   const file=e.target.files?.[0]; if(!file) return
                   const r=new FileReader(); r.onload=ev=>{
@@ -813,11 +811,7 @@ export default function ProfilesPage() {
                         if(existing.length === 0){
                           merged = d.page_types
                         } else {
-                          const choice = window.confirm(
-                            `Importare ${d.page_types.length} layout da "${d.exported_from || 'file'}"?\n\n` +
-                            `OK = Aggiungi ai ${existing.length} layout esistenti\n` +
-                            `Annulla = Sostituisci tutti i layout esistenti`
-                          )
+                          const choice = window.confirm(p.importLayoutsConfirm(d.page_types.length, d.exported_from, existing.length))
                           merged = choice ? [...existing, ...d.page_types] : d.page_types
                         }
                         set('page_types', merged)
@@ -840,10 +834,8 @@ export default function ProfilesPage() {
           </CollapsibleCard>
 
           {/* ── Caption style ────────────────────────────────────────────────── */}
-          <CollapsibleCard title="Stile didascalie">
-            <p className="text-sm text-muted mb-4">
-              Stile di default per tutte le didascalie di questo profilo. Ogni didascalia può avere uno stile personalizzato.
-            </p>
+          <CollapsibleCard title={p.captionCard}>
+            <p className="text-sm text-muted mb-4">{p.captionCardHint2}</p>
             {(() => {
               const cs = form.caption_style || {}
               const setCs = (key, val) => set('caption_style', { ...cs, [key]: val })
@@ -859,19 +851,19 @@ export default function ProfilesPage() {
                 <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
                   <div className="form-row">
                     <div className="form-group">
-                      <label className="form-label">Font</label>
+                      <label className="form-label">{p.captionFontLabel}</label>
                       <select className="form-select" value={cs.font||'Georgia, serif'}
                         onChange={e=>setCs('font', e.target.value)}>
                         {FONTS.map(f=><option key={f.value} value={f.value}>{f.label}</option>)}
                       </select>
                     </div>
                     <div className="form-group">
-                      <label className="form-label">Dimensione (px)</label>
+                      <label className="form-label">{p.captionSizeLabel}</label>
                       <input type="number" className="form-input" min={8} max={72} step={1}
                         value={cs.size||13} onChange={e=>setCs('size', +e.target.value)}/>
                     </div>
                     <div className="form-group">
-                      <label className="form-label">Colore testo</label>
+                      <label className="form-label">{p.captionColorLabel}</label>
                       <div style={{ display:'flex', gap:8, alignItems:'center' }}>
                         <input type="color" value={cs.color||'#e8e6e0'}
                           onChange={e=>setCs('color', e.target.value)}
@@ -881,7 +873,7 @@ export default function ProfilesPage() {
                       </div>
                     </div>
                     <div className="form-group">
-                      <label className="form-label">Colore sfondo</label>
+                      <label className="form-label">{p.captionBgLabel}</label>
                       <div style={{ display:'flex', gap:8, alignItems:'center' }}>
                         <input type="color" value={cs.bg||'#111116'}
                           onChange={e=>setCs('bg', e.target.value)}
@@ -894,7 +886,7 @@ export default function ProfilesPage() {
 
                   <div style={{ display:'flex', gap:16, flexWrap:'wrap', alignItems:'flex-start' }}>
                     <div className="form-group">
-                      <label className="form-label">Stile</label>
+                      <label className="form-label">{p.captionStyleLabel}</label>
                       <div style={{ display:'flex', gap:6 }}>
                         <button onClick={()=>setCs('bold', !cs.bold)}
                           style={{ width:36,height:34,borderRadius:5,border:'1px solid var(--border)',
@@ -909,7 +901,7 @@ export default function ProfilesPage() {
                       </div>
                     </div>
                     <div className="form-group">
-                      <label className="form-label">Allineamento orizzontale</label>
+                      <label className="form-label">{p.captionAlignHLabel}</label>
                       <div style={{ display:'flex', gap:6 }}>
                         {[['left','←'],['center','↔'],['right','→']].map(([v,icon])=>(
                           <button key={v} onClick={()=>setCs('align', v)}
@@ -921,7 +913,7 @@ export default function ProfilesPage() {
                       </div>
                     </div>
                     <div className="form-group">
-                      <label className="form-label">Allineamento verticale</label>
+                      <label className="form-label">{p.captionAlignVLabel}</label>
                       <div style={{ display:'flex', gap:6 }}>
                         {[['flex-start','↑'],['center','↕'],['flex-end','↓']].map(([v,icon])=>(
                           <button key={v} onClick={()=>setCs('valign', v)}
@@ -935,7 +927,7 @@ export default function ProfilesPage() {
                   </div>
 
                   <div>
-                    <label className="form-label">Anteprima</label>
+                    <label className="form-label">{p.captionPreviewLabel}</label>
                     <div style={{
                       height:70, background:cs.bg||'#111116', borderRadius:6,
                       display:'flex', alignItems:cs.valign||'center', justifyContent:cs.align||'center',
@@ -959,33 +951,31 @@ export default function ProfilesPage() {
           </CollapsibleCard>
 
           {/* ── GPS Map style ────────────────────────────────────────────────── */}
-          <CollapsibleCard title="🗺 Stile mappa GPS" defaultOpen={false}
+          <CollapsibleCard title={p.mapCard} defaultOpen={false}
             actions={<>
               <button className="btn btn-sm" style={{fontSize:10}}
-                title="Esporta impostazioni mappa come JSON"
                 onClick={()=>{
                   const a=document.createElement('a')
                   a.href='data:application/json,'+encodeURIComponent(JSON.stringify(ms,null,2))
                   a.download=`map-style-${(form.name||'profilo').replace(/\s+/g,'_')}.json`
                   a.click()
-                }}>⬇ Esporta</button>
-              <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}}
-                title="Importa impostazioni mappa da JSON">
-                ⬆ Importa
+                }}>{p.mapExportBtn}</button>
+              <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}}>
+                {p.mapImportBtn}
                 <input type="file" accept=".json" style={{display:'none'}} onChange={e=>{
                   const file=e.target.files?.[0]; if(!file) return
                   const r=new FileReader(); r.onload=ev=>{
                     try{
                       const d=JSON.parse(ev.target.result)
                       set('map_style', {...DEFAULT_MAP_STYLE, ...d})
-                      showToast('✓ Stile mappa importato', 'success')
-                    }catch{ showToast('Errore nel leggere il file JSON', 'error') }
+                      showToast(p.mapImportedOk, 'success')
+                    }catch{ showToast(p.importJsonErr, 'error') }
                   }; r.readAsText(file); e.target.value=''
                 }}/>
               </label>
               <button className="btn btn-sm" style={{fontSize:10}}
                 onClick={()=>set('map_style', {...DEFAULT_MAP_STYLE})}>
-                ↺ Default
+                {p.mapDefaultBtn}
               </button>
             </>}>
 
@@ -997,43 +987,60 @@ export default function ProfilesPage() {
 
                 {/* Tile style */}
                 <div className="form-group" style={{marginBottom:0}}>
-                  <label className="form-label">Stile tiles online (Stadia Maps)</label>
+                  <label className="form-label">{p.tileProviderLabel}</label>
                   <p className="text-xs text-muted" style={{marginBottom:8}}>
-                    Richiede API key. Senza key viene usato il renderer PIL (colori a destra).
+                    {p.tileProviderHint(p.impostazioni).split(p.impostazioni)[0]}
+                    <a href="#" onClick={e=>{e.preventDefault();window.location.href='/config'}}
+                      style={{color:'var(--gold)'}}>{p.impostazioni}</a>
+                    {p.tileProviderHint(p.impostazioni).split(p.impostazioni)[1]}
+                    {!stadiaKeySet && <span style={{color:'var(--danger)',marginLeft:6}}>{p.stadiaKeyMissing}</span>}
                   </p>
                   <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                    {TILE_STYLES.map(ts => (
-                      <label key={ts.id}
-                        style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',
-                          padding:'6px 10px',borderRadius:5,
-                          background: ms.tile_style===ts.id ? 'var(--gold-dim)' : 'var(--bg3)',
-                          border:`1px solid ${ms.tile_style===ts.id?'var(--gold)':'var(--border)'}`,
-                        }}>
-                        <input type="radio" name="tile_style" value={ts.id}
-                          checked={ms.tile_style===ts.id}
-                          onChange={()=>setMs('tile_style',ts.id)}
-                          style={{accentColor:'var(--gold)'}}/>
-                        <div>
-                          <div style={{fontSize:12,color:'var(--text)',fontWeight:ms.tile_style===ts.id?600:400}}>
-                            {ts.label}
+                    {TILE_STYLES.map(ts => {
+                      const needsKey = ts.provider === 'stadia'
+                      const warn = needsKey && !stadiaKeySet
+                      return (
+                        <label key={ts.id}
+                          style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',
+                            padding:'6px 10px',borderRadius:5,
+                            background: ms.tile_style===ts.id ? 'var(--gold-dim)' : 'var(--bg3)',
+                            border:`1px solid ${ms.tile_style===ts.id?'var(--gold)':'var(--border)'}`,
+                          }}>
+                          <input type="radio" name="tile_style" value={ts.id}
+                            checked={ms.tile_style===ts.id}
+                            onChange={()=>setMs('tile_style',ts.id)}
+                            style={{accentColor:'var(--gold)'}}/>
+                          <div style={{flex:1}}>
+                            <div style={{display:'flex',alignItems:'center',gap:6}}>
+                              <span style={{fontSize:12,color:'var(--text)',fontWeight:ms.tile_style===ts.id?600:400}}>
+                                {ts.label}
+                              </span>
+                              <span style={{fontSize:9,padding:'1px 5px',borderRadius:3,
+                                background: needsKey ? 'rgba(200,80,80,0.18)' : 'rgba(80,180,80,0.18)',
+                                color: needsKey ? (warn?'var(--danger)':'var(--text3)') : '#6db96d',
+                                border: `1px solid ${needsKey?(warn?'rgba(200,80,80,0.4)':'var(--border)'):'rgba(80,180,80,0.3)'}`,
+                              }}>
+                                {needsKey ? (stadiaKeySet ? p.tileStadiaBadge : p.tileKeyMissing) : p.tileFreeLabel}
+                              </span>
+                            </div>
+                            <div style={{fontSize:10,color:'var(--text3)'}}>{p.tileDescs[ts.id] || ts.desc}</div>
                           </div>
-                          <div style={{fontSize:10,color:'var(--text3)'}}>{ts.desc}</div>
-                        </div>
-                      </label>
-                    ))}
+                        </label>
+                      )
+                    })}
                   </div>
                 </div>
 
                 {/* Marker */}
                 <div className="form-group" style={{marginBottom:0}}>
-                  <label className="form-label">Marcatore posizione</label>
+                  <label className="form-label">{p.markerLabel}</label>
 
                   {/* Shape selector */}
                   <div style={{display:'flex', gap:8, marginBottom:12, flexWrap:'wrap'}}>
                     {MARKER_SHAPES.map(sh => (
                       <button key={sh.id}
                         onClick={()=>setMs('marker_shape', sh.id)}
-                        title={sh.label}
+                        title={p.markerShapeLabels[sh.id] || sh.label}
                         style={{
                           display:'flex', flexDirection:'column', alignItems:'center', gap:4,
                           padding:'8px 10px', borderRadius:6, cursor:'pointer', border:'none',
@@ -1042,7 +1049,7 @@ export default function ProfilesPage() {
                         }}>
                         {sh.icon(ms.marker_color || '#d4aa5a')}
                         <span style={{fontSize:10, color: ms.marker_shape===sh.id ? 'var(--gold)' : 'var(--text3)'}}>
-                          {sh.label}
+                          {p.markerShapeLabels[sh.id] || sh.label}
                         </span>
                       </button>
                     ))}
@@ -1051,7 +1058,7 @@ export default function ProfilesPage() {
                   {/* Color + Size */}
                   <div style={{display:'flex',gap:16,alignItems:'flex-end',flexWrap:'wrap'}}>
                     <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                      <span style={{fontSize:11,color:'var(--text3)'}}>Colore</span>
+                      <span style={{fontSize:11,color:'var(--text3)'}}>{p.markerColorLabel2}</span>
                       <div style={{display:'flex',gap:6,alignItems:'center'}}>
                         <input type="color" value={ms.marker_color}
                           onChange={e=>setMs('marker_color',e.target.value)}
@@ -1061,7 +1068,7 @@ export default function ProfilesPage() {
                       </div>
                     </div>
                     <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                      <span style={{fontSize:11,color:'var(--text3)'}}>Dimensione px</span>
+                      <span style={{fontSize:11,color:'var(--text3)'}}>{p.markerSizeLabel2}</span>
                       <input type="number" className="form-input" min={4} max={30} step={1}
                         value={ms.marker_size} onChange={e=>setMs('marker_size',+e.target.value)}
                         style={{width:70}}/>
@@ -1071,17 +1078,17 @@ export default function ProfilesPage() {
 
                 {/* Route */}
                 <div className="form-group" style={{marginBottom:0}}>
-                  <label className="form-label">Linea percorso</label>
+                  <label className="form-label">{p.routeLabel}</label>
                   <div style={{display:'flex',flexDirection:'column',gap:8}}>
                     <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
                       <input type="checkbox" checked={ms.show_route}
                         onChange={e=>setMs('show_route',e.target.checked)}
                         style={{accentColor:'var(--gold)'}}/>
-                      <span style={{fontSize:12,color:'var(--text)'}}>Mostra linea di percorso</span>
+                      <span style={{fontSize:12,color:'var(--text)'}}>{p.routeShowLabel}</span>
                     </label>
                     <div style={{display:'flex',gap:16,alignItems:'flex-end',flexWrap:'wrap',opacity:ms.show_route?1:0.4}}>
                       <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                        <span style={{fontSize:11,color:'var(--text3)'}}>Colore</span>
+                        <span style={{fontSize:11,color:'var(--text3)'}}>{p.routeColorLabel}</span>
                         <div style={{display:'flex',gap:6,alignItems:'center'}}>
                           <input type="color" value={ms.route_color}
                             onChange={e=>setMs('route_color',e.target.value)}
@@ -1093,7 +1100,7 @@ export default function ProfilesPage() {
                         </div>
                       </div>
                       <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                        <span style={{fontSize:11,color:'var(--text3)'}}>Spessore px</span>
+                        <span style={{fontSize:11,color:'var(--text3)'}}>{p.routeThicknessLabel}</span>
                         <input type="number" className="form-input" min={1} max={8} step={1}
                           value={ms.route_width} onChange={e=>setMs('route_width',+e.target.value)}
                           disabled={!ms.show_route} style={{width:70}}/>
@@ -1104,15 +1111,15 @@ export default function ProfilesPage() {
 
                 {/* PIL fallback colors */}
                 <div className="form-group" style={{marginBottom:0}}>
-                  <label className="form-label">Colori renderer PIL (fallback)</label>
+                  <label className="form-label">{p.pilFallbackCard}</label>
                   <p className="text-xs text-muted" style={{marginBottom:8}}>
-                    Sfondo, griglia ed etichette quando le tiles online non sono disponibili.
+                    {p.pilFallbackHint}
                   </p>
                   <div style={{display:'flex',flexDirection:'column',gap:8}}>
                     {[
-                      ['bg_color',    'Sfondo'],
-                      ['grid_color',  'Griglia'],
-                      ['label_color', 'Etichette'],
+                      ['bg_color',    p.pilBgLabel],
+                      ['grid_color',  p.pilGridLabel],
+                      ['label_color', p.pilLabelLabel],
                     ].map(([key, label]) => (
                       <div key={key} style={{display:'flex',alignItems:'center',gap:8}}>
                         <input type="color" value={ms[key]}
@@ -1140,20 +1147,20 @@ export default function ProfilesPage() {
           </CollapsibleCard>
 
           {/* ── Copertina settings ──────────────────────────────────────────── */}
-          <CollapsibleCard title="Copertina" defaultOpen={false}
+          <CollapsibleCard title={p.coverCard2} defaultOpen={false}
             actions={<>
               <button className="btn btn-sm btn-primary" style={{fontSize:10}}
                 onClick={()=>setCoverEditorOpen(true)}>
-                ✏ Modifica elementi
+                {p.coverEditBtn}
               </button>
-              <button className="btn btn-sm" style={{fontSize:10}} title="Esporta configurazione copertina"
+              <button className="btn btn-sm" style={{fontSize:10}}
                 onClick={()=>{
                   const cov = migrateCoverConfig(form.cover, form.cover_style)
                   const a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(JSON.stringify(cov,null,2))
                   a.download=`cover-${(form.name||'profilo').replace(/\s+/g,'_')}.json`;a.click()
-                }}>⬇ Esporta</button>
-              <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}} title="Importa configurazione copertina">
-                ⬆ Importa
+                }}>{p.coverExportBtn}</button>
+              <label className="btn btn-sm" style={{fontSize:10,cursor:'pointer'}}>
+                {p.coverImportBtn}
                 <input type="file" accept=".json" style={{display:'none'}} onChange={e=>{
                   const file=e.target.files?.[0]; if(!file) return
                   const r=new FileReader(); r.onload=ev=>{
@@ -1163,18 +1170,15 @@ export default function ProfilesPage() {
                 }}/>
               </label>
             </>}>
-            <p className="text-sm text-muted mb-4">
-              Configura le 5 aree della copertina (fronte, seconda, terza, quarta, dorso) e le impostazioni di stampa.
-              L'editor grafico è disponibile nell'impaginato con il pulsante "Modifica copertina".
-            </p>
+            <p className="text-sm text-muted mb-4">{p.coverDesc}</p>
 
             {/* Dorso */}
             <div style={{display:'flex',flexDirection:'column',gap:10,padding:'12px',
               background:'var(--bg3)',borderRadius:8,border:'1px solid var(--border)',marginBottom:12}}>
-              <p style={{margin:0,fontSize:12,fontWeight:600,color:'var(--text)'}}>Dorso</p>
+              <p style={{margin:0,fontSize:12,fontWeight:600,color:'var(--text)'}}>{p.coverSpineSectionLabel}</p>
               {(()=>{
                 const cover     = migrateCoverConfig(form.cover, form.cover_style)
-                const numPages  = 100  // stima (il valore reale dipende dall'album)
+                const numPages  = 100
                 const bodyGsm   = form.body_paper_gsm ?? 90
                 const estimated = calcSpineWidthMm(numPages, bodyGsm)
                 const override  = cover.spine_width_mm
@@ -1183,31 +1187,30 @@ export default function ProfilesPage() {
                   <>
                     <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
                       <div className="form-group" style={{marginBottom:0,flex:'1 1 140px'}}>
-                        <label className="form-label" style={{fontSize:11}}>Larghezza dorso (mm)</label>
+                        <label className="form-label" style={{fontSize:11}}>{p.coverSpineWidthLabel}</label>
                         <div style={{display:'flex',gap:6,alignItems:'center'}}>
                           <input type="number" className="form-input" style={{width:80}}
                             min={1} max={80} step={0.5}
                             value={displayW}
                             onChange={e=>set('cover',{...cover,spine_width_mm:Math.max(1,Math.min(80,+e.target.value||5))})}/>
                           <button className="btn btn-sm" style={{fontSize:10}}
-                            title="Ripristina calcolo automatico"
+                            title={p.coverSpineAutoTitle}
                             onClick={()=>set('cover',{...cover,spine_width_mm:null})}>
-                            Auto {override!==null&&override!==undefined?'(override)':'✓'}
+                            {p.coverSpineAutoBtn(override!==null&&override!==undefined)}
                           </button>
                         </div>
                         <p className="text-xs text-muted" style={{marginTop:2}}>
-                          Stima: {estimated} mm (con {bodyGsm} gsm · 100 pag. di riferimento).
-                          Il valore esatto si vede nell'impaginato.
+                          {p.coverSpineEstimate(estimated, bodyGsm)}
                         </p>
                       </div>
                       <div className="form-group" style={{marginBottom:0,flex:'1 1 140px'}}>
-                        <label className="form-label" style={{fontSize:11}}>Grammatura copertina (gsm)</label>
+                        <label className="form-label" style={{fontSize:11}}>{p.coverGsmLabel}</label>
                         <input type="number" className="form-input" style={{width:80}}
                           min={100} max={600} step={10}
                           value={cover.cover_paper_gsm ?? 300}
                           onChange={e=>set('cover',{...cover,cover_paper_gsm:+e.target.value})}
                           onBlur={e=>set('cover',{...cover,cover_paper_gsm:Math.max(100,Math.min(600,+e.target.value||300))})}/>
-                        <span className="text-xs text-muted" style={{marginLeft:6}}>Tipico: 300–350 gsm</span>
+                        <span className="text-xs text-muted" style={{marginLeft:6}}>{p.coverGsmTypical}</span>
                       </div>
                     </div>
                   </>
@@ -1224,20 +1227,21 @@ export default function ProfilesPage() {
                 export_cover_separate: mode === 'separate',
               })
               const mode = cover.export_as_spread ? 'spread' : cover.export_cover_separate ? 'separate' : 'none'
+              const te = t.export
               return (
                 <div style={{display:'flex',flexDirection:'column',gap:8}}>
                   <label className="checkbox-label">
                     <input type="radio" name="cover_export_mode" value="none"
                       checked={mode==='none'} onChange={()=>setExportMode('none')}/>
-                    <span>Nessuna opzione speciale</span>
+                    <span>{te.coverNone}</span>
                   </label>
                   <label className="checkbox-label">
                     <input type="radio" name="cover_export_mode" value="spread"
                       checked={mode==='spread'} onChange={()=>setExportMode('spread')}/>
                     <span>
-                      Esporta copertina come spread
+                      {te.coverSpread}
                       <span className="text-xs text-muted" style={{marginLeft:6,fontWeight:400}}>
-                        (pag.1: fronte+dorso+quarta · pag.2: seconda+spazio+terza)
+                        {te.coverSpreadHint}
                       </span>
                     </span>
                   </label>
@@ -1245,9 +1249,9 @@ export default function ProfilesPage() {
                     <input type="radio" name="cover_export_mode" value="separate"
                       checked={mode==='separate'} onChange={()=>setExportMode('separate')}/>
                     <span>
-                      Esporta copertina in file PDF separato
+                      {te.coverSeparate}
                       <span className="text-xs text-muted" style={{marginLeft:6,fontWeight:400}}>
-                        (genera _album.pdf e _copertina.pdf)
+                        {te.coverSeparateHint}
                       </span>
                     </span>
                   </label>
@@ -1264,7 +1268,7 @@ export default function ProfilesPage() {
             onChange={newCover => set('cover', newCover)}
             onClose={() => setCoverEditorOpen(false)}
             profile={form}
-            albumInfo={{ albumName: form.name || 'Profilo', assetCount: 0, dateRange: '' }}
+            albumInfo={{ albumName: form.name || p.newTitle, assetCount: 0, dateRange: '' }}
             numBodyPages={100}
           />
         )}
@@ -1279,10 +1283,10 @@ export default function ProfilesPage() {
                  : '#4ac585',
             transition:'opacity 0.3s',
           }}>
-            {autoSaveStatus==='pending' ? '⟳ In attesa…'
-           : autoSaveStatus==='saving'  ? '⟳ Salvataggio…'
-           : autoSaveStatus==='saved'   ? '✓ Salvato'
-           : '⚠ Errore salvataggio'}
+            {autoSaveStatus==='pending' ? p.autoSavePending
+           : autoSaveStatus==='saving'  ? p.autoSaveSaving
+           : autoSaveStatus==='saved'   ? p.autoSaved
+           : p.autoSaveError}
           </div>
         )}
       </SectionOpenCtx.Provider>
@@ -1321,16 +1325,16 @@ export default function ProfilesPage() {
                 <div className="profile-item-info">
                   <h3>{prof.name}</h3>
                   <p>
-                    {getSizeLabel(prof.page_size)} · {prof.orientation==='portrait'?p.portrait.split(' ')[0]:p.landscape.split(' ')[0]}
-                    {prof.duplex?' · F/R':''}
-                    {prof.bleed?` · Abbondanza ${prof.bleed_mm}mm`:''}
-                    {` · ${(prof.page_types||[]).length} pagine tipo`}
+                    {getSizeLabel(prof.page_size)} · {prof.orientation==='portrait' ? p.portraitShort : p.landscapeShort}
+                    {prof.duplex ? ` · ${p.duplexShort}` : ''}
+                    {prof.bleed ? ` · ${p.bleedInfo(prof.bleed_mm)}` : ''}
+                    {` · ${p.pageTypesCount((prof.page_types||[]).length)}`}
                   </p>
                 </div>
                 <div className="profile-item-actions">
                   <button className="btn btn-sm" onClick={()=>startEdit(prof)}>{p.editBtn}</button>
-                  <button className="btn btn-sm" onClick={()=>duplicate(prof)} title="Duplica profilo">
-                    ⧉ Duplica
+                  <button className="btn btn-sm" onClick={()=>duplicate(prof)} title={p.duplicateBtn}>
+                    {p.duplicateBtn}
                   </button>
                   <button className="btn btn-sm btn-danger" onClick={()=>del(prof)}>{p.deleteBtn}</button>
                 </div>

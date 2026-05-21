@@ -10,6 +10,7 @@ Strategia:
 """
 
 import io
+import json
 import math
 import logging
 import os
@@ -19,6 +20,46 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
 logger = logging.getLogger(__name__)
+
+# Tile providers that don't require an API key
+_FREE_TILE_URLS: dict[str, str] = {
+    "osm":          "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    "carto_light":  "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+    "carto_dark":   "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+    "osm_bright":   "https://tile.openstreetmap.org/{z}/{x}/{y}.png",  # osm_bright → standard OSM
+}
+
+# Stadia Maps styles (require API key for reliable access)
+_STADIA_STYLES: set[str] = {
+    "alidade_smooth", "alidade_smooth_dark", "stamen_terrain",
+    "stamen_toner", "outdoors",
+}
+
+
+def _get_stadia_key() -> str | None:
+    """Read Stadia API key: env var → config file → docker secret."""
+    key = os.getenv("STADIA_MAPS_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        data_dir = os.getenv("PHOTOBOOK_DATA_DIR", "/data")
+        cfg_path = os.path.join(data_dir, "config.json")
+        if os.path.exists(cfg_path):
+            cfg = json.loads(open(cfg_path).read())
+            k = (cfg.get("stadia_api_key") or "").strip()
+            if k:
+                return k
+    except Exception:
+        pass
+    secret_path = "/run/secrets/stadia_api_key"
+    if os.path.exists(secret_path):
+        try:
+            k = open(secret_path).read().strip()
+            if k:
+                return k
+        except Exception:
+            pass
+    return None
 
 
 def _hex_to_rgb(hex_str: str) -> tuple:
@@ -126,21 +167,27 @@ def generate_map_image(
 
     s = {**DEFAULT_MAP_STYLE, **(map_style or {})}
 
-    api_key = os.getenv("STADIA_MAPS_API_KEY")
-    secret_path = "/run/secrets/stadia_api_key"
-    if not api_key and os.path.exists(secret_path):
-        with open(secret_path) as f:
-            api_key = f.read().strip()
-
     tile_style   = s.get("tile_style", "alidade_smooth")
     marker_color = s.get("marker_color", "#d4aa5a")
 
-    try:
-        from staticmap import StaticMap, CircleMarker
-
+    # Determine tile URL
+    if tile_style == "minimal":
+        return _draw_minimal_map(locations, width, height, s)
+    elif tile_style in _STADIA_STYLES:
+        api_key = _get_stadia_key()
         url = f"https://tiles.stadiamaps.com/tiles/{tile_style}/{{z}}/{{x}}/{{y}}.png"
         if api_key:
             url += f"?api_key={api_key}"
+    elif tile_style in _FREE_TILE_URLS:
+        url = _FREE_TILE_URLS[tile_style]
+    else:
+        url = f"https://tiles.stadiamaps.com/tiles/{tile_style}/{{z}}/{{x}}/{{y}}.png"
+        api_key = _get_stadia_key()
+        if api_key:
+            url += f"?api_key={api_key}"
+
+    try:
+        from staticmap import StaticMap, CircleMarker
 
         m = StaticMap(width, height, url_template=url)
         # Add 1 px markers only for bounding-box / zoom computation — not drawn visibly

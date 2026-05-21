@@ -7,6 +7,7 @@
  */
 
 import { useState, useRef } from 'react'
+import { useT } from '../i18n.jsx'
 import { createPortal } from 'react-dom'
 import DividerEditor, { DividerCanvas, migrateDividerStyle } from './DividerEditor'
 import {
@@ -29,11 +30,11 @@ function getPageMm(profile) {
 }
 
 const TABS = [
-  { key:'front',        label:'Fronte' },
-  { key:'inside_front', label:'Seconda' },
-  { key:'inside_back',  label:'Terza' },
-  { key:'back',         label:'Quarta' },
-  { key:'spine',        label:'Dorso' },
+  { key:'front',        localeKey:'tabFront' },
+  { key:'inside_front', localeKey:'tabInsideFront' },
+  { key:'inside_back',  localeKey:'tabInsideBack' },
+  { key:'back',         localeKey:'tabBack' },
+  { key:'spine',        localeKey:'tabSpine' },
 ]
 
 const DEFAULTS = {
@@ -111,12 +112,13 @@ function SpinePreview({ spine, albumName, albumYear }) {
 // ── SpineEditor ───────────────────────────────────────────────────────────────
 
 function SpineEditor({ value, onChange, albumName, albumYear, spineWidthMm, numPages }) {
+  const ce = useT().coverEditor
   const sp = { ...DEFAULT_SPINE, ...value }
   const set = (k, v) => onChange({ ...sp, [k]:v })
 
   const PosButtons = ({ posKey, currentPos }) => (
     <div style={{ display:'flex', gap:2, flexShrink:0 }}>
-      {[['top','↑ Testa'],['center','↔ Centro'],['bottom','↓ Piede']].map(([v, lbl]) => (
+      {[['top', ce.posTop],['center', ce.posCenter],['bottom', ce.posBottom]].map(([v, lbl]) => (
         <button key={v} onClick={() => set(posKey, v)}
           style={{ padding:'2px 6px', fontSize:9, borderRadius:4, cursor:'pointer',
             border:`1px solid ${(currentPos||'center')===v ? 'var(--gold)' : 'var(--border)'}`,
@@ -149,7 +151,7 @@ function SpineEditor({ value, onChange, albumName, albumYear, spineWidthMm, numP
         </div>
         {en && (
           <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
-            <label className="text-xs text-muted" style={{ fontSize:10 }}>Dim. %</label>
+            <label className="text-xs text-muted" style={{ fontSize:10 }}>{ce.sizeLabel}</label>
             <input type="number" className="form-input" style={{ width:90, fontSize:11 }}
               min={0.5} max={6} step={0.1} value={sp[sizeKey]||2.0}
               onChange={e => set(sizeKey, +e.target.value||2.0)}/>
@@ -166,11 +168,11 @@ function SpineEditor({ value, onChange, albumName, albumYear, spineWidthMm, numP
       {/* Horizontal preview at top */}
       <div>
         <p className="text-xs text-muted" style={{ margin:'0 0 6px', fontSize:10 }}>
-          Anteprima — {spineWidthMm} mm · {numPages} pagine
+          {ce.previewLabel(spineWidthMm, numPages)}
         </p>
         <SpinePreview spine={sp} albumName={albumName} albumYear={albumYear}/>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
-          <span style={{ fontSize:9, color:'var(--text3)' }}>← Testa</span>
+          <span style={{ fontSize:9, color:'var(--text3)' }}>{ce.headLabel}</span>
           <button onClick={() => set('spine_rotate_180', !sp.spine_rotate_180)}
             style={{ padding:'2px 8px', fontSize:9, borderRadius:4, cursor:'pointer',
               border:`1px solid ${sp.spine_rotate_180 ? 'var(--gold)' : 'var(--border)'}`,
@@ -178,7 +180,7 @@ function SpineEditor({ value, onChange, albumName, albumYear, spineWidthMm, numP
               color: sp.spine_rotate_180 ? 'var(--gold)' : 'var(--text3)' }}>
             ↻ 180°
           </button>
-          <span style={{ fontSize:9, color:'var(--text3)' }}>Piede →</span>
+          <span style={{ fontSize:9, color:'var(--text3)' }}>{ce.footLabel}</span>
         </div>
       </div>
 
@@ -186,7 +188,7 @@ function SpineEditor({ value, onChange, albumName, albumYear, spineWidthMm, numP
       <div>
         {/* Background */}
         <div style={{ padding:'10px 0', borderBottom:'1px solid var(--border)' }}>
-          <label className="form-label" style={{ fontSize:11 }}>Colore sfondo</label>
+          <label className="form-label" style={{ fontSize:11 }}>{ce.bgColorLabel}</label>
           <div style={{ display:'flex', gap:6, alignItems:'center' }}>
             <input type="color" value={sp.bg||'#0a0a0e'}
               onChange={e => set('bg', e.target.value)}
@@ -195,13 +197,13 @@ function SpineEditor({ value, onChange, albumName, albumYear, spineWidthMm, numP
           </div>
         </div>
 
-        <RowToggle label="Titolo album" enabledKey="title_enabled"
+        <RowToggle label={ce.titleLabel} enabledKey="title_enabled"
           colorKey="title_color" sizeKey="title_size_pct" posKey="title_pos"/>
 
-        <RowToggle label="Sottotitolo" enabledKey="subtitle_enabled"
+        <RowToggle label={ce.subtitleLabel} enabledKey="subtitle_enabled"
           colorKey="subtitle_color" sizeKey="subtitle_size_pct" posKey="subtitle_pos"/>
 
-        <RowToggle label="Anno" enabledKey="year_enabled"
+        <RowToggle label={ce.yearLabel} enabledKey="year_enabled"
           colorKey="year_color" sizeKey="year_size_pct" posKey="year_pos"/>
 
         {/* Custom text */}
@@ -212,7 +214,7 @@ function SpineEditor({ value, onChange, albumName, albumYear, spineWidthMm, numP
               style={{ cursor:'pointer', width:13, height:13, flexShrink:0 }}/>
             <span style={{ fontSize:12, fontWeight:500, flex:1,
               color: sp.custom_text_enabled ? 'var(--text)' : 'var(--text3)' }}>
-              Testo personalizzato
+              {ce.customTextLabel}
             </span>
             {sp.custom_text_enabled && (
               <input type="color" value={sp.custom_text_color||'#ffffff'}
@@ -223,13 +225,13 @@ function SpineEditor({ value, onChange, albumName, albumYear, spineWidthMm, numP
           {sp.custom_text_enabled && (
             <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
               <input type="text" className="form-input"
-                placeholder="Testo singola riga…"
+                placeholder={ce.customTextPlaceholder}
                 value={sp.custom_text || ''}
                 onChange={e => set('custom_text', e.target.value)}
                 maxLength={80}
                 style={{ fontSize:12 }}/>
               <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
-                <label className="text-xs text-muted" style={{ fontSize:10 }}>Dim. %</label>
+                <label className="text-xs text-muted" style={{ fontSize:10 }}>{ce.sizeLabel}</label>
                 <input type="number" className="form-input" style={{ width:90, fontSize:11 }}
                   min={0.5} max={5} step={0.1} value={sp.custom_text_size_pct||1.8}
                   onChange={e => set('custom_text_size_pct', +e.target.value||1.8)}/>
@@ -256,6 +258,7 @@ export default function CoverEditorModal({
   numBodyPages,
   initialTab = 0,
 }) {
+  const ce = useT().coverEditor
   const [local, setLocal]   = useState(() => migrateCoverConfig(coverProp, null))
   const [tab, setTab]       = useState(() => initialTab ?? 0)
   const [size, setSize]     = useState({ w:null, h:null })
@@ -317,7 +320,7 @@ export default function CoverEditorModal({
         <div style={{ padding:'12px 18px', borderBottom:'1px solid var(--border)',
           display:'flex', alignItems:'center', gap:14, flexShrink:0, flexWrap:'wrap' }}>
           <h3 style={{ fontFamily:'var(--font-display)', fontWeight:300, fontSize:17, margin:0, marginRight:'auto' }}>
-            Stile copertina
+            {ce.title}
           </h3>
           {/* Tab bar */}
           <div style={{ display:'flex', gap:2, background:'var(--bg3)', borderRadius:7, padding:3, border:'1px solid var(--border)' }}>
@@ -330,14 +333,14 @@ export default function CoverEditorModal({
                   color: tab===i ? 'var(--text)' : 'var(--text3)',
                   letterSpacing: tab===i ? '0.01em' : 0,
                 }}>
-                {t.label}
+                {ce[t.localeKey]}
               </button>
             ))}
           </div>
           <div style={{ display:'flex', gap:8 }}>
             <button className="btn btn-sm btn-primary"
               onClick={() => { onChange(local); onClose() }}>
-              Applica
+              {ce.applyBtn}
             </button>
             <button onClick={onClose}
               style={{ background:'none', border:'none', fontSize:18, color:'var(--text3)', cursor:'pointer' }}>✕</button>

@@ -18,6 +18,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import axios from 'axios'
+import { useT } from '../i18n.jsx'
 
 const uid   = () => Math.random().toString(36).slice(2, 9)
 const clamp = (v, mn, mx) => Math.min(mx, Math.max(mn, v))
@@ -80,14 +81,28 @@ export function migrateDividerStyle(ds) {
 
 // ── Element metadata ──────────────────────────────────────────────────────────
 
-const EL_META = {
-  title:       { label:'Titolo album',     icon:'📛', block:false },
-  subtitle:    { label:'Sottotitolo',      icon:'📝', block:false },
-  date_range:  { label:'Date (da … a …)', icon:'📅', block:false },
-  photo_count: { label:'Numero di foto',   icon:'🔢', block:false },
-  text_custom: { label:'Testo libero',     icon:'✏️', block:false },
-  map:         { label:'Mappa GPS',        icon:'🗺', block:true  },
-  photo:       { label:'Slot fotografico', icon:'📷', block:true  },
+const EL_META_ICONS = {
+  title:       { icon:'📛', block:false },
+  subtitle:    { icon:'📝', block:false },
+  date_range:  { icon:'📅', block:false },
+  photo_count: { icon:'🔢', block:false },
+  text_custom: { icon:'✏️', block:false },
+  map:         { icon:'🗺', block:true  },
+  photo:       { icon:'📷', block:true  },
+}
+
+function elMeta(type, td) {
+  const m = EL_META_ICONS[type] || {}
+  const labels = {
+    title:       td.elTitle,
+    subtitle:    td.elSubtitle,
+    date_range:  td.elDateRange,
+    photo_count: td.elPhotoCount,
+    text_custom: td.elCustomText,
+    map:         td.elMap,
+    photo:       td.elPhoto,
+  }
+  return { ...m, label: labels[type] || type }
 }
 
 const FONT_FAMILY = {
@@ -177,18 +192,19 @@ export function DividerCanvas({
   readOnly = false,
   dividerMapUrl,
 }) {
+  const td  = useT().divider
   const ds  = style || DEFAULT_DIVIDER_STYLE
   const ai  = albumInfo || {}
   const ref = useRef(null)
   const dragRef = useRef(null)
 
   const previewText = (el) => {
-    if (el.type === 'text_custom') return el.text || 'Testo personalizzato'
+    if (el.type === 'text_custom') return el.text || td.customTextDefault
     if (el.custom_text != null && el.custom_text !== '') return el.custom_text
-    if (el.type === 'title')       return ai.albumName   || 'Nome album'
-    if (el.type === 'subtitle')    return ai.description || 'Descrizione album'
-    if (el.type === 'date_range')  return ai.dateRange   || 'Dal 1 gen — al 31 dic 2024'
-    if (el.type === 'photo_count') return ai.assetCount != null ? `${ai.assetCount} fotografie` : '42 fotografie'
+    if (el.type === 'title')       return ai.albumName   || td.defaultAlbumName
+    if (el.type === 'subtitle')    return ai.description || td.defaultDescription
+    if (el.type === 'date_range')  return ai.dateRange   || td.defaultDateRange
+    if (el.type === 'photo_count') return ai.assetCount != null ? td.defaultPhotoCount(ai.assetCount) : td.defaultCountFallback
     return ''
   }
 
@@ -304,7 +320,7 @@ export function DividerCanvas({
         // Element item
         const el = item
         if (el.enabled === false) return null
-        const meta  = EL_META[el.type] || {}
+        const meta  = elMeta(el.type, td)
         const isBlk = meta.block
         const isSel = el.id === selectedId
 
@@ -368,15 +384,15 @@ export function DividerCanvas({
           >
             {hasPhoto ? (
               <div style={{ position:'relative', width:'100%', height:'100%', overflow:'hidden' }}>
-                <img src={`/api/thumb/${photoId}`} alt="" draggable={false}
+                <img src={`/api/thumb/${photoId}?size=preview`} alt="" draggable={false}
                   style={{
-                    position:'absolute', display:'block',
-                    width:`${(el.photo_zoom||1)*100}%`,
-                    height:`${(el.photo_zoom||1)*100}%`,
+                    width:'100%', height:'100%',
                     objectFit:'cover',
-                    left:'50%', top:'50%',
-                    transform:`translate(calc(-50% + ${el.photo_pan_x||0}%),calc(-50% + ${el.photo_pan_y||0}%))`,
+                    objectPosition:`${50-(el.photo_pan_x||0)}% ${50-(el.photo_pan_y||0)}%`,
+                    display:'block',
                     opacity:opct, pointerEvents:'none',
+                    transform:`scale(${el.photo_zoom||1})`,
+                    transformOrigin:`${50-(el.photo_pan_x||0)}% ${50-(el.photo_pan_y||0)}%`,
                   }}/>
               </div>
             ) : hasMap ? (
@@ -438,39 +454,40 @@ function ColorRow({ label, value, onChange }) {
 }
 
 function TextElProps({ el, onChange }) {
+  const td = useT().divider
   const up = p => onChange({ ...el, ...p })
   return (
     <>
       {(el.type === 'title' || el.type === 'subtitle') && (
-        <Row label="Testo personalizzato">
+        <Row label={td.customTextLabel}>
           <input className="form-input" style={{fontSize:11}}
             value={el.custom_text ?? ''}
             onChange={e => up({ custom_text: e.target.value || undefined })}
-            placeholder={el.type === 'title' ? 'lascia vuoto = nome album' : 'lascia vuoto = descrizione album'}/>
+            placeholder={el.type === 'title' ? td.customTextPlaceholderTitle : td.customTextPlaceholderSubtitle}/>
         </Row>
       )}
       {el.type === 'text_custom' && (
-        <Row label="Testo (Invio = nuova riga)">
+        <Row label={td.customTextAreaLabel}>
           <textarea className="form-input" style={{fontSize:11, resize:'vertical', minHeight:56, fontFamily:'inherit'}}
             value={el.text || ''}
             onChange={e => up({ text: e.target.value })}
-            placeholder="Testo personalizzato"/>
+            placeholder={td.customTextPlaceholder}/>
         </Row>
       )}
-      <ColorRow label="Colore testo" value={el.color} onChange={c => up({ color:c })}/>
-      <Row label="Font">
+      <ColorRow label={td.textColorLabel} value={el.color} onChange={c => up({ color:c })}/>
+      <Row label={td.fontLabel}>
         <select className="form-input" style={{ fontSize:11 }}
           value={el.font||'sans'} onChange={e => up({ font:e.target.value })}>
-          <option value="display">Display (serif)</option>
-          <option value="serif">Serif</option>
-          <option value="sans">Sans-serif</option>
-          <option value="mono">Monospace</option>
+          <option value="display">{td.fontDisplay}</option>
+          <option value="serif">{td.fontSerif}</option>
+          <option value="sans">{td.fontSans}</option>
+          <option value="mono">{td.fontMono}</option>
         </select>
       </Row>
-      <Row label={`Dimensione ${(el.font_size||3).toFixed(1)}% h.`}>
+      <Row label={td.sizeLabel((el.font_size||3).toFixed(1))}>
         <Sld min={0.5} max={15} step={0.1} value={el.font_size||3} onChange={v => up({ font_size:v })}/>
       </Row>
-      <Row label="Allineamento">
+      <Row label={td.alignLabel}>
         <div style={{ display:'flex', gap:3 }}>
           {[['left','←',8],['center','⟺',50],['right','→',92]].map(([a,lbl,xDef]) => (
             <button key={a} onClick={() => up({ align:a, x:xDef })} style={{
@@ -482,14 +499,14 @@ function TextElProps({ el, onChange }) {
           ))}
         </div>
       </Row>
-      <Row label={`Opacità ${el.opacity??100}%`}>
+      <Row label={td.opacityLabel(el.opacity??100)}>
         <Sld min={0} max={100} value={el.opacity??100} onChange={v => up({ opacity:v })}/>
       </Row>
       <div style={{ display:'flex', gap:6 }}>
-        <Row label={`X ${Math.round(el.x)}%`} style={{ flex:1, marginBottom:0 }}>
+        <Row label={td.xLabel(Math.round(el.x))} style={{ flex:1, marginBottom:0 }}>
           <Sld min={2} max={98} value={el.x} onChange={v => up({ x:v })}/>
         </Row>
-        <Row label={`Y ${Math.round(el.y)}%`} style={{ flex:1, marginBottom:0 }}>
+        <Row label={td.yLabel(Math.round(el.y))} style={{ flex:1, marginBottom:0 }}>
           <Sld min={2} max={98} value={el.y} onChange={v => up({ y:v })}/>
         </Row>
       </div>
@@ -498,6 +515,7 @@ function TextElProps({ el, onChange }) {
 }
 
 function BlockElProps({ el, onChange, assets }) {
+  const td = useT().divider
   const up = p => onChange({ ...el, ...p })
   const [pickerOpen, setPickerOpen] = useState(false)
   const photoId = el.photo_id
@@ -506,7 +524,7 @@ function BlockElProps({ el, onChange, assets }) {
     <>
       {el.type === 'photo' && (
         <>
-          <Row label="Foto">
+          <Row label={td.photoLabel}>
             <div style={{ display:'flex', gap:5, alignItems:'center' }}>
               {photoId && (
                 <div style={{ width:44, height:44, overflow:'hidden', borderRadius:4,
@@ -519,11 +537,11 @@ function BlockElProps({ el, onChange, assets }) {
                 style={{ flex:1, fontSize:11, padding:'4px 8px', cursor:'pointer',
                   background:'var(--bg3)', border:'1px solid var(--border)',
                   borderRadius:5, color:'var(--text)', textAlign:'left' }}>
-                {photoId ? '↻ Cambia foto' : '📷 Scegli foto'}
+                {photoId ? td.changePhoto : td.choosePhoto}
               </button>
               {photoId && (
                 <button onClick={() => up({ photo_id:undefined, photo_zoom:1, photo_pan_x:0, photo_pan_y:0 })}
-                  title="Rimuovi foto"
+                  title={td.removePhotoTitle}
                   style={{ fontSize:11, padding:'4px 6px', cursor:'pointer',
                     background:'none', border:'1px solid #e05050',
                     borderRadius:5, color:'#e05050', flexShrink:0 }}>✕</button>
@@ -532,15 +550,15 @@ function BlockElProps({ el, onChange, assets }) {
           </Row>
           {photoId && (
             <>
-              <Row label={`Zoom ${Math.round((el.photo_zoom||1)*100)}%`}>
+              <Row label={td.zoomLabel(Math.round((el.photo_zoom||1)*100))}>
                 <Sld min={100} max={300} step={1} value={Math.round((el.photo_zoom||1)*100)}
                   onChange={v => up({ photo_zoom: v/100 })}/>
               </Row>
-              <Row label={`Pan X ${el.photo_pan_x||0}%`}>
+              <Row label={td.panXLabel(el.photo_pan_x||0)}>
                 <Sld min={-50} max={50} step={1} value={el.photo_pan_x||0}
                   onChange={v => up({ photo_pan_x: v })}/>
               </Row>
-              <Row label={`Pan Y ${el.photo_pan_y||0}%`}>
+              <Row label={td.panYLabel(el.photo_pan_y||0)}>
                 <Sld min={-50} max={50} step={1} value={el.photo_pan_y||0}
                   onChange={v => up({ photo_pan_y: v })}/>
               </Row>
@@ -556,24 +574,24 @@ function BlockElProps({ el, onChange, assets }) {
         </>
       )}
       <p className="text-xs text-muted" style={{ margin:'0 0 6px' }}>
-        Trascina i bordi sull'anteprima per ridimensionare
+        {td.resizeHint}
       </p>
       <div style={{ display:'flex', gap:6 }}>
-        <Row label={`L ${Math.round(el.w||40)}%`} style={{ flex:1 }}>
+        <Row label={td.widthLabel(Math.round(el.w||40))} style={{ flex:1 }}>
           <Sld min={5} max={100} value={el.w||40} onChange={v => up({ w:v })}/>
         </Row>
-        <Row label={`H ${Math.round(el.h||30)}%`} style={{ flex:1 }}>
+        <Row label={td.heightLabel(Math.round(el.h||30))} style={{ flex:1 }}>
           <Sld min={5} max={100} value={el.h||30} onChange={v => up({ h:v })}/>
         </Row>
       </div>
-      <Row label={`Opacità ${el.opacity??90}%`}>
+      <Row label={td.opacityLabel(el.opacity??90)}>
         <Sld min={0} max={100} value={el.opacity??90} onChange={v => up({ opacity:v })}/>
       </Row>
       <div style={{ display:'flex', gap:6 }}>
-        <Row label={`X ${Math.round(el.x)}%`} style={{ flex:1, marginBottom:0 }}>
+        <Row label={td.xLabel(Math.round(el.x))} style={{ flex:1, marginBottom:0 }}>
           <Sld min={2} max={98} value={el.x} onChange={v => up({ x:v })}/>
         </Row>
-        <Row label={`Y ${Math.round(el.y)}%`} style={{ flex:1, marginBottom:0 }}>
+        <Row label={td.yLabel(Math.round(el.y))} style={{ flex:1, marginBottom:0 }}>
           <Sld min={2} max={98} value={el.y} onChange={v => up({ y:v })}/>
         </Row>
       </div>
@@ -582,12 +600,13 @@ function BlockElProps({ el, onChange, assets }) {
 }
 
 function LineProps({ line, onChange, onDelete }) {
+  const td = useT().divider
   const up = p => onChange({ ...line, ...p })
   return (
     <>
-      <Row label="Orientamento">
+      <Row label={td.orientationLabel}>
         <div style={{ display:'flex', gap:3 }}>
-          {[['h','— Orizz.'],['v','| Vert.']].map(([v,lbl]) => (
+          {[['h', td.horizLineLabel],['v', td.vertLineLabel]].map(([v,lbl]) => (
             <button key={v} onClick={() => up({ orientation:v })} style={{
               flex:1, padding:'3px 0', fontSize:11,
               background: (line.orientation||'h')===v ? 'var(--gold)' : 'var(--bg3)',
@@ -598,29 +617,29 @@ function LineProps({ line, onChange, onDelete }) {
         </div>
       </Row>
       <div style={{ display:'flex', gap:6 }}>
-        <Row label={`Lung. ${line.length||55}%`} style={{ flex:1 }}>
+        <Row label={td.lengthLabel(line.length||55)} style={{ flex:1 }}>
           <Sld min={5} max={100} value={line.length||55} onChange={v => up({ length:v })}/>
         </Row>
-        <Row label={`Sp. ${line.thickness||1}px`} style={{ flex:1 }}>
+        <Row label={td.thicknessLabel(line.thickness||1)} style={{ flex:1 }}>
           <Sld min={1} max={60} value={line.thickness||1} onChange={v => up({ thickness:v })}/>
         </Row>
       </div>
-      <ColorRow label="Colore" value={line.color||'#d4aa5a'} onChange={c => up({ color:c })}/>
-      <Row label={`Opacità ${line.opacity??50}%`}>
+      <ColorRow label={td.colorLabel} value={line.color||'#d4aa5a'} onChange={c => up({ color:c })}/>
+      <Row label={td.opacityLabel(line.opacity??50)}>
         <Sld min={0} max={100} value={line.opacity??50} onChange={v => up({ opacity:v })}/>
       </Row>
       <div style={{ display:'flex', gap:6 }}>
-        <Row label={`X ${Math.round(line.x)}%`} style={{ flex:1, marginBottom:0 }}>
+        <Row label={td.xLabel(Math.round(line.x))} style={{ flex:1, marginBottom:0 }}>
           <Sld min={2} max={98} value={line.x} onChange={v => up({ x:v })}/>
         </Row>
-        <Row label={`Y ${Math.round(line.y)}%`} style={{ flex:1, marginBottom:0 }}>
+        <Row label={td.yLabel(Math.round(line.y))} style={{ flex:1, marginBottom:0 }}>
           <Sld min={2} max={98} value={line.y} onChange={v => up({ y:v })}/>
         </Row>
       </div>
       <button onClick={onDelete} style={{ width:'100%', padding:'5px 0', fontSize:11,
         color:'#e05050', background:'none', border:'1px solid #e05050',
         borderRadius:5, cursor:'pointer', marginTop:6 }}>
-        ✕ Rimuovi linea
+        {td.removeLine}
       </button>
     </>
   )
@@ -629,6 +648,7 @@ function LineProps({ line, onChange, onDelete }) {
 // ── PresetPanel ───────────────────────────────────────────────────────────────
 
 function PresetPanel({ ds, onLoad }) {
+  const td = useT().divider
   const [presets, setPresets] = useState([])
   const [name, setName]       = useState('')
 
@@ -649,25 +669,25 @@ function PresetPanel({ ds, onLoad }) {
   }
   return (
     <div style={{ marginTop:8, borderTop:'1px solid var(--border)', paddingTop:8 }}>
-      <p style={{ fontSize:10, color:'var(--text3)', margin:'0 0 5px' }}>Preset</p>
+      <p style={{ fontSize:10, color:'var(--text3)', margin:'0 0 5px' }}>{td.presetLabel}</p>
       <div style={{ display:'flex', gap:3, marginBottom:5 }}>
         <input className="form-input" style={{ fontSize:10, flex:1, padding:'2px 5px' }}
           value={name} onChange={e=>setName(e.target.value)}
-          onKeyDown={e=>e.key==='Enter'&&save()} placeholder="Nome preset"/>
+          onKeyDown={e=>e.key==='Enter'&&save()} placeholder={td.presetNamePlaceholder}/>
         <button onClick={save} style={{ fontSize:9, padding:'2px 6px', background:'var(--bg3)',
           border:'1px solid var(--border)', borderRadius:4, cursor:'pointer', color:'var(--text)' }}>
-          Salva
+          {td.presetSaveBtn}
         </button>
       </div>
       <div style={{ maxHeight:120, overflowY:'auto' }}>
-        {presets.length === 0 && <p style={{ fontSize:9, color:'var(--text3)', textAlign:'center', margin:'6px 0' }}>Nessun preset</p>}
+        {presets.length === 0 && <p style={{ fontSize:9, color:'var(--text3)', textAlign:'center', margin:'6px 0' }}>{td.presetNone}</p>}
         {presets.map(p => (
           <div key={p.name} style={{ display:'flex', alignItems:'center', gap:3, padding:'2px 0' }}>
             <button onClick={()=>onLoad(p.style)} style={{ flex:1, textAlign:'left', fontSize:10,
               padding:'3px 5px', background:'var(--bg3)', border:'1px solid var(--border)',
               borderRadius:4, cursor:'pointer', color:'var(--text)',
               overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}
-              title={`Carica: ${p.name}`}>
+              title={td.presetLoadTitle(p.name)}>
               {p.name}
             </button>
             <button onClick={()=>del(p.name)} style={{ fontSize:9, padding:'2px 5px',
@@ -683,6 +703,7 @@ function PresetPanel({ ds, onLoad }) {
 // ── DividerPhotoPickerModal ───────────────────────────────────────────────────
 
 function DividerPhotoPickerModal({ assets, currentId, onSelect, onClose }) {
+  const td = useT().divider
   const [filter, setFilter] = useState('')
   const items = (assets || [])
     .filter(a => (a.type || 'IMAGE').toUpperCase() !== 'VIDEO')
@@ -699,12 +720,12 @@ function DividerPhotoPickerModal({ assets, currentId, onSelect, onClose }) {
         border:'1px solid var(--border)', boxShadow:'0 24px 80px rgba(0,0,0,0.7)' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
           <h3 style={{ fontFamily:'var(--font-display)', fontWeight:300, fontSize:18, margin:0 }}>
-            Scegli foto
+            {td.pickerTitle}
           </h3>
           <button onClick={onClose}
             style={{ background:'none', border:'none', fontSize:18, color:'var(--text3)', cursor:'pointer' }}>✕</button>
         </div>
-        <input className="form-input" placeholder="Cerca per nome file…" autoFocus
+        <input className="form-input" placeholder={td.pickerSearch} autoFocus
           value={filter} onChange={e => setFilter(e.target.value)}/>
         <div style={{ overflowY:'auto', flex:1 }}>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(90px,1fr))', gap:6 }}>
@@ -723,7 +744,7 @@ function DividerPhotoPickerModal({ assets, currentId, onSelect, onClose }) {
             ))}
           </div>
           {items.length === 0 && (
-            <p style={{ textAlign:'center', padding:32, color:'var(--text3)' }}>Nessun risultato</p>
+            <p style={{ textAlign:'center', padding:32, color:'var(--text3)' }}>{td.pickerNoResults}</p>
           )}
         </div>
       </div>
@@ -744,6 +765,7 @@ const PAGE_SIZES = [
 // ── DividerEditor ─────────────────────────────────────────────────────────────
 
 export default function DividerEditor({ value, onChange, profile, albumInfo, canvasWidth = 300, assets, dividerMapUrl }) {
+  const td = useT().divider
   const ds = migrateDividerStyle(value)
   const [selectedId, setSelectedId] = useState(null)
   const [dragId, setDragId]           = useState(null)
@@ -773,7 +795,7 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
   }
 
   const addCustomText = () => {
-    const ne = { id:uid(), type:'text_custom', enabled:true, x:50, y:80, font:'sans', font_size:2.2, color:'#ffffff', align:'center', opacity:100, text:'Testo personalizzato' }
+    const ne = { id:uid(), type:'text_custom', enabled:true, x:50, y:80, font:'sans', font_size:2.2, color:'#ffffff', align:'center', opacity:100, text:td.customTextDefault }
     commit({ elements:[...(ds.elements||[]), ne], layer_order:[...getOrder(), ne.id] })
     setSelectedId(ne.id)
   }
@@ -834,7 +856,7 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
 
   const selEl   = ds.elements?.find(e => e.id===selectedId)
   const selLine = (ds.lines||[]).find(l => l.id===selectedId)
-  const selMeta = selEl ? (EL_META[selEl.type]||{}) : null
+  const selMeta = selEl ? elMeta(selEl.type, td) : null
 
   // Build display list: front at top (reversed layer_order)
   const allItemsFlat = [...(ds.elements||[]), ...(ds.lines||[])]
@@ -850,7 +872,7 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
       {/* ── Col 1: Canvas ── */}
       <div style={{ width:canvasW, flexShrink:0, display:'flex', flexDirection:'column', gap:4 }}>
         <p className="text-xs text-muted" style={{ margin:0, fontSize:10 }}>
-          Trascina → sposta &nbsp;·&nbsp; Ctrl+trascina foto → pan &nbsp;·&nbsp; Rotella → zoom
+          {td.dragHint}
         </p>
         <DividerCanvas
           style={ds} albumInfo={albumInfo}
@@ -864,7 +886,7 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
           dividerMapUrl={dividerMapUrl}
         />
         <p className="text-xs text-muted" style={{ margin:0, textAlign:'center', maxWidth:canvasW, fontSize:10 }}>
-          Clicca per selezionare
+          {td.clickToSelect}
         </p>
       </div>
 
@@ -877,7 +899,7 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
 
         {/* Background */}
         <div className="form-group" style={{ marginBottom:0 }}>
-          <label className="form-label" style={{ fontSize:11 }}>Sfondo</label>
+          <label className="form-label" style={{ fontSize:11 }}>{td.bgLabel}</label>
           <div style={{ display:'flex', gap:6, alignItems:'center' }}>
             <input type="color" value={ds.bg||'#13141a'}
               onChange={e => commit({ bg:e.target.value })}
@@ -889,29 +911,29 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
         {/* Unified layers — drag to reorder, front at top */}
         <div>
           <div style={{ display:'flex', alignItems:'center', gap:4, marginBottom:5 }}>
-            <p className="form-label" style={{ fontSize:11, margin:0, flex:1 }}>Livelli</p>
+            <p className="form-label" style={{ fontSize:11, margin:0, flex:1 }}>{td.layersLabel}</p>
             <button onClick={addLine} style={{ fontSize:10, padding:'2px 7px',
               background:'var(--bg3)', border:'1px solid var(--border)',
               borderRadius:4, cursor:'pointer', color:'var(--text)' }}>
-              + Linea
+              {td.addLine}
             </button>
             <button onClick={addCustomText} style={{ fontSize:10, padding:'2px 7px',
               background:'var(--bg3)', border:'1px solid var(--border)',
               borderRadius:4, cursor:'pointer', color:'var(--text)' }}>
-              + Testo
+              {td.addText}
             </button>
             <button onClick={addPhoto} style={{ fontSize:10, padding:'2px 7px',
               background:'var(--bg3)', border:'1px solid var(--border)',
               borderRadius:4, cursor:'pointer', color:'var(--text)' }}>
-              + Foto
+              {td.addPhoto}
             </button>
           </div>
           <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
             {displayItems.map(item => {
               const isLine = 'orientation' in item
-              const m      = isLine ? null : (EL_META[item.type] || {})
+              const m      = isLine ? null : elMeta(item.type, td)
               const label  = isLine
-                ? `Linea (${item.orientation==='v' ? 'vert.' : 'orizz.'})`
+                ? td.lineOrientLabel(item.orientation)
                 : (m?.label || item.type)
               const icon   = isLine
                 ? (item.orientation==='v' ? '|' : '—')
@@ -972,12 +994,12 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
             URL.revokeObjectURL(url)
           }} style={{ flex:1, fontSize:9, padding:'3px 0', background:'var(--bg3)',
             border:'1px solid var(--border)', borderRadius:4, cursor:'pointer', color:'var(--text3)' }}>
-            ⬇ Esporta JSON
+            {td.exportJson}
           </button>
           <label style={{ flex:1, fontSize:9, padding:'3px 0', background:'var(--bg3)',
             border:'1px solid var(--border)', borderRadius:4, cursor:'pointer', color:'var(--text3)',
             display:'flex', alignItems:'center', justifyContent:'center' }}>
-            ⬆ Importa JSON
+            {td.importJson}
             <input type="file" accept=".json" hidden onChange={e => {
               const f = e.target.files?.[0]; if (!f) return
               const reader = new FileReader()
@@ -1002,7 +1024,7 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
           <div style={{ padding:8, background:'var(--bg3)', borderRadius:7,
             border:'1px solid var(--border)' }}>
             <p style={{ fontSize:10, color:'var(--text3)', fontFamily:'var(--font-mono)', margin:'0 0 7px' }}>
-              {selEl ? selMeta?.label : `Linea (${selLine?.orientation==='v' ? 'verticale' : 'orizzontale'})`}
+              {selEl ? selMeta?.label : td.lineOrientFull(selLine?.orientation)}
             </p>
             {selEl && !selMeta?.block && (
               <TextElProps el={selEl} onChange={e => updateEl(selEl.id, ()=>e)}/>
@@ -1019,7 +1041,7 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
         ) : (
           <div style={{ padding:'12px 8px' }}>
             <p className="text-xs text-muted" style={{ fontSize:10, margin:0 }}>
-              ← Seleziona un elemento per modificarne le proprietà
+              {td.selectHint}
             </p>
           </div>
         )}
@@ -1031,6 +1053,7 @@ export default function DividerEditor({ value, onChange, profile, albumInfo, can
 // ── DividerEditorModal ────────────────────────────────────────────────────────
 
 export function DividerEditorModal({ value, onChange, onClose, profile, albumInfo, dividerMapUrl, assets, title: modalTitle }) {
+  const td = useT().divider
   const [local, setLocal] = useState(() => migrateDividerStyle(value))
   const [size, setSize]   = useState({ w: null, h: null })
   const modalRef          = useRef(null)
@@ -1059,7 +1082,7 @@ export function DividerEditorModal({ value, onChange, onClose, profile, albumInf
   }
 
   // Reserve ~500px for the two side panels (220px layers + 240px props + gaps + padding)
-  const canvasWidth = size.w ? Math.max(220, Math.round(size.w - 500)) : 340
+  const canvasWidth = size.w ? Math.max(220, Math.round(size.w - 500)) : Math.max(340, Math.round(Math.min(window.innerWidth * 0.97, 1800) - 500))
 
   return createPortal(
     <>
@@ -1072,9 +1095,9 @@ export function DividerEditorModal({ value, onChange, onClose, profile, albumInf
         ref={modalRef}
         style={{
           position:'fixed', top:'4%', left:'50%', transform:'translateX(-50%)',
-          width: size.w ? size.w : 'min(920px, 96vw)',
+          width: size.w ? size.w : 'min(1800px, 97vw)',
           height: size.h ? size.h : undefined,
-          maxHeight: size.h ? undefined : '92vh',
+          maxHeight: size.h ? undefined : '93vh',
           background:'var(--bg2)', border:'1px solid var(--border)',
           borderRadius:12, boxShadow:'0 24px 80px rgba(0,0,0,0.7)',
           zIndex:9101, display:'flex', flexDirection:'column', overflow:'hidden',
@@ -1084,12 +1107,12 @@ export function DividerEditorModal({ value, onChange, onClose, profile, albumInf
         <div style={{ padding:'13px 18px', borderBottom:'1px solid var(--border)',
           display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
           <h3 style={{ fontFamily:'var(--font-display)', fontWeight:300, fontSize:17, margin:0 }}>
-            {modalTitle || 'Stile pagina divisore'}
+            {modalTitle || td.styleModalTitle}
           </h3>
           <div style={{ display:'flex', gap:8 }}>
             <button className="btn btn-sm btn-primary"
               onClick={() => { onChange(local); onClose() }}>
-              Applica
+              {td.applyBtn}
             </button>
             <button onClick={onClose} style={{ background:'none', border:'none',
               fontSize:18, color:'var(--text3)', cursor:'pointer' }}>✕</button>

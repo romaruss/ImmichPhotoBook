@@ -100,12 +100,37 @@ body {
 .nav-item .icon { font-size: 16px; opacity: 0.8; }
 
 .sidebar-bottom {
-  padding: 16px 20px;
+  padding: 12px 20px 14px;
   border-top: 1px solid var(--border);
   font-size: 11px;
   color: var(--text3);
   font-family: var(--font-mono);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
+.sidebar-conn {
+  display: flex;
+  align-items: center;
+}
+.sidebar-version {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  opacity: 0.75;
+}
+.update-badge {
+  background: var(--accent);
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  text-decoration: none;
+  opacity: 1;
+  transition: opacity 0.15s;
+}
+.update-badge:hover { opacity: 0.8; }
 
 .conn-dot {
   display: inline-block;

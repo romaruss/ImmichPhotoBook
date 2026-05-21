@@ -18,6 +18,17 @@ from datetime import datetime
 from typing import Optional
 from PIL import Image, ImageFilter
 
+# Re-use the production-quality face detection from album_generator
+from album_generator import (
+    _get_all_faces as _ag_get_all_faces,
+    _get_face_region as _ag_get_face_region,
+    _face_transform as _ag_face_transform,
+    _face_would_be_clipped as _ag_face_would_be_clipped,
+    _merged_face as _ag_merged_face,
+    _display_dims as _ag_display_dims,
+    _get_page_ar as _ag_page_ar,
+)
+
 logger = logging.getLogger(__name__)
 
 # ─── Configurazione runtime ────────────────────────────────────────────────────
@@ -134,8 +145,9 @@ def score_quality(asset: dict, img_bytes: Optional[bytes] = None) -> float:
     if img_bytes:
         thumb = _load_thumb(img_bytes)
         if thumb:
-            return 0.4 * res + 0.3 * _sharpness(thumb) + 0.3 * _brightness(thumb)
-    return 0.4 * res + 0.6 * 0.5
+            # Sharpness (blur detection) weighted 3× more than resolution
+            return 0.2 * res + 0.6 * _sharpness(thumb) + 0.2 * _brightness(thumb)
+    return 0.3 * res + 0.7 * 0.5
 
 
 # ─── 3. Rimozione duplicati ────────────────────────────────────────────────────
@@ -307,9 +319,7 @@ FULL_TEMPLATE = TEMPLATES["full"]
 
 
 def _is_portrait(asset: dict) -> bool:
-    exif = asset.get("exifInfo", {}) or {}
-    w = exif.get("exifImageWidth") or exif.get("imageWidth") or 0
-    h = exif.get("exifImageHeight") or exif.get("imageHeight") or 0
+    w, h = _ag_display_dims(asset)
     return (h > w) if (w and h) else True
 
 
@@ -422,6 +432,7 @@ def _make_photo_item(asset: dict) -> dict:
         "exif":             exif,
         "has_caption":      bool(desc),
         "isFavorite":       _is_favorite(asset),
+        "_updated_at":      asset.get("updatedAt", ""),
     }
 
 
@@ -437,14 +448,13 @@ def _make_caption_item(asset: dict) -> dict:
 
 
 def _photo_ar(asset: dict) -> float:
-    exif = asset.get("exifInfo", {}) or {}
-    w = exif.get("exifImageWidth") or exif.get("imageWidth") or 1
-    h = exif.get("exifImageHeight") or exif.get("imageHeight") or 1
-    return (w / h) if (w and h) else 1.0
+    w, h = _ag_display_dims(asset)
+    return (w / h) if h else 1.0
 
 
-def _slot_ar(slot: dict) -> float:
-    return slot["w"] / slot["h"] if slot["h"] else 1.0
+def _slot_ar(slot: dict, page_ar: float = 1.0) -> float:
+    pct_ar = slot["w"] / slot["h"] if slot["h"] else 1.0
+    return pct_ar * page_ar
 
 
 def _build_pages_for_event(
@@ -452,6 +462,7 @@ def _build_pages_for_event(
     scored: dict[str, float],
     prev_density: str,
     suggested_transforms: dict,
+    page_ar: float = 1.0,
 ) -> tuple[list[dict], str]:
     """
     Costruisce pagine per un evento:
@@ -472,9 +483,8 @@ def _build_pages_for_event(
 
     # ── Foto preferite → pagina intera ────────────────────────────────────────
     for fav in favorites:
-        face  = _get_face_region(fav)
         p_ar  = _photo_ar(fav)
-        transform = _face_safe_transform(face, p_ar, 1.0) if face_aware else {"x":50,"y":50,"zoom":1.0}
+        transform = _ag_face_transform(_ag_get_all_faces(fav), p_ar, 1.0) if face_aware else {"x":50,"y":50,"zoom":1.0}
         item  = _make_photo_item(fav)
         page_idx = len(pages)   # sarà l'indice nella lista pages
         suggested_transforms[f"_event_page_{page_idx}_0"] = transform
@@ -501,11 +511,12 @@ def _build_pages_for_event(
 
         # face_aware: check face fit — if solo photo with bad fit, upgrade to full page
         if face_aware and chunk_n == 1:
-            face = _get_face_region(chunk[0])
+            all_faces = _ag_get_all_faces(chunk[0])
+            face = _ag_merged_face(all_faces)
             p_ar = _photo_ar(chunk[0])
             slot = tpl["slots"][0]
-            s_ar = slot["w"] / slot["h"] if slot["h"] else 1.0
-            if not _face_fits_slot(face, p_ar, s_ar):
+            s_ar = _slot_ar(slot, page_ar)
+            if face and _ag_face_would_be_clipped(face, p_ar, s_ar):
                 tpl = FULL_TEMPLATE
 
         remaining = remaining[chunk_n:]
@@ -528,10 +539,9 @@ def _build_pages_for_event(
                 items.append({"slot": slot, "item": _make_photo_item(photo)})
                 # Store face transform for this slot
                 if face_aware:
-                    face  = _get_face_region(photo)
                     p_ar  = _photo_ar(photo)
-                    s_ar  = slot["w"] / slot["h"] if slot["h"] else 1.0
-                    transform = _face_safe_transform(face, p_ar, s_ar) if face else {"x": 50, "y": 50, "zoom": 1.0}
+                    s_ar  = _slot_ar(slot, page_ar)
+                    transform = _ag_face_transform(_ag_get_all_faces(photo), p_ar, s_ar)
                     key = f"_event_page_{len(pages)}_{si}"
                     suggested_transforms[key] = transform
             else:
@@ -563,6 +573,7 @@ def _build_pages_for_event(
 def smart_generate_layout(
     assets: list[dict],
     photo_cache: dict[str, bytes],
+    page_ar: float = 1.0,
 ) -> tuple[list[dict], dict]:
     """
     Entry point principale.
@@ -577,6 +588,16 @@ def smart_generate_layout(
     """
     if not assets:
         return [], {}
+
+    # Populate display dims from cached thumbnails (reflects Immich rotations/edits)
+    for a in assets:
+        thumb = photo_cache.get(a["id"])
+        if thumb and not a.get("_thumb_w"):
+            try:
+                with Image.open(io.BytesIO(thumb)) as _img:
+                    a["_thumb_w"], a["_thumb_h"] = _img.size
+            except Exception:
+                pass
 
     # Score qualità
     scored: dict[str, float] = {
@@ -603,7 +624,7 @@ def smart_generate_layout(
 
     for event in events:
         event_pages, density = _build_pages_for_event(
-            event, scored, density, suggested_transforms
+            event, scored, density, suggested_transforms, page_ar
         )
         # Remap transform keys: _event_page_N_SI → "globalPageIdx_SI"
         offset = len(all_pages)

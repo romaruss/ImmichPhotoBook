@@ -82,10 +82,18 @@ function initSettings(profile) {
   }
 }
 
-export default function ExportModal({ layout, onExport, exporting, onClose }) {
-  const t = useT(); const tp = t.preview
-  const [settings, setSettings] = useState(() => initSettings(layout?.profile))
+export default function ExportModal({ layout, onExport, exporting, onClose, externalSettings, onSettingsChange }) {
+  const t = useT(); const tp = t.preview; const te = t.export
+  const [settings, setSettings_] = useState(() => externalSettings || initSettings(layout?.profile))
   const [quality, setQuality]   = useState('hires')
+
+  const setSettings = (fn) => {
+    setSettings_(prev => {
+      const next = typeof fn === 'function' ? fn(prev) : fn
+      onSettingsChange?.(next)
+      return next
+    })
+  }
   const [progress, setProgress] = useState(null)
   const [iccAvail, setIccAvail] = useState({})
   const pollRef = useRef(null)
@@ -105,7 +113,7 @@ export default function ExportModal({ layout, onExport, exporting, onClose }) {
 
   useEffect(() => {
     if (exporting) {
-      setProgress({ pct: 0, step: 'Avvio…' })
+      setProgress({ pct: 0, step: te.processing })
       pollRef.current = setInterval(async () => {
         try {
           const r = await axios.get('/api/export/progress')
@@ -132,8 +140,8 @@ export default function ExportModal({ layout, onExport, exporting, onClose }) {
 
   const spineAuto = calcSpineWidthMm(pages.length, settings.body_paper_gsm)
   const spineDisplay = settings.spine_width_mm != null
-    ? `${settings.spine_width_mm} mm (manuale)`
-    : `${spineAuto} mm (auto)`
+    ? `${settings.spine_width_mm} ${te.mm} ${te.spineManual}`
+    : `${spineAuto} ${te.mm} ${te.spineAuto}`
 
   const base = p.margin_mm || 5
   const mTop  = p.margin_top    ?? base
@@ -168,10 +176,10 @@ export default function ExportModal({ layout, onExport, exporting, onClose }) {
           background:'var(--bg3)', flexShrink:0 }}>
           <div>
             <h3 style={{ fontFamily:'var(--font-display)', fontWeight:300, fontSize:20, marginBottom:2 }}>
-              📄 Esporta fotolibro
+              {te.title}
             </h3>
             <p style={{ fontSize:11, color:'var(--text3)', fontFamily:'var(--font-mono)' }}>
-              {layout?.album?.albumName || '—'} · {nPages} pagine
+              {layout?.album?.albumName || '—'} · {te.pages(nPages)}
             </p>
           </div>
           <button onClick={handleClose}
@@ -183,28 +191,28 @@ export default function ExportModal({ layout, onExport, exporting, onClose }) {
         <div style={{ flex:1, overflowY:'auto', padding:'20px 24px' }}>
 
           {/* Profile summary */}
-          <Section title="Formato pagina">
-            <InfoRow label="Formato"
-              value={`${p.page_size || '20x30'} · ${p.orientation === 'landscape' ? 'Orizzontale' : 'Verticale'}`}/>
-            <InfoRow label="Margini (T/B/Est/Int)"
-              value={`${mTop} / ${mBot} / ${mEst} / ${mInt} mm`}/>
-            <InfoRow label="Spazio tra foto" value={`${p.gap_mm ?? 3} mm`}/>
-            {p.bleed && <InfoRow label="Abbondanza" value={`${p.bleed_mm} mm`}/>}
+          <Section title={te.formatSection}>
+            <InfoRow label={te.formatLabel}
+              value={`${p.page_size || '20x30'} · ${p.orientation === 'landscape' ? te.landscape : te.portrait}`}/>
+            <InfoRow label={te.marginsLabel}
+              value={`${mTop} / ${mBot} / ${mEst} / ${mInt} ${te.mm}`}/>
+            <InfoRow label={te.gapLabel} value={`${p.gap_mm ?? 3} ${te.mm}`}/>
+            {p.bleed && <InfoRow label={te.bleedLabel} value={`${p.bleed_mm} ${te.mm}`}/>}
           </Section>
 
           {/* Hot-editable printing options */}
-          <Section title="Opzioni di stampa">
-            <Row label="Grammatura pagine interne">
+          <Section title={te.printSection}>
+            <Row label={te.bodyGsm}>
               <NumInput value={settings.body_paper_gsm} min={40} max={350} step={10}
                 style={{ width:80 }} onChange={v => set('body_paper_gsm', v)}/>
-              <span style={{ fontSize:11, color:'var(--text3)' }}>gsm</span>
+              <span style={{ fontSize:11, color:'var(--text3)' }}>{te.gsm}</span>
             </Row>
-            <Row label="Grammatura copertina">
+            <Row label={te.coverGsm}>
               <NumInput value={settings.cover_paper_gsm} min={100} max={500} step={10}
                 style={{ width:80 }} onChange={v => set('cover_paper_gsm', v)}/>
-              <span style={{ fontSize:11, color:'var(--text3)' }}>gsm</span>
+              <span style={{ fontSize:11, color:'var(--text3)' }}>{te.gsm}</span>
             </Row>
-            <Row label="Larghezza dorso">
+            <Row label={te.spineWidth}>
               <input type="number" className="form-input" style={{ width:80 }}
                 min={0} max={50} step={0.5}
                 placeholder="auto"
@@ -218,16 +226,16 @@ export default function ExportModal({ layout, onExport, exporting, onClose }) {
                     set('spine_width_mm', Math.max(0, Math.min(50, +e.target.value || 0)))
                   }
                 }}/>
-              <span style={{ fontSize:11, color:'var(--text3)' }}>mm · {spineDisplay}</span>
+              <span style={{ fontSize:11, color:'var(--text3)' }}>{te.mm} · {spineDisplay}</span>
             </Row>
-            <Row label="Risoluzione">
+            <Row label={te.dpiLabel}>
               <select className="form-input" style={{ width:110 }}
                 value={settings.export_dpi}
                 onChange={e => set('export_dpi', +e.target.value)}>
-                {DPI_OPTIONS.map(d => <option key={d} value={d}>{d} dpi</option>)}
+                {DPI_OPTIONS.map(d => <option key={d} value={d}>{d} {te.dpi}</option>)}
               </select>
             </Row>
-            <Row label="Profilo colore">
+            <Row label={te.colorLabel}>
               <select className="form-input" style={{ width:180 }}
                 value={settings.color_profile}
                 onChange={e => set('color_profile', e.target.value)}>
@@ -256,12 +264,12 @@ export default function ExportModal({ layout, onExport, exporting, onClose }) {
           </Section>
 
           {/* Cover options — mutually exclusive */}
-          <Section title="Copertina">
+          <Section title={te.coverSection}>
             <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
               {[
-                ['none',     'Nessuna opzione speciale',          null],
-                ['spread',   'Esporta copertina come spread',     '(pag.1: fronte+dorso+quarta · pag.2: seconda+spazio+terza)'],
-                ['separate', 'Esporta copertina in file PDF separato', '(genera _album.pdf e _copertina.pdf)'],
+                ['none',     te.coverNone,     null],
+                ['spread',   te.coverSpread,   te.coverSpreadHint],
+                ['separate', te.coverSeparate, te.coverSeparateHint],
               ].map(([mode, label, sub]) => (
                 <label key={mode} style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', fontSize:12 }}>
                   <input type="radio" name="export_cover_mode" value={mode}
@@ -277,20 +285,20 @@ export default function ExportModal({ layout, onExport, exporting, onClose }) {
           </Section>
 
           {/* Print marks */}
-          <Section title="Segni di stampa">
+          <Section title={te.marksSection}>
             <label style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', fontSize:12 }}>
               <input type="checkbox" checked={settings.crop_marks}
                 onChange={e => set('crop_marks', e.target.checked)}/>
-              Crocini di taglio (crop marks)
+              {te.cropMarksLabel}
             </label>
           </Section>
 
           {/* Quality */}
-          <Section title="Qualità esportazione">
+          <Section title={te.qualitySection}>
             <div style={{ display:'flex', gap:6 }}>
               {[
-                ['hires',   '🖨 Alta qualità',  'Foto originali. Più lento, file grande.'],
-                ['preview', '👁 Anteprima',      'Miniature. Veloce, file leggero.'],
+                ['hires',   te.hiresLabel,   te.hiresHint],
+                ['preview', te.previewLabel, te.previewHint],
               ].map(([v, lbl, hint]) => (
                 <button key={v} onClick={() => setQuality(v)}
                   title={hint}
@@ -306,7 +314,7 @@ export default function ExportModal({ layout, onExport, exporting, onClose }) {
             </div>
             {quality === 'hires' && (
               <p style={{ fontSize:10, color:'var(--text3)', marginTop:8, fontFamily:'var(--font-mono)' }}>
-                ⏳ L'esportazione hi-res con molte foto può richiedere alcuni minuti.
+                {te.hiresWarn}
               </p>
             )}
           </Section>
@@ -322,7 +330,7 @@ export default function ExportModal({ layout, onExport, exporting, onClose }) {
             <div style={{ marginBottom:12 }}>
               <div style={{ display:'flex', justifyContent:'space-between',
                 fontSize:11, color:'var(--text2)', marginBottom:4, fontFamily:'var(--font-mono)' }}>
-                <span>{progress.step || 'Elaborazione…'}</span>
+                <span>{progress.step || te.processing}</span>
                 <span>{pct > 0 ? `${pct}%` : ''}</span>
               </div>
               <div style={{ width:'100%', height:5, background:'var(--bg)',
@@ -339,29 +347,29 @@ export default function ExportModal({ layout, onExport, exporting, onClose }) {
             {exporting ? (
               <button className="btn btn-danger" style={{ flex:1, justifyContent:'center', fontSize:12 }}
                 onClick={handleCancel}>
-                ⏹ Interrompi
+                {te.stopBtn}
               </button>
             ) : (
               <>
                 <button className="btn btn-primary" style={{ flex:2, justifyContent:'center', fontSize:12 }}
                   onClick={() => handleExport('pdf')}>
-                  📄 Esporta PDF
+                  {te.exportPdfBtn}
                 </button>
                 <button className="btn" style={{ flex:1, justifyContent:'center', fontSize:12 }}
                   onClick={() => handleExport('svg')}
-                  title="ZIP con SVG modificabili (Illustrator, Scribus, InDesign)">
-                  🎨 SVG
+                  title={te.svgNote}>
+                  {te.svgBtn}
                 </button>
               </>
             )}
             <button className="btn" style={{ justifyContent:'center', fontSize:12, minWidth:70 }}
               onClick={handleClose}>
-              {exporting ? 'Chiudi' : '✕'}
+              {exporting ? te.closeBtn : '✕'}
             </button>
           </div>
           {!exporting && (
             <p style={{ textAlign:'center', fontSize:9, color:'var(--text3)', marginTop:6, fontFamily:'var(--font-mono)' }}>
-              SVG: compatibile con Illustrator · Scribus · InDesign
+              {te.svgNote}
             </p>
           )}
         </div>

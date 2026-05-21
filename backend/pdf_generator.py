@@ -117,6 +117,7 @@ def _prepare_image(
     pan_x: float = 50.0,
     pan_y: float = 50.0,
     zoom: float = 1.0,
+    frontend_pan: bool = False,
 ) -> tuple[bytes, float, float, float, float]:
     """
     Process an image for PDF embedding.
@@ -143,12 +144,22 @@ def _prepare_image(
     draw_w = iw * scale
     draw_h = ih * scale
 
-    # Pan offset: 0=top/left, 50=center, 100=bottom/right
-    # ReportLab is y-up; CSS is y-down → Y pan must be inverted (1-pan_fy)
-    pan_fx = pan_x / 100.0
-    pan_fy = pan_y / 100.0
-    ox = (draw_w - slot_w_pt) * pan_fx        if draw_w >= slot_w_pt else -(slot_w_pt - draw_w) / 2
-    oy = (draw_h - slot_h_pt) * (1.0 - pan_fy) if draw_h >= slot_h_pt else -(slot_h_pt - draw_h) / 2
+    # Pan offset computation
+    if frontend_pan:
+        # pan_x/pan_y are raw frontend DividerEditor values (centered at 0).
+        # Positive pan_x → image shifts right in CSS → shows left side of image → smaller ox.
+        # Positive pan_y → image shifts down in CSS → shows top of image → larger oy (ReportLab y-up).
+        center_ox = (draw_w - slot_w_pt) / 2
+        center_oy = (draw_h - slot_h_pt) / 2
+        ox = center_ox - (pan_x / 100.0) * eff_zoom * slot_w_pt
+        oy = center_oy + (pan_y / 100.0) * eff_zoom * slot_h_pt
+    else:
+        # pan_x/pan_y in 0-100 range: 0=top/left, 50=center, 100=bottom/right
+        # ReportLab is y-up; CSS is y-down → Y pan must be inverted (1-pan_fy)
+        pan_fx = pan_x / 100.0
+        pan_fy = pan_y / 100.0
+        ox = (draw_w - slot_w_pt) * pan_fx        if draw_w >= slot_w_pt else -(slot_w_pt - draw_w) / 2
+        oy = (draw_h - slot_h_pt) * (1.0 - pan_fy) if draw_h >= slot_h_pt else -(slot_h_pt - draw_h) / 2
 
     # ── Resize to target DPI ──────────────────────────────────────────────
     target_w_px = round(draw_w / 72 * dpi)
@@ -161,8 +172,14 @@ def _prepare_image(
         scale2 = max(slot_w_pt / iw2, slot_h_pt / ih2) * eff_zoom
         draw_w = iw2 * scale2
         draw_h = ih2 * scale2
-        ox = (draw_w - slot_w_pt) * pan_fx
-        oy = (draw_h - slot_h_pt) * (1.0 - pan_fy)
+        if frontend_pan:
+            center_ox = (draw_w - slot_w_pt) / 2
+            center_oy = (draw_h - slot_h_pt) / 2
+            ox = center_ox - (pan_x / 100.0) * eff_zoom * slot_w_pt
+            oy = center_oy + (pan_y / 100.0) * eff_zoom * slot_h_pt
+        else:
+            ox = (draw_w - slot_w_pt) * pan_fx
+            oy = (draw_h - slot_h_pt) * (1.0 - pan_fy)
 
     # ── Colour profile conversion ─────────────────────────────────────────
     is_cmyk = color_profile in ("fogra39", "fogra51", "swop")
@@ -376,6 +393,10 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
         if etype == "photo_count": return f"{asset_count} fotografie" if asset_count else ""
         return ""
 
+    # Content dimensions without bleed — match frontend DividerEditor canvas coordinate system
+    _pw_c = pw - 2 * bleed
+    _ph_c = ph - 2 * bleed
+
     for _kind, _item in _render_order:
 
         if _kind == "line":
@@ -383,18 +404,18 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
             opacity   = (ln.get("opacity", 50) or 0) / 100
             color     = ln.get("color", "#d4aa5a")
             thickness = float(ln.get("thickness", 1))
-            lx        = ln.get("x", 50) / 100 * pw
-            ly        = (1 - ln.get("y", 50) / 100) * ph
+            lx        = bleed + ln.get("x", 50) / 100 * _pw_c
+            ly        = bleed + (1 - ln.get("y", 50) / 100) * _ph_c
             length_pct = ln.get("length", 55) / 100
             c.saveState()
             c.setStrokeColorRGB(*_hex_to_rgb(color))
             c.setStrokeAlpha(opacity)
             c.setLineWidth(thickness)
             if ln.get("orientation", "h") != "v":
-                half = length_pct * pw / 2
+                half = length_pct * _pw_c / 2
                 c.line(lx - half, ly, lx + half, ly)
             else:
-                half = length_pct * ph / 2
+                half = length_pct * _ph_c / 2
                 c.line(lx, ly - half, lx, ly + half)
             c.restoreState()
             continue
@@ -404,14 +425,14 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
         if not el.get("enabled", True):
             continue
         etype   = el.get("type", "")
-        ex      = el.get("x", 50) / 100 * pw
-        ey      = (1 - el.get("y", 50) / 100) * ph
+        ex      = bleed + el.get("x", 50) / 100 * _pw_c
+        ey      = bleed + (1 - el.get("y", 50) / 100) * _ph_c
         opacity = (el.get("opacity", 100) or 100) / 100
         color   = el.get("color", "#f0ede6")
         align   = el.get("align", "center")
 
         fs_pct  = el.get("font_size", 3)
-        fs_pt   = max(4.0, fs_pct / 100 * ph)
+        fs_pt   = max(4.0, fs_pct / 100 * _ph_c)
 
         if etype in ("title", "subtitle", "date_range", "photo_count", "text_custom"):
             text = _text_for(etype, el)
@@ -434,8 +455,8 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
             c.restoreState()
 
         elif etype == "map" and map_image:
-            ew = el.get("w", 55) / 100 * pw
-            eh = el.get("h", 35) / 100 * ph
+            ew = el.get("w", 55) / 100 * _pw_c
+            eh = el.get("h", 35) / 100 * _ph_c
             rect_x = ex - ew / 2
             rect_y = ey - eh / 2
             try:
@@ -455,17 +476,15 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
                 logger.warning(f"Divider map draw error: {e}")
 
         elif etype == "photo":
-            ew = el.get("w", 40) / 100 * pw
-            eh = el.get("h", 30) / 100 * ph
+            ew = el.get("w", 40) / 100 * _pw_c
+            eh = el.get("h", 30) / 100 * _ph_c
             rect_x = ex - ew / 2
             rect_y = ey - eh / 2
             photo_id    = el.get("photo_id") or album_info.get("best_photo_id")
             pan_x_el    = float(el.get("photo_pan_x") or 0)
             pan_y_el    = float(el.get("photo_pan_y") or 0)
             zoom_el     = float(el.get("photo_zoom") or 1.0)
-            px_cache    = 50.0 + pan_x_el
-            py_cache    = 50.0 + pan_y_el
-            cache_key   = (photo_id, round(ew), round(eh), round(px_cache), round(py_cache), round(zoom_el * 100)) if photo_id else None
+            cache_key   = (photo_id, round(ew), round(eh), round(pan_x_el), round(pan_y_el), round(zoom_el * 100), True) if photo_id else None
             img_data  = processed_cache.get(cache_key) if cache_key else None
             if img_data:
                 jpeg_bytes, ox, oy, dw, dh = img_data
@@ -475,7 +494,7 @@ def _draw_divider_page(c: canvas.Canvas, page: dict,
                     clip = c.beginPath(); clip.rect(rect_x, rect_y, ew, eh)
                     c.clipPath(clip, stroke=0)
                     c.drawImage(ImageReader(io.BytesIO(jpeg_bytes)),
-                                rect_x + ox, rect_y + oy,
+                                rect_x - ox, rect_y - oy,
                                 width=dw, height=dh, mask="auto")
                     c.restoreState()
                 except Exception as e:
@@ -683,7 +702,10 @@ def _draw_photo_page_fast(c: canvas.Canvas, page: dict,
                           crop_marks: bool = False,
                           pan_offsets: dict | None = None,
                           page_idx: int = 0,
-                          profile_cs: dict | None = None) -> None:
+                          profile_cs: dict | None = None,
+                          map_cache: dict | None = None,
+                          dpi: int = 300,
+                          color_profile: str = "srgb") -> None:
     """
     Fast render: images already pre-processed (JPEG bytes, offsets pre-computed).
     pan_offsets: {"pageIdx_slotIdx": {x, y, zoom}} from frontend editor.
@@ -718,13 +740,33 @@ def _draw_photo_page_fast(c: canvas.Canvas, page: dict,
         if item["type"] == "caption":
             _render_caption_slot(c, item, sx, sy, sw, sh, profile_cs=profile_cs)
             continue
+        if item["type"] == "map":
+            mk = item.get("map_key")
+            img_bytes = (map_cache or {}).get(mk) if mk else None
+            if img_bytes:
+                po = (pan_offsets or {}).get(f"{page_idx}_{slot_idx}", {})
+                pan_x = float(po.get("x", item.get("_pan_x", 50.0)))
+                pan_y = float(po.get("y", item.get("_pan_y", 50.0)))
+                zoom  = float(po.get("zoom", 1.0))
+                try:
+                    jpeg_bytes, ox, oy, draw_w, draw_h = _prepare_image(
+                        img_bytes, sw, sh, dpi, color_profile, pan_x, pan_y, zoom, False)
+                    c.saveState()
+                    p = c.beginPath(); p.rect(sx, sy, sw, sh)
+                    c.clipPath(p, stroke=0)
+                    c.drawImage(ImageReader(io.BytesIO(jpeg_bytes)),
+                                sx - ox, sy - oy, width=draw_w, height=draw_h, mask="auto")
+                    c.restoreState()
+                except Exception as e:
+                    logger.warning(f"Map slot draw error {mk}: {e}")
+            continue
         # Photo: look up pre-processed data using pan-inclusive key
         aid = item.get("asset_id", "")
         po    = (pan_offsets or {}).get(f"{page_idx}_{slot_idx}", {})
         pan_x = po.get("x", item.get("_pan_x", 50.0))
         pan_y = po.get("y", item.get("_pan_y", 50.0))
         zoom  = float(po.get("zoom", 1.0))
-        key   = (aid, round(sw), round(sh), round(pan_x), round(pan_y), round(zoom*100))
+        key   = (aid, round(sw), round(sh), round(pan_x), round(pan_y), round(zoom*100), False)
         pre = processed_cache.get(key)
         if pre:
             jpeg_bytes, ox, oy, draw_w, draw_h = pre
@@ -811,6 +853,7 @@ def generate_pdf(
     divider_maps: dict | None = None,
     on_page_progress: "callable | None" = None,
     pan_offsets: dict | None = None,
+    map_cache: dict | None = None,
 ) -> bytes:
     """
     Generate the complete photobook PDF.
@@ -850,6 +893,8 @@ def generate_pdf(
     bleed = _mm(bleed_mm)
     gap   = _mm(gap_mm)
     margin = _mm(margin_mm + bleed_mm)  # for title page (symmetric)
+    pw_c  = pw - 2 * bleed  # content width (trim, no bleed) — matches frontend canvas
+    ph_c  = ph - 2 * bleed
 
     def margins_for_page(page_num: int):
         """
@@ -928,7 +973,7 @@ def generate_pdf(
             pan_x = po.get("x", item.get("_pan_x", 50.0))
             pan_y = po.get("y", item.get("_pan_y", 50.0))
             zoom  = float(po.get("zoom", 1.0))
-            photo_jobs.append((aid, sw_pt, sh_pt, pan_x, pan_y, zoom))
+            photo_jobs.append((aid, sw_pt, sh_pt, pan_x, pan_y, zoom, False))
         _p1_counter += 1
 
     # Divider photo slots: add photo_id from each divider page's photo element to processing queue.
@@ -942,20 +987,19 @@ def generate_pdf(
                 photo_id = el.get("photo_id") or album_info_d.get("best_photo_id")
                 if not photo_id or photo_id not in photo_cache:
                     continue
-                ew_pt = el.get("w", 40) / 100 * pw
-                eh_pt = el.get("h", 30) / 100 * ph
+                ew_pt = el.get("w", 40) / 100 * pw_c
+                eh_pt = el.get("h", 30) / 100 * ph_c
                 if ew_pt > 0 and eh_pt > 0:
-                    # DividerEditor stores pan as -50..50 offset from center; convert to 0..100
-                    pan_x = 50.0 + float(el.get("photo_pan_x") or 0)
-                    pan_y = 50.0 + float(el.get("photo_pan_y") or 0)
+                    pan_x_raw = float(el.get("photo_pan_x") or 0)
+                    pan_y_raw = float(el.get("photo_pan_y") or 0)
                     zoom  = float(el.get("photo_zoom") or 1.0)
-                    photo_jobs.append((photo_id, ew_pt, eh_pt, pan_x, pan_y, zoom))
+                    photo_jobs.append((photo_id, ew_pt, eh_pt, pan_x_raw, pan_y_raw, zoom, True))
 
     # Deduplicate by cache key (includes pan+zoom so edits produce distinct cached images)
     seen_keys: set = set()
     unique_jobs: list[tuple] = []
     for job in photo_jobs:
-        key = (job[0], round(job[1]), round(job[2]), round(job[3]), round(job[4]), round(job[5]*100))
+        key = (job[0], round(job[1]), round(job[2]), round(job[3]), round(job[4]), round(job[5]*100), job[6])
         if key not in seen_keys:
             seen_keys.add(key)
             unique_jobs.append(job)
@@ -969,13 +1013,13 @@ def generate_pdf(
     n_done = 0
 
     def _process_one(job: tuple) -> tuple:
-        aid, sw_pt, sh_pt, pan_x, pan_y, zoom = job
+        aid, sw_pt, sh_pt, pan_x, pan_y, zoom, frontend_pan = job
         raw = photo_cache.get(aid)
-        cache_key = (aid, round(sw_pt), round(sh_pt), round(pan_x), round(pan_y), round(zoom*100))
+        cache_key = (aid, round(sw_pt), round(sh_pt), round(pan_x), round(pan_y), round(zoom*100), frontend_pan)
         if not raw:
             return cache_key, None
         try:
-            result = _prepare_image(raw, sw_pt, sh_pt, dpi, color_profile, pan_x, pan_y, zoom)
+            result = _prepare_image(raw, sw_pt, sh_pt, dpi, color_profile, pan_x, pan_y, zoom, frontend_pan)
             return cache_key, result
         except Exception as e:
             logger.warning(f"Image pre-process failed for {aid}: {e}")
@@ -1051,7 +1095,8 @@ def generate_pdf(
                     _draw_photo_page_fast(cv_out, page, processed_cache, pw, ph,
                                           ml_pt, mr_pt, mt_pt, mb_pt, gap, bleed,
                                           crop_marks=crop_marks, pan_offsets=pan_offsets,
-                                          page_idx=page_idx, profile_cs=profile_cs)
+                                          page_idx=page_idx, profile_cs=profile_cs,
+                                          map_cache=map_cache, dpi=dpi, color_profile=color_profile)
                 cv_out.showPage()
                 page_counter += 1
             return page_counter

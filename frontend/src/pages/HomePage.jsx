@@ -39,16 +39,16 @@ function StatCard({ icon, value, label, sub, onClick, accent = false, disabled =
 }
 
 // ── Project row ───────────────────────────────────────────────────────────────
-function ProjectRow({ project, onOpen, onDelete }) {
+function ProjectRow({ project, onOpen, onDelete, th }) {
   const [hover, setHover] = useState(false)
   const fmt = iso => {
     if (!iso) return ''
     const d = new Date(iso)
     const now = new Date()
     const diffH = (now - d) / 3_600_000
-    if (diffH < 1)   return `${Math.round(diffH * 60)} min fa`
-    if (diffH < 24)  return `${Math.round(diffH)}h fa`
-    if (diffH < 168) return `${Math.round(diffH / 24)}g fa`
+    if (diffH < 1)   return th.timeMin(Math.round(diffH * 60))
+    if (diffH < 24)  return th.timeHour(Math.round(diffH))
+    if (diffH < 168) return th.timeDays(Math.round(diffH / 24))
     return d.toLocaleDateString('it-IT')
   }
 
@@ -69,7 +69,7 @@ function ProjectRow({ project, onOpen, onDelete }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)',
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {project.name || 'Progetto senza nome'}
+          {project.name || th.unnamedProject}
         </div>
         <div style={{ fontSize: 11, color: 'var(--text3)', fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
           {[project.album_name, project.profile_name, project.page_count ? `${project.page_count} pag.` : null]
@@ -86,7 +86,7 @@ function ProjectRow({ project, onOpen, onDelete }) {
           style={{ background: 'none', border: 'none', color: 'var(--text3)',
             cursor: 'pointer', fontSize: 14, padding: '2px 4px', flexShrink: 0,
             borderRadius: 4, lineHeight: 1 }}
-          title="Elimina progetto">
+          title={th.deleteProjectTitle}>
           🗑
         </button>
       )}
@@ -98,6 +98,7 @@ function ProjectRow({ project, onOpen, onDelete }) {
 // ── Main HomePage ─────────────────────────────────────────────────────────────
 export default function HomePage() {
   const t = useT()
+  const th = t.home
   const navigate = useNavigate()
   const [connected, setConnected] = useState(null)   // null=checking, true, false
   const [version, setVersion]       = useState(null)
@@ -128,11 +129,11 @@ export default function HomePage() {
         sessionStorage.removeItem('photobook_transforms')
       sessionStorage.setItem('photobook_project_id', pid)
       navigate('/preview')
-    } catch { alert('Errore nel caricamento del progetto') }
+    } catch { alert(th.loadError) }
   }
 
   const deleteProject = async (pid, name) => {
-    if (!window.confirm(`Eliminare il progetto "${name}"?`)) return
+    if (!window.confirm(t.preview.projectDeleteConfirm(name))) return
     await axios.delete(`/api/projects/${pid}`)
     setProjects(p => p.filter(x => x.id !== pid))
   }
@@ -154,7 +155,7 @@ export default function HomePage() {
           PhotoBook Studio
         </h1>
         <p style={{ fontSize: 14, color: 'var(--text3)', marginTop: 8 }}>
-          Crea fotolibri di stampa professionale dalle tue raccolte Immich
+          {th.subtitle}
         </p>
       </div>
 
@@ -172,17 +173,17 @@ export default function HomePage() {
         }}/>
         <span style={{ fontSize: 13, color: connOk ? '#5dbd7a' : connFail ? '#e05050' : 'var(--text3)' }}>
           {connected === null
-            ? 'Verifica connessione a Immich…'
+            ? th.checkingConn
             : connOk
-            ? 'Connesso a Immich ✓'
-            : 'Immich non raggiungibile — controlla le impostazioni'}
+            ? th.connected
+            : th.disconnected}
         </span>
         {connFail && (
           <button onClick={() => navigate('/config')}
             style={{ marginLeft: 'auto', padding: '4px 12px', fontSize: 11,
               background: 'var(--bg3)', border: '1px solid var(--border)',
               color: 'var(--text2)', borderRadius: 5, cursor: 'pointer' }}>
-            ⚙ Configurazione
+            {th.configBtn}
           </button>
         )}
         {!connFail && version && (
@@ -200,16 +201,16 @@ export default function HomePage() {
         <StatCard
           icon="📐"
           value={loading ? '…' : profileCount ?? 0}
-          label="Profili di stampa"
-          sub={profileCount === 0 ? 'Nessuno ancora — creane uno' : profileCount === 1 ? '1 profilo configurato' : `${profileCount} profili configurati`}
+          label={th.profilesLabel}
+          sub={profileCount === 0 ? th.noProfilesSub : profileCount === 1 ? th.oneProfileSub : th.multiProfilesSub(profileCount)}
           onClick={() => navigate('/profiles')}
           accent={profileCount > 0}
         />
         <StatCard
           icon="💾"
           value={loading ? '…' : projects.length}
-          label="Progetti salvati"
-          sub={projects.length === 0 ? 'Nessuno ancora' : `Ultimo: ${projects[0]?.name || '—'}`}
+          label={th.projectsLabel}
+          sub={projects.length === 0 ? th.noProjectsSub : th.lastProjectSub(projects[0]?.name)}
           onClick={() => projects.length > 0 && loadProject(projects[0].id)}
           accent={projects.length > 0}
           disabled={projects.length === 0}
@@ -217,8 +218,8 @@ export default function HomePage() {
         <StatCard
           icon="🖼"
           value="→"
-          label="Album Immich"
-          sub="Sfoglia e seleziona"
+          label={th.albumsLabel}
+          sub={th.albumsSub}
           onClick={() => navigate('/albums')}
           accent
         />
@@ -234,10 +235,10 @@ export default function HomePage() {
       }}>
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', margin: 0, marginBottom: 6 }}>
-            Crea un nuovo fotolibro
+            {th.ctaTitle}
           </h2>
           <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0 }}>
-            Seleziona un album da Immich, scegli il profilo e genera il layout automaticamente
+            {th.ctaSubtitle}
           </p>
         </div>
         <button
@@ -251,7 +252,7 @@ export default function HomePage() {
             cursor: connOk ? 'pointer' : 'not-allowed',
             transition: 'opacity 0.15s', flexShrink: 0,
           }}>
-          📖 Genera album
+          {th.ctaBtn}
         </button>
       </div>
 
@@ -263,7 +264,7 @@ export default function HomePage() {
             <h3 style={{ fontSize: 13, fontFamily: "'JetBrains Mono', monospace",
               color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.1em',
               margin: 0, fontWeight: 400 }}>
-              Progetti recenti
+              {th.recentProjects}
             </h3>
           </div>
           <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)',
@@ -273,12 +274,13 @@ export default function HomePage() {
                 key={p.id} project={p}
                 onOpen={loadProject}
                 onDelete={deleteProject}
+                th={th}
               />
             ))}
             {projects.length > 6 && (
               <div style={{ padding: '8px 16px', fontSize: 11, color: 'var(--text3)',
                 textAlign: 'center', borderTop: '1px solid var(--border)', marginTop: 4 }}>
-                e altri {projects.length - 6} progetti — aprili dall'anteprima con 📂
+                {th.moreProjects(projects.length - 6)}
               </div>
             )}
           </div>
@@ -290,15 +292,15 @@ export default function HomePage() {
         <div style={{ marginTop: 8, padding: '32px 0', textAlign: 'center',
           color: 'var(--text3)', fontSize: 13 }}>
           <p style={{ marginBottom: 20, lineHeight: 1.6 }}>
-            Per iniziare: <strong style={{color:'var(--text2)'}}>1</strong> crea un profilo di stampa →{' '}
-            <strong style={{color:'var(--text2)'}}>2</strong> seleziona un album →{' '}
-            <strong style={{color:'var(--text2)'}}>3</strong> genera il layout
+            {th.getStartedHint} <strong style={{color:'var(--text2)'}}>1</strong> {th.getStartedStep1} →{' '}
+            <strong style={{color:'var(--text2)'}}>2</strong> {th.getStartedStep2} →{' '}
+            <strong style={{color:'var(--text2)'}}>3</strong> {th.getStartedStep3}
           </p>
           <button onClick={() => navigate('/profiles')}
             style={{ padding: '10px 24px', fontSize: 13, background: 'var(--bg3)',
               border: '1px solid var(--border)', color: 'var(--text2)',
               borderRadius: 7, cursor: 'pointer' }}>
-            📐 Crea il primo profilo
+            {th.createProfileBtn}
           </button>
         </div>
       )}
@@ -306,9 +308,9 @@ export default function HomePage() {
       {/* ── Quick links ── */}
       <div style={{ display: 'flex', gap: 8, marginTop: 40, flexWrap: 'wrap' }}>
         {[
-          { label: '⚙ Configurazione', path: '/config' },
-          { label: '📐 Profili di stampa', path: '/profiles' },
-          { label: '🖼 Album & Layout', path: '/albums' },
+          { label: `⚙ ${t.nav.config}`, path: '/config' },
+          { label: `📐 ${t.nav.profiles}`, path: '/profiles' },
+          { label: `🖼 ${t.nav.albums}`, path: '/albums' },
         ].map(({ label, path }) => (
           <button key={path} onClick={() => navigate(path)}
             style={{ padding: '7px 14px', fontSize: 12,

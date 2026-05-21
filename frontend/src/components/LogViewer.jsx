@@ -4,6 +4,7 @@
  */
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import { useT } from '../i18n.jsx'
 
 const C = {
   bg:'#0c0d10', bg2:'#13141a', bg3:'#1a1c24', border:'#252830',
@@ -359,7 +360,7 @@ function ExcludedRow({ ex, active, onClick }) {
 }
 
 // ── ExcludedDetail (center pane) ──────────────────────────────────────────────
-function ExcludedDetail({ ex }) {
+function ExcludedDetail({ ex, tl }) {
   const isQuality = ex.reason === 'quality'
   const isVisual  = ex.reason === 'duplicate_visual'
   const isDup     = ex.reason?.startsWith('duplicate')
@@ -386,13 +387,13 @@ function ExcludedDetail({ ex }) {
         borderRadius:7,padding:'10px 14px',marginBottom:14}}>
         <div style={{fontSize:10,fontFamily:C.mono,color:C.text3,marginBottom:6,
           textTransform:'uppercase',letterSpacing:'0.08em'}}>
-          Motivo esclusione
+          {tl.excludedReason}
         </div>
         <Tag color={color}>
-          {isQuality ? 'Qualità insufficiente' :
-           ex.reason==='duplicate_checksum' ? 'File identico (checksum)' :
-           isVisual ? 'Quasi-identica (dHash)' :
-           'Burst shot duplicato'}
+          {isQuality ? tl.excludedQuality :
+           ex.reason==='duplicate_checksum' ? tl.excludedChecksum :
+           isVisual ? tl.excludedVisual :
+           tl.excludedBurst}
         </Tag>
         <div style={{fontSize:12,color:C.text2,marginTop:8,lineHeight:1.6}}>
           {ex.detail}
@@ -405,16 +406,13 @@ function ExcludedDetail({ ex }) {
           borderRadius:7,padding:'10px 14px',marginBottom:14}}>
           <div style={{fontSize:10,fontFamily:C.mono,color:C.text3,marginBottom:8,
             textTransform:'uppercase',letterSpacing:'0.08em'}}>
-            Punteggio qualità
+            {tl.qualityScore}
           </div>
           <ScoreBar
             score={Math.round((1 - ex.quality_score) * 100)}
             max={100}
             label={`Score: ${ex.quality_score}`}
             warn={50} danger={80}/>
-          <div style={{fontSize:10,color:C.text3,fontFamily:C.mono,marginTop:4}}>
-            ↳ Qualità calcolata su risoluzione, megapixel, stato preferito
-          </div>
         </div>
       )}
 
@@ -424,16 +422,16 @@ function ExcludedDetail({ ex }) {
           borderRadius:7,padding:'10px 14px',marginBottom:14}}>
           <div style={{fontSize:10,fontFamily:C.mono,color:C.text3,marginBottom:8,
             textTransform:'uppercase',letterSpacing:'0.08em'}}>
-            Distanza Hamming (dHash 64-bit)
+            {tl.hammingDist}
           </div>
           <ScoreBar
             score={ex.hamming}
             max={ex.max_hamming > 0 ? ex.max_hamming * 3 : 10}
-            label={`${ex.hamming} bit diversi (soglia: ≤${ex.max_hamming})`}
+            label={`${ex.hamming} bit (≤${ex.max_hamming})`}
             warn={Math.ceil((ex.max_hamming||5) * 0.6)}
             danger={ex.max_hamming||5}/>
           <div style={{fontSize:10,color:C.text3,fontFamily:C.mono,marginTop:4}}>
-            ↳ 0 = identiche · 64 = opposte · soglia attuale = {ex.max_hamming} bit
+            {tl.hammingHint(ex.max_hamming)}
           </div>
         </div>
       )}
@@ -444,7 +442,7 @@ function ExcludedDetail({ ex }) {
           borderRadius:7,padding:'10px 14px',marginBottom:14}}>
           <div style={{fontSize:10,fontFamily:C.mono,color:C.text3,marginBottom:8,
             textTransform:'uppercase',letterSpacing:'0.08em'}}>
-            Confronto visivo
+            {tl.visualComp}
           </div>
           <div style={{display:'flex',gap:10,alignItems:'flex-end'}}>
             <div style={{flex:1,textAlign:'center'}}>
@@ -452,7 +450,7 @@ function ExcludedDetail({ ex }) {
                 style={{width:'100%',maxHeight:180,objectFit:'contain',
                   borderRadius:5,border:`2px solid ${C.green}`,background:C.bg}}/>
               <div style={{fontSize:9,color:C.green,fontFamily:C.mono,marginTop:4}}>
-                ✓ {ex.kept_filename||'mantenuta'}
+                ✓ {ex.kept_filename||'—'}
               </div>
             </div>
             <div style={{fontSize:16,color:C.text3,flexShrink:0,paddingBottom:20}}>≈</div>
@@ -462,7 +460,7 @@ function ExcludedDetail({ ex }) {
                   borderRadius:5,border:`2px solid ${C.red}`,background:C.bg,
                   opacity:0.65,filter:'grayscale(20%)'}}/>
               <div style={{fontSize:9,color:C.red,fontFamily:C.mono,marginTop:4}}>
-                ⊘ {ex.filename||'esclusa'}
+                ⊘ {ex.filename||'—'}
               </div>
             </div>
           </div>
@@ -475,7 +473,7 @@ function ExcludedDetail({ ex }) {
           borderRadius:7,padding:'10px 14px',marginBottom:14}}>
           <div style={{fontSize:10,fontFamily:C.mono,color:C.text3,marginBottom:8,
             textTransform:'uppercase',letterSpacing:'0.08em'}}>
-            Foto mantenuta
+            {tl.keptPhoto}
           </div>
           <div style={{fontSize:12,fontFamily:C.mono,color:C.green}}>
             ✓ {ex.kept_filename}
@@ -494,7 +492,7 @@ function ExcludedDetail({ ex }) {
         <div style={{marginTop:4}}>
           <div style={{fontSize:10,fontFamily:C.mono,color:C.text3,marginBottom:6,
             textTransform:'uppercase',letterSpacing:'0.08em'}}>
-            Anteprima esclusa
+            {tl.excludedPreview}
           </div>
           <img src={`/api/thumb/${ex.asset_id}`} alt=""
             style={{maxHeight:120,borderRadius:5,border:`1px solid ${C.border}`,opacity:0.6,
@@ -507,13 +505,68 @@ function ExcludedDetail({ ex }) {
 
 // ── Main LogViewer ────────────────────────────────────────────────────────────
 export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, onNavigate, onClose }) {
+  const tl = useT().log
   const [viewMode, setViewMode]   = useState('pages')  // 'pages' | 'excluded'
   const [sel, setSel]             = useState(Math.max(0, currentPage>=0?currentPage:0))
   const [selEx, setSelEx]         = useState(0)
   const [expCand, setExpCand]     = useState(null)
   const [search, setSearch]       = useState('')
   const [onlyIssues, setOnlyIssues] = useState(false)
+  const [copied, setCopied]       = useState(false)
   const listRef = useRef(null)
+
+  const buildPageText = (p) => {
+    if (!p) return ''
+    const lines = []
+    const grp = p.group && p.group !== 'principale' ? ` — ${p.group}` : ''
+    lines.push(`[Pag ${p.page_num}] ${p.page_type_label}${grp}`)
+    ;(p.slots||[]).forEach(s => {
+      if (s.slot_type === 'caption') {
+        lines.push(`  Slot ${s.slot_idx+1} (didascalia): ${s.empty ? '⚠ VUOTA' : `"${(s.text||'').slice(0,80)}"`}`)
+      } else if (s.slot_type === 'map') {
+        lines.push(`  Slot ${s.slot_idx+1} (mappa)`)
+      } else if (s.empty) {
+        lines.push(`  Slot ${s.slot_idx+1} (foto): ⚠ VUOTO`)
+      } else {
+        const ori = s.orient_match === false ? '⚠ MISMATCH' : '✓'
+        const ph  = s.photo_portrait ? 'V' : 'H'
+        const sl  = s.slot_portrait  ? 'V' : 'H'
+        let faceStr = 'nessun volto'
+        if (s.faces) {
+          const bb = s.faces.bbox ? s.faces.bbox.map(v=>Number(v).toFixed(3)).join(', ') : '?'
+          faceStr = `volti=${s.faces.count} prom=${s.faces.prominent} bbox=[${bb}] tagliato=${s.faces.would_clip?'SÌ':'no'}`
+        }
+        const tr = s.transform ? `pan={x:${s.transform.x}, y:${s.transform.y}, zoom:${s.transform.zoom}}` : 'no pan'
+        const q  = s.quality_score != null ? `qualità=${s.quality_score}` : ''
+        lines.push(`  ${ori} Slot ${s.slot_idx+1}: ${s.filename}`)
+        lines.push(`       orient: foto=${ph} slot=${sl} | AR foto=${s.photo_ar} slot=${s.slot_ar} | dim=${s.dim_src||'?'}`)
+        lines.push(`       ${faceStr}`)
+        lines.push(`       ${tr}${q?' | '+q:''}`)
+      }
+    })
+    return lines.join('\n')
+  }
+
+  const handleCopyPage = (p) => {
+    const text = buildPageText(p)
+    const doCopy = (t) => {
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = t; ta.style.position='fixed'; ta.style.opacity='0'
+        document.body.appendChild(ta); ta.focus(); ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+        return true
+      } catch { return false }
+    }
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text)
+        .then(() => { setCopied(true); setTimeout(()=>setCopied(false), 2000) })
+        .catch(() => { doCopy(text); setCopied(true); setTimeout(()=>setCopied(false), 2000) })
+    } else {
+      doCopy(text); setCopied(true); setTimeout(()=>setCopied(false), 2000)
+    }
+  }
 
   useEffect(() => {
     if (currentPage>=0 && currentPage<pageLogs.length) setSel(currentPage)
@@ -595,9 +648,9 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
           <div style={{flex:1}}>
             <div style={{display:'flex',alignItems:'center',gap:10}}>
               <span style={{fontSize:15,fontWeight:700,color:C.gold,fontFamily:C.mono,letterSpacing:'0.04em'}}>
-                🔍 Log impaginazione
+                {tl.title}
               </span>
-              <span style={{fontSize:11,color:C.text3,fontFamily:C.mono}}>{stats.total} pagine</span>
+              <span style={{fontSize:11,color:C.text3,fontFamily:C.mono}}>{tl.statTotal(stats.total)}</span>
             </div>
             <div style={{display:'flex',gap:8,marginTop:6,flexWrap:'wrap'}}>
               <Tag color={C.green}>✓ {stats.perfect} perfette</Tag>
@@ -608,7 +661,7 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
                 <button onClick={()=>setViewMode('excluded')}
                   style={{background:C.redDim,border:`1px solid ${C.red}44`,color:C.red,
                     borderRadius:3,padding:'2px 6px',fontSize:10,cursor:'pointer',fontFamily:C.mono}}>
-                  ⊘ {stats.nExcl} foto escluse
+                  {tl.excludedCount(stats.nExcl)}
                   {stats.nQual>0&&` (qual. ${stats.nQual})`}
                   {stats.nVisual>0&&` (👁 ${stats.nVisual})`}
                   {(stats.nDup-stats.nVisual)>0&&` (burst ${stats.nDup-stats.nVisual})`}
@@ -630,7 +683,7 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
 
             {/* View toggle */}
             <div style={{display:'flex',borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
-              {[['pages','Pagine'],['excluded','Escluse']].map(([mode,label])=>(
+              {[['pages', tl.pagesTab],['excluded', tl.excludedTab]].map(([mode,label])=>(
                 <button key={mode} onClick={()=>setViewMode(mode)}
                   style={{flex:1,padding:'7px 4px',fontSize:11,fontFamily:C.mono,
                     background:viewMode===mode?C.bg:'transparent',
@@ -648,7 +701,7 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
             {/* Search / filter */}
             <div style={{padding:'7px 10px',borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
               <input value={search} onChange={e=>setSearch(e.target.value)}
-                placeholder="Cerca…"
+                placeholder={tl.search}
                 style={{width:'100%',background:C.bg,border:`1px solid ${C.border}`,
                   borderRadius:5,padding:'5px 8px',color:C.text,fontSize:11,
                   fontFamily:C.mono,outline:'none',
@@ -657,7 +710,7 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
                 <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',
                   fontSize:10,color:C.text3,fontFamily:C.mono,marginTop:6}}>
                   <input type="checkbox" checked={onlyIssues} onChange={e=>setOnlyIssues(e.target.checked)}/>
-                  Solo pagine con problemi
+                  {tl.onlyIssues}
                 </label>
               )}
             </div>
@@ -701,7 +754,7 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
                     )
                   })}
                   {filtered.length===0 && (
-                    <div style={{padding:20,textAlign:'center',fontSize:11,color:C.text3}}>Nessuna pagina</div>
+                    <div style={{padding:20,textAlign:'center',fontSize:11,color:C.text3}}>{tl.noPages}</div>
                   )}
                 </>
               )}
@@ -709,7 +762,7 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
                 <>
                   {filteredEx.length===0 && (
                     <div style={{padding:20,textAlign:'center',fontSize:11,color:C.text3}}>
-                      {excludedPhotos.length===0?'Nessuna foto esclusa':'Nessun risultato'}
+                      {excludedPhotos.length===0 ? tl.noExcluded : tl.noResults}
                     </div>
                   )}
                   {filteredEx.map((e,i) => {
@@ -732,7 +785,7 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14,gap:12}}>
                   <div>
                     <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:3}}>
-                      <span style={{fontSize:14,fontWeight:700,color:C.gold,fontFamily:C.mono}}>Pagina {pg.page_num}</span>
+                      <span style={{fontSize:14,fontWeight:700,color:C.gold,fontFamily:C.mono}}>{tl.page} {pg.page_num}</span>
                       <span style={{fontSize:12,color:C.text2}}>—</span>
                       <span style={{fontSize:13,fontWeight:600,color:C.text}}>{pg.page_type_label}</span>
                       {pg.is_favorite && <Tag color={C.gold}>★ preferita</Tag>}
@@ -745,18 +798,28 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
                       {pg.prev_dense!==null&&<span style={{color:C.text3}}>{`· prev: ${pg.prev_dense?'densa':'rada'} · questa: ${pg.is_dense?'densa':'rada'}`}</span>}
                     </div>
                   </div>
-                  <button onClick={()=>{onNavigate(sel);onClose()}}
-                    style={{padding:'6px 14px',fontSize:11,fontFamily:C.mono,
-                      background:C.goldDim,border:`1px solid ${C.gold}55`,
-                      color:C.gold,borderRadius:6,cursor:'pointer',flexShrink:0}}>
-                    → Vai alla pagina
-                  </button>
+                  <div style={{display:'flex',gap:6,flexShrink:0}}>
+                    <button onClick={()=>handleCopyPage(pg)} title={tl.copyTitle}
+                      style={{padding:'6px 10px',fontSize:11,fontFamily:C.mono,
+                        background:copied?C.green+'22':'none',
+                        border:`1px solid ${copied?C.green:C.border}`,
+                        color:copied?C.green:C.text3,borderRadius:6,cursor:'pointer',
+                        whiteSpace:'nowrap',transition:'all 0.2s'}}>
+                      {copied ? tl.copied : tl.copy}
+                    </button>
+                    <button onClick={()=>{onNavigate(sel);onClose()}}
+                      style={{padding:'6px 14px',fontSize:11,fontFamily:C.mono,
+                        background:C.goldDim,border:`1px solid ${C.gold}55`,
+                        color:C.gold,borderRadius:6,cursor:'pointer'}}>
+                      {tl.goToPage}
+                    </button>
+                  </div>
                 </div>
 
                 {pg.candidates?.[0] && (
                   <div style={{background:C.bg3,border:`1px solid ${C.gold}33`,
                     borderRadius:6,padding:'8px 12px',marginBottom:16}}>
-                    <div style={{fontSize:10,fontFamily:C.mono,color:C.text3,marginBottom:6}}>PUNTEGGIO LAYOUT VINCITORE</div>
+                    <div style={{fontSize:10,fontFamily:C.mono,color:C.text3,marginBottom:6}}>{tl.winnerScore}</div>
                     <ScoreBar score={pg.candidates[0].score}
                       max={Math.max(...pg.candidates.map(c=>c.score),100)}
                       label={pg.candidates[0].label} warn={500} danger={2000}/>
@@ -768,15 +831,15 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
                     borderRadius:6,padding:'8px 12px',marginBottom:12}}>
                     <div style={{fontSize:10,fontFamily:C.mono,color:C.text3,
                       textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:5}}>
-                      Descrizioni Immich
+                      {tl.immichDesc}
                     </div>
                     <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
                       <span style={{fontSize:11,color:C.text2}}>
-                        💬 {pg.n_photos_with_desc||0} foto con descrizione
+                        💬 {tl.photosWithDesc(pg.n_photos_with_desc||0)}
                       </span>
                       <span style={{fontSize:11,color:C.text3}}>·</span>
                       <span style={{fontSize:11,color:C.text2}}>
-                        {pg.n_caption_slots||0} slot T nel layout
+                        {tl.captionSlots(pg.n_caption_slots||0)}
                       </span>
                       {(pg.n_photos_with_desc||0)>0&&(pg.n_caption_slots||0)>0&&
                         <Tag color={C.green}>✓ descrizioni inserite</Tag>}
@@ -791,19 +854,19 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
                 <div style={{marginBottom:12}}>
                   <div style={{fontSize:10,fontFamily:C.mono,color:C.text3,
                     textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:8}}>
-                    Slot ({pg.slots?.length||0})
+                    {tl.slots(pg.slots?.length||0)}
                   </div>
                   {pg.slots?.map((s,i) => <SlotCard key={i} slot={s}/>)}
                 </div>
               </>
             )}
 
-            {viewMode==='excluded' && ex && <ExcludedDetail ex={ex}/>}
+            {viewMode==='excluded' && ex && <ExcludedDetail ex={ex} tl={tl}/>}
             {viewMode==='excluded' && !ex && excludedPhotos.length===0 && (
               <div style={{textAlign:'center',padding:40,color:C.text3,fontSize:13}}>
-                Nessuna foto esclusa in questa generazione.<br/>
+                {tl.noExcludedFull}<br/>
                 <span style={{fontSize:11,marginTop:8,display:'block'}}>
-                  Le foto escluse compaiono qui quando sono attivi i filtri qualità o rimozione duplicati.
+                  {tl.filterHint}
                 </span>
               </div>
             )}
@@ -816,9 +879,9 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
                 <div style={{padding:'10px 14px',borderBottom:`1px solid ${C.border}`,background:C.bg3,flexShrink:0}}>
                   <div style={{fontSize:10,fontFamily:C.mono,color:C.text3,
                     textTransform:'uppercase',letterSpacing:'0.1em'}}>
-                    Candidati ({pg.candidates?.length||0})
+                    {tl.candidates(pg.candidates?.length||0)}
                   </div>
-                  <div style={{fontSize:10,color:C.text3,marginTop:3}}>Clicca per il breakdown punteggio</div>
+                  <div style={{fontSize:10,color:C.text3,marginTop:3}}>{tl.candidatesHint}</div>
                 </div>
                 <div style={{flex:1,overflowY:'auto',padding:'10px 12px'}}>
                   {pg.candidates?.map((cand,i) => (
@@ -827,7 +890,7 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
                       onToggle={()=>setExpCand(prev=>prev===`${sel}_${i}`?null:`${sel}_${i}`)}/>
                   ))}
                   {!pg.candidates?.length && (
-                    <div style={{fontSize:11,color:C.text3,textAlign:'center',padding:20}}>Nessun candidato</div>
+                    <div style={{fontSize:11,color:C.text3,textAlign:'center',padding:20}}>{tl.noCandidates}</div>
                   )}
                 </div>
               </>
@@ -840,7 +903,7 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
                     {stats.nQual>0&&<div style={{marginBottom:4}}>🎚 {stats.nQual} per qualità insufficiente</div>}
                     {stats.nVisual>0&&<div style={{marginBottom:4}}>👁 {stats.nVisual} duplicati visivi (dHash)</div>}
                     {(stats.nDup-stats.nVisual)>0&&<div>🔁 {stats.nDup-stats.nVisual} burst shot duplicati</div>}
-                    {stats.nExcl===0&&<div>Nessuna foto esclusa</div>}
+                    {stats.nExcl===0&&<div>{tl.noExcluded}</div>}
                   </div>
                 </div>
               </div>
@@ -855,12 +918,12 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
             <button onClick={()=>setSel(p=>Math.max(0,p-1))} disabled={sel===0}
               style={{padding:'4px 14px',fontSize:11,fontFamily:C.mono,
                 background:'none',border:`1px solid ${C.border}`,color:C.text2,
-                borderRadius:5,cursor:sel===0?'not-allowed':'pointer',opacity:sel===0?.4:1}}>← Prec.</button>
-            <span style={{fontSize:11,fontFamily:C.mono,color:C.text3}}>{sel+1} / {pageLogs.length}</span>
+                borderRadius:5,cursor:sel===0?'not-allowed':'pointer',opacity:sel===0?.4:1}}>{tl.prevBtn}</button>
+            <span style={{fontSize:11,fontFamily:C.mono,color:C.text3}}>{tl.counter(sel+1, pageLogs.length)}</span>
             <button onClick={()=>setSel(p=>Math.min(pageLogs.length-1,p+1))} disabled={sel>=pageLogs.length-1}
               style={{padding:'4px 14px',fontSize:11,fontFamily:C.mono,
                 background:'none',border:`1px solid ${C.border}`,color:C.text2,
-                borderRadius:5,cursor:sel>=pageLogs.length-1?'not-allowed':'pointer',opacity:sel>=pageLogs.length-1?.4:1}}>Succ. →</button>
+                borderRadius:5,cursor:sel>=pageLogs.length-1?'not-allowed':'pointer',opacity:sel>=pageLogs.length-1?.4:1}}>{tl.nextBtn}</button>
           </div>
         )}
         {viewMode==='excluded' && excludedPhotos.length>0 && (
@@ -869,12 +932,12 @@ export default function LogViewer({ pageLogs, excludedPhotos=[], currentPage, on
             <button onClick={()=>setSelEx(p=>Math.max(0,p-1))} disabled={selEx===0}
               style={{padding:'4px 14px',fontSize:11,fontFamily:C.mono,
                 background:'none',border:`1px solid ${C.border}`,color:C.text2,
-                borderRadius:5,cursor:selEx===0?'not-allowed':'pointer',opacity:selEx===0?.4:1}}>← Prec.</button>
-            <span style={{fontSize:11,fontFamily:C.mono,color:C.text3}}>{selEx+1} / {excludedPhotos.length}</span>
+                borderRadius:5,cursor:selEx===0?'not-allowed':'pointer',opacity:selEx===0?.4:1}}>{tl.prevBtn}</button>
+            <span style={{fontSize:11,fontFamily:C.mono,color:C.text3}}>{tl.counter(selEx+1, excludedPhotos.length)}</span>
             <button onClick={()=>setSelEx(p=>Math.min(excludedPhotos.length-1,p+1))} disabled={selEx>=excludedPhotos.length-1}
               style={{padding:'4px 14px',fontSize:11,fontFamily:C.mono,
                 background:'none',border:`1px solid ${C.border}`,color:C.text2,
-                borderRadius:5,cursor:selEx>=excludedPhotos.length-1?'not-allowed':'pointer',opacity:selEx>=excludedPhotos.length-1?.4:1}}>Succ. →</button>
+                borderRadius:5,cursor:selEx>=excludedPhotos.length-1?'not-allowed':'pointer',opacity:selEx>=excludedPhotos.length-1?.4:1}}>{tl.nextBtn}</button>
           </div>
         )}
       </div>

@@ -215,6 +215,19 @@ def _get_face_region(photo: Photo) -> dict | None:
     return max(faces, key=lambda f: f["size"]) if faces else None
 
 
+def _merged_face(faces: list[dict]) -> dict | None:
+    """Bbox unito di tutte le facce — usato per il clipping check multi-volto."""
+    if not faces:
+        return None
+    x1 = min(f["x1"] for f in faces)
+    y1 = min(f["y1"] for f in faces)
+    x2 = max(f["x2"] for f in faces)
+    y2 = max(f["y2"] for f in faces)
+    return {"x1": x1, "y1": y1, "x2": x2, "y2": y2,
+            "cx": (x1+x2)/2, "cy": (y1+y2)/2,
+            "size": max(x2-x1, y2-y1)}
+
+
 
 
 
@@ -223,41 +236,37 @@ def _get_face_region(photo: Photo) -> dict | None:
 
 def _face_would_be_clipped(face: dict, photo_ar: float, slot_ar: float) -> bool:
     """
-    Verifica se il volto sarebbe tagliato quando la foto viene messa nello slot.
-    
-    La foto viene sempre scalata per riempire lo slot (objectFit: cover).
-    Se photo_ar > slot_ar → foto più larga → verrà ritagliata ai lati.
-    Se photo_ar < slot_ar → foto più alta → verrà ritagliata sopra/sotto.
-    
-    Controlla se il volto cade nella zona ritagliata.
+    True se NON esiste alcun pan che mantenga il face bbox interamente visibile
+    nello slot con margine 5% (stessa logica di _face_transform).
+
+    Metodo: calcola pan_min e pan_max che tengono rispettivamente il bordo
+    inferiore/destro e superiore/sinistro del bbox dentro lo slot con MARGIN.
+    Se pan_min > pan_max non esiste pan valido → faccia tagliata.
     """
-    cx, cy = face["cx"], face["cy"]
-    fw, fh = face["x2"] - face["x1"], face["y2"] - face["y1"]
+    MARGIN = 0.05
+    x1, y1, x2, y2 = face["x1"], face["y1"], face["x2"], face["y2"]
 
     if abs(photo_ar - slot_ar) < 0.1:
-        # AR molto simile → quasi nessun ritaglio
         return False
 
-    if photo_ar > slot_ar:
-        # Foto più larga: ritaglio laterale. Fraction visibile in X:
-        visible_w = slot_ar / photo_ar
-        # L'immagine è centrata → margine ritagliato su ogni lato = (1-visible_w)/2
-        margin = (1 - visible_w) / 2
-        face_left_edge  = cx - fw / 2
-        face_right_edge = cx + fw / 2
-        # Il volto è tagliato se esce dalla zona visibile [margin, 1-margin]
-        if face_left_edge < margin or face_right_edge > (1 - margin):
-            return True
+    if photo_ar >= slot_ar:
+        # Fit sull'altezza: overflow orizzontale
+        ratio_x   = photo_ar / slot_ar
+        overflow_x = ratio_x - 1
+        if overflow_x < 0.01:
+            return False
+        pan_x_max = (x1 * ratio_x - MARGIN)       / overflow_x * 100
+        pan_x_min = (x2 * ratio_x - (1 - MARGIN)) / overflow_x * 100
+        return pan_x_min > pan_x_max
     else:
-        # Foto più alta: ritaglio verticale. Fraction visibile in Y:
-        visible_h = photo_ar / slot_ar
-        margin = (1 - visible_h) / 2
-        face_top_edge    = cy - fh / 2
-        face_bottom_edge = cy + fh / 2
-        if face_top_edge < margin or face_bottom_edge > (1 - margin):
-            return True
-
-    return False
+        # Fit sulla larghezza: overflow verticale
+        ratio_y   = slot_ar / photo_ar
+        overflow_y = ratio_y - 1
+        if overflow_y < 0.01:
+            return False
+        pan_y_max = (y1 * ratio_y - MARGIN)       / overflow_y * 100
+        pan_y_min = (y2 * ratio_y - (1 - MARGIN)) / overflow_y * 100
+        return pan_y_min > pan_y_max
 
 
 
@@ -806,7 +815,8 @@ def _score_page_type(
     for slot, photo in zip(slots, assigned):
         if photo is None:
             continue
-        face = _get_face_region(photo)
+        faces_all = _get_all_faces(photo)
+        face = _merged_face(faces_all)
         if face is not None and face["size"] >= 0.12:   # ignora volti piccoli/lontani
             p_ar = _photo_ar(photo)
             s_ar = _slot_ar(slot, page_ar)
@@ -976,6 +986,7 @@ def _make_photo_item(photo: Photo) -> Item:
         "exif":             exif,
         "has_caption":      bool(desc),
         "isFavorite":       bool(photo.get("isFavorite")),
+        "_updated_at":      photo.get("updatedAt", ""),
     }
 
 
@@ -1144,9 +1155,15 @@ def _make_pages_from_group(
             is_portrait_photo = _photo_is_portrait(photo_a)
             is_portrait_slot  = _slot_is_portrait(slot, page_ar)
             match_icon = "✓" if is_portrait_photo == is_portrait_slot else "⚠ MISMATCH"
+            tw = photo_a.get("_thumb_w"); th = photo_a.get("_thumb_h")
+            exif = photo_a.get("exifInfo") or {}
+            ew = exif.get("exifImageWidth") or exif.get("imageWidth") or "?"
+            eh = exif.get("exifImageHeight") or exif.get("imageHeight") or "?"
+            orient = exif.get("orientation", 1)
+            dim_src = f"thumb:{tw}×{th}" if (tw and th) else f"exif:{ew}×{eh}(rot{orient})"
             log.append(
                 f"  {match_icon} {photo_a.get('originalFileName','?')} "
-                f"({'V' if is_portrait_photo else 'H'}) → Slot {si+1} "
+                f"({'V' if is_portrait_photo else 'H'}) [{dim_src}] → Slot {si+1} "
                 f"({'V' if is_portrait_slot else 'H'}) | layout: {pt.get('label','?')} | {group_label}"
             )
 
@@ -1191,13 +1208,19 @@ def _make_pages_from_group(
                 pr2 = next((p for p in chunk if p.get('id')==item2.get('asset_id')),None)
                 faces2 = _get_all_faces(pr2) if pr2 else []
                 prom2  = [f for f in faces2 if f.get('size',0)>=0.02]
-                fr2    = _get_face_region(pr2) if pr2 else None
                 p_ar2  = _photo_ar(pr2) if pr2 else 1.0
                 s_ar2  = _slot_ar(slot2, page_ar)
-                clipped= _face_would_be_clipped(fr2,p_ar2,s_ar2) if fr2 and fr2.get('size',0)>=0.12 else False
+                mf2    = _merged_face(prom2 or faces2)
+                clipped= _face_would_be_clipped(mf2,p_ar2,s_ar2) if mf2 and mf2.get('size',0)>=0.12 else False
                 tr2    = transforms.get(f'{pg_idx}_{si2}',{'x':50,'y':50,'zoom':1.0})
                 q_score  = round(_photo_quality(pr2), 3) if pr2 else None
                 sim_score = (similarity_scores or {}).get(item2.get('asset_id', ''))
+                tw2 = pr2.get('_thumb_w') if pr2 else None
+                th2 = pr2.get('_thumb_h') if pr2 else None
+                exif2 = (pr2.get('exifInfo') or {}) if pr2 else {}
+                ew2 = exif2.get('exifImageWidth') or exif2.get('imageWidth') or '?'
+                eh2 = exif2.get('exifImageHeight') or exif2.get('imageHeight') or '?'
+                dim_src2 = f'thumb:{tw2}x{th2}' if (tw2 and th2) else f'exif:{ew2}x{eh2}(rot{exif2.get("orientation",1)})'
                 slot_logs.append({'slot_idx':si2,'slot_type':'photo',
                     'asset_id':item2.get('asset_id',''),'filename':item2.get('originalFileName',''),
                     'datetime':item2.get('localDateTime',''),
@@ -1208,6 +1231,7 @@ def _make_pages_from_group(
                     'description':item2.get('description',''),
                     'is_favorite':item2.get('isFavorite',False),
                     'photo_ar':round(p_ar2,3),'slot_ar':round(s_ar2,3),
+                    'dim_src':dim_src2,
                     'faces':{'count':len(faces2),'prominent':len(prom2),
                              'bbox':[round(min(f['x1'] for f in prom2 or faces2),3),
                                      round(min(f['y1'] for f in prom2 or faces2),3),

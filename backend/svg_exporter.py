@@ -143,6 +143,7 @@ def _build_page_svg(
     title: str = "",
     description: str = "",
     map_image: Optional[bytes] = None,
+    crop_marks: bool = False,
 ) -> str:
     """Build one SVG page as string."""
     total_w_mm = pw_mm + 2 * bleed_mm
@@ -396,7 +397,7 @@ def _build_page_svg(
                     tspan.text = ln
 
     # ── Crop marks layer ─────────────────────────────────────────────────────
-    if bleed_mm > 0:
+    if bleed_mm > 0 and crop_marks:
         marks_layer = ET.SubElement(root, f"{{{SVG_NS}}}g")
         marks_layer.set("id", "cropmarks")
         marks_layer.set(f"{{{INKSCAPE_NS}}}label", "Segni di taglio")
@@ -451,9 +452,10 @@ def generate_svg_zip(
     if profile.get("orientation", "portrait") == "landscape":
         pw_mm, ph_mm = ph_mm, pw_mm
 
-    bleed_mm  = profile.get("bleed_mm", 3.0) if profile.get("bleed") else 0.0
-    margin_mm = profile.get("margin_mm", 5.0)
-    gap_mm    = profile.get("gap_mm",    3.0)
+    bleed_mm   = profile.get("bleed_mm", 3.0) if profile.get("bleed") else 0.0
+    margin_mm  = profile.get("margin_mm", 5.0)
+    gap_mm     = profile.get("gap_mm",    3.0)
+    crop_marks = bool(profile.get("crop_marks", False))
 
     album_name = (album.get("albumName") or "fotolibro").replace(" ", "_")
     buf = io.BytesIO()
@@ -496,6 +498,7 @@ Layer SVG (visibili nel pannello Layers):
             title=album.get("albumName", "Fotolibro"),
             description=album.get("description", ""),
             map_image=map_image,
+            crop_marks=crop_marks,
         )
         zf.writestr(f"{album_name}_00_copertina.svg", svg)
 
@@ -507,6 +510,7 @@ Layer SVG (visibili nel pannello Layers):
                 bleed_mm=bleed_mm, pw_mm=pw_mm, ph_mm=ph_mm,
                 margin_mm=margin_mm, gap_mm=gap_mm,
                 is_title_page=False,
+                crop_marks=crop_marks,
             )
             zf.writestr(f"{album_name}_{i:02d}.svg", svg)
 

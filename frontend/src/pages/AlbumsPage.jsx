@@ -76,6 +76,7 @@ function SliderInput({ value, onChange, label, help, min, max, step, unit, disab
 
 // ── Config modal ───────────────────────────────────────────────────────────────
 function ConfigModal({ config, onChange, onClose }) {
+  const a = useT().albums
   const [local, setLocal]               = useState({ ...config })
   const [presets, setPresets]           = useState(loadPresets)
   const [selectedPresetId, setSelectedPresetId] = useState('')
@@ -169,10 +170,10 @@ function ConfigModal({ config, onChange, onClose }) {
           display:'flex', justifyContent:'space-between', alignItems:'center' }}>
           <div>
             <h3 style={{ fontFamily:'var(--font-display)', fontWeight:300, fontSize:20, marginBottom:2 }}>
-              ⚙ Opzioni generazione album
+              {a.configTitle}
             </h3>
             <p style={{ fontSize:11, color:'var(--text3)', fontFamily:'var(--font-mono)' }}>
-              Tutte le impostazioni sono facoltative — la logica base funziona senza attivarne nessuna
+              {a.configSubtitle}
             </p>
           </div>
           <button onClick={onClose}
@@ -182,18 +183,18 @@ function ConfigModal({ config, onChange, onClose }) {
         {/* Preset bar */}
         <div style={{ padding:'10px 24px', borderBottom:'1px solid var(--border)',
           background:'var(--bg)', display:'flex', alignItems:'center', gap:8, flexShrink:0 }}>
-          <span style={{ fontSize:11, color:'var(--text3)', whiteSpace:'nowrap', fontFamily:'var(--font-mono)' }}>Preset:</span>
+          <span style={{ fontSize:11, color:'var(--text3)', whiteSpace:'nowrap', fontFamily:'var(--font-mono)' }}>{a.presetLabel}</span>
           <select
             value={selectedPresetId}
             onChange={e => applyPreset(e.target.value)}
             style={{ flex:1, background:'var(--bg3)', border:'1px solid var(--border)',
               color:'var(--text)', borderRadius:5, padding:'4px 8px', fontSize:12 }}>
-            <option value="">— nessun preset —</option>
+            <option value="">{a.noPreset}</option>
             {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
 
           {selectedPresetId && (
-            <button onClick={deletePreset} title="Elimina preset"
+            <button onClick={deletePreset} title={a.deletePresetTitle}
               style={{ background:'none', border:'1px solid var(--border)', color:'var(--text3)',
                 borderRadius:5, padding:'4px 8px', fontSize:12, cursor:'pointer',
                 flexShrink:0 }}>
@@ -208,7 +209,7 @@ function ConfigModal({ config, onChange, onClose }) {
                 value={presetName}
                 onChange={e => setPresetName(e.target.value)}
                 onKeyDown={e => { if (e.key==='Enter') commitSavePreset(); if (e.key==='Escape') { setNamingPreset(false); setPresetName('') } }}
-                placeholder="Nome preset…"
+                placeholder={a.presetNamePlaceholder}
                 style={{ width:140, background:'var(--bg3)', border:'1px solid var(--gold)',
                   color:'var(--text)', borderRadius:5, padding:'4px 8px', fontSize:12 }}/>
               <button onClick={commitSavePreset}
@@ -219,16 +220,16 @@ function ConfigModal({ config, onChange, onClose }) {
               <button onClick={() => { setNamingPreset(false); setPresetName('') }}
                 style={{ background:'none', border:'1px solid var(--border)', color:'var(--text3)',
                   borderRadius:5, padding:'4px 8px', fontSize:12, cursor:'pointer', flexShrink:0 }}>
-                Annulla
+                {a.cancelBtn2}
               </button>
             </>
           ) : (
             <button onClick={() => { setNamingPreset(true); setPresetName('') }}
-              title="Salva impostazioni correnti come preset"
+              title={a.savePresetTitle}
               style={{ background:'none', border:'1px solid var(--border)', color:'var(--text2)',
                 borderRadius:5, padding:'4px 10px', fontSize:12, cursor:'pointer',
                 whiteSpace:'nowrap', flexShrink:0 }}>
-              + Salva preset
+              {a.savePresetBtn}
             </button>
           )}
         </div>
@@ -237,67 +238,70 @@ function ConfigModal({ config, onChange, onClose }) {
         <div style={{ flex:1, overflowY:'auto', padding:'16px 24px' }}>
 
           {/* Density */}
-          <Section title="Densità dell'album"/>
+          <Section title={a.sectionDensity}/>
           <SliderInput value={local.density} onChange={v=>set("density",v)} value={local.density} onChange={v=>set("density",v)} min={0} max={100} step={5} unit="%"
-            label="Proporzione foto / pagine"
-            help={`${local.density}% — ${
-              local.density >= 90 ? '1 foto per pagina (album minimalista)' :
-              local.density >= 60 ? 'bilanciato (default: 75%)' :
-              'molte foto per pagina (album denso)'
-            }. 100 = una foto per pagina, 0 = massima densità.`}/>
+            label={a.cfgDensityLabel}
+            help={a.cfgDensityHelp(local.density)}/>
 
           {/* Temporal clustering */}
-          <Section title="a) Clustering temporale"/>
-          <Toggle k="temporal_clustering" label="Raggruppa foto per evento"
-            help="Mantiene insieme le foto scattate nello stesso lasso di tempo. Le foto senza data restano nella logica base."/>
+          <Section title={a.sectionClustering}/>
+          <Toggle k="temporal_clustering" label={a.cfgClusterLabel}
+            help={a.cfgClusterHelp}/>
           <SliderInput value={local.event_gap_min} onChange={v=>set("event_gap_min",v)} value={local.event_gap_min} onChange={v=>set("event_gap_min",v)} min={5} max={1440} step={5}
             unit="min"
-            label="Soglia di tempo tra eventi"
+            label={a.cfgGapLabel}
             disabled={!local.temporal_clustering}
-            help={`Foto con più di ${local.event_gap_min >= 60 ? `${Math.floor(local.event_gap_min/60)}h${local.event_gap_min%60>0?` ${local.event_gap_min%60}min`:''}` : `${local.event_gap_min} min`} di distanza dalla precedente iniziano un nuovo evento.`}/>
+            help={a.cfgGapHelp(local.event_gap_min)}/>
 
           {/* Favorites */}
-          <Section title="b) Foto preferite"/>
-          <Toggle k="favorites_full_page" label="Foto con ★ su pagina intera"
-            help="Le foto con il cuore in Immich vengono posizionate da sole su una pagina intera."/>
+          <Section title={a.sectionFavorites}/>
+          <Toggle k="favorites_full_page" label={a.cfgFavLabel}
+            help={a.cfgFavHelp}/>
 
           {/* Face crop */}
-          <Section title="c) Centratura sui volti"/>
-          <Toggle k="face_crop" label="Centra il crop sui volti"
-            help="Quando viene inserita una foto con volti in primo piano, il crop viene centrato automaticamente sul viso."/>
+          <Section title={a.sectionFaceCrop}/>
+          <Toggle k="face_crop" label={a.cfgFaceLabel}
+            help={a.cfgFaceHelp}/>
 
           {/* Quality filter */}
-          <Section title="d) Filtro qualità"/>
-          <Toggle k="quality_filter" label="Escludi foto sotto la soglia di qualità"
-            help="Calcola un punteggio basato su risoluzione e metadati, ed esclude le foto con punteggio troppo basso."/>
+          <Section title={a.sectionQuality}/>
+          <Toggle k="quality_filter" label={a.cfgQualFilterLabel}
+            help={a.cfgQualFilterHelp}/>
           <SliderInput value={local.min_quality} onChange={v=>set("min_quality",v)} value={local.min_quality} onChange={v=>set("min_quality",v)} min={0} max={1} step={0.01} unit=""
-            label="Soglia qualità minima"
+            label={a.cfgQualThreshLabel}
             disabled={!local.quality_filter}
-            help={`Soglia: ${local.min_quality.toFixed(2)}. Le foto con punteggio inferiore vengono escluse. Il punteggio è calcolato su risoluzione, metadati e stato preferito.`}/>
+            help={a.cfgQualThreshHelp(local.min_quality.toFixed(2))}/>
 
           {/* Duplicates */}
-          <Section title="e) Rimozione duplicati"/>
-          <Toggle k="remove_duplicates" label="Rimuovi foto quasi identiche"
-            help="Rimuove foto con caratteristiche simili, tenendo quella con qualità più alta."/>
+          <Section title={a.sectionDuplicates}/>
+          <Toggle k="remove_duplicates" label={a.cfgDedupLabel}
+            help={a.cfgDedupHelp}/>
           <SliderInput value={local.similarity_threshold} onChange={v=>set("similarity_threshold",v)} value={local.similarity_threshold} onChange={v=>set("similarity_threshold",v)} min={0.5} max={1} step={0.01} unit=""
-            label="Soglia similarità"
+            label={a.cfgSimLabel}
             disabled={!local.remove_duplicates}
-            help={`Soglia: ${local.similarity_threshold.toFixed(2)}. Più alta = solo duplicati quasi identici. Più bassa = rimuove anche foto simili ma non identiche.`}/>
+            help={a.cfgSimHelp(local.similarity_threshold.toFixed(2))}/>
 
           {/* Auto captions */}
-          <Section title="f) Didascalie automatiche"/>
-          <Toggle k="auto_captions" label="Inserisci didascalie automaticamente"
-            help="Se una foto ha una descrizione in Immich, la inserisce automaticamente nello slot didascalia durante la generazione. Disattiva per generare l'album senza didascalie, anche se presenti."/>
+          <Section title={a.sectionCaptions}/>
+          <Toggle k="auto_captions" label={a.cfgCaptionLabel}
+            help={a.cfgCaptionHelp}/>
 
           {/* Map fill */}
-          <Section title="g) Slot vuoti"/>
-          <Toggle k="fill_empty_with_map" label="Riempi slot vuoti con mappa GPS"
-            help="Quando un layout ha più slot del numero di foto disponibili, inserisce una mappa con le posizioni GPS delle foto del gruppo."/>
+          <Section title={a.sectionMapFill}/>
+          <Toggle k="fill_empty_with_map" label={a.cfgMapLabel}
+            help={a.cfgMapHelp}/>
+          {local.fill_empty_with_map && !stadiaKeySet && (
+            <p style={{ fontSize: 10, color: 'var(--text3)', marginTop: -4, marginBottom: 8, paddingLeft: 4 }}>
+              {a.stadiaHint(a.stadiaConfigLink).split(a.stadiaConfigLink)[0]}
+              <a href="/config" style={{ color: 'var(--gold)' }}>{a.stadiaConfigLink}</a>
+              {a.stadiaHint(a.stadiaConfigLink).split(a.stadiaConfigLink)[1]}
+            </p>
+          )}
 
           {/* Rhythm */}
-          <Section title="h) Ritmo visivo"/>
-          <Toggle k="rhythm_alternation" label="Alterna layout densi e minimali"
-            help="Evita di mettere troppe pagine con 4-6 foto di fila — alterna con pagine più ariose."/>
+          <Section title={a.sectionRhythm}/>
+          <Toggle k="rhythm_alternation" label={a.cfgRhythmLabel}
+            help={a.cfgRhythmHelp}/>
 
         </div>
 
@@ -305,10 +309,10 @@ function ConfigModal({ config, onChange, onClose }) {
         <div style={{ padding:'14px 24px', borderTop:'1px solid var(--border)',
           background:'var(--bg3)', flexShrink:0,
           display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-          <button className="btn btn-sm" onClick={reset}>↺ Ripristina default</button>
+          <button className="btn btn-sm" onClick={reset}>{a.resetBtn2}</button>
           <div style={{ display:'flex', gap:10 }}>
-            <button className="btn" onClick={onClose}>Annulla</button>
-            <button className="btn btn-primary" onClick={save}>✓ Salva e chiudi</button>
+            <button className="btn" onClick={onClose}>{a.cancelBtn2}</button>
+            <button className="btn btn-primary" onClick={save}>{a.saveCloseBtn}</button>
           </div>
         </div>
       </div>
@@ -320,6 +324,7 @@ function ConfigModal({ config, onChange, onClose }) {
 // ── Main AlbumsPage ────────────────────────────────────────────────────────────
 // ── Minimal project list modal for AlbumsPage ────────────────────────────────
 function ProjectListModal({ onClose, onLoad }) {
+  const a = useT().albums
   const [projects, setProjects] = useState([])
   const [loading, setLoading]   = useState(true)
   useEffect(() => {
@@ -332,7 +337,7 @@ function ProjectListModal({ onClose, onLoad }) {
   const fmt = iso => {
     if (!iso) return ''
     const d = new Date(iso)
-    return d.toLocaleDateString('it-IT') + ' ' + d.toLocaleTimeString('it-IT', { hour:'2-digit', minute:'2-digit' })
+    return d.toLocaleDateString(a.localeDateLocale) + ' ' + d.toLocaleTimeString(a.localeDateLocale, { hour:'2-digit', minute:'2-digit' })
   }
 
   return (
@@ -343,19 +348,19 @@ function ProjectListModal({ onClose, onLoad }) {
         display:'flex', flexDirection:'column', boxShadow:'0 24px 80px rgba(0,0,0,0.7)' }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:18 }}>
           <h3 style={{ fontFamily:'var(--font-display)', fontWeight:300, fontSize:18 }}>
-            📂 Apri progetto salvato
+            {a.openProjectModalTitle}
           </h3>
           <button onClick={onClose}
             style={{ background:'none', border:'1px solid var(--border)', color:'var(--text3)',
               borderRadius:5, width:28, height:28, cursor:'pointer', fontSize:14 }}>✕</button>
         </div>
         <div style={{ flex:1, overflowY:'auto' }}>
-          {loading && <p style={{ color:'var(--text3)', fontSize:13, textAlign:'center', padding:20 }}>Caricamento…</p>}
+          {loading && <p style={{ color:'var(--text3)', fontSize:13, textAlign:'center', padding:20 }}>{a.projectLoading}</p>}
           {!loading && projects.length === 0 && (
             <div style={{ textAlign:'center', padding:32 }}>
-              <p style={{ fontSize:13, color:'var(--text3)' }}>Nessun progetto salvato.</p>
+              <p style={{ fontSize:13, color:'var(--text3)' }}>{a.noProjectsSaved}</p>
               <p style={{ fontSize:11, color:'var(--text3)', marginTop:6 }}>
-                Salva un progetto dall'anteprima di stampa con il pulsante 💾.
+                {a.noProjectsHint}
               </p>
             </div>
           )}
@@ -370,7 +375,7 @@ function ProjectListModal({ onClose, onLoad }) {
               onMouseLeave={e => e.currentTarget.style.background='var(--bg3)'}>
               <div style={{ flex:1 }}>
                 <p style={{ fontWeight:600, fontSize:13, color:'var(--text)', marginBottom:2 }}>
-                  {proj.name || 'Progetto senza nome'}
+                  {proj.name || a.unnamedProject}
                 </p>
                 <p style={{ fontSize:11, color:'var(--text3)', fontFamily:'var(--font-mono)' }}>
                   {proj.album_name && `${proj.album_name} · `}{fmt(proj.updated_at || proj.created_at)}
@@ -400,11 +405,15 @@ export default function AlbumsPage() {
   const [showProjects, setShowProjects]     = useState(false)  // open project list modal
   const abortRef = useRef(null)  // AbortController for the current request
   const [error, setError]                 = useState(null)
+  const [stadiaKeySet, setStadiaKeySet]   = useState(false)
   const [search, setSearch]               = useState('')
   const [showConfig, setShowConfig]       = useState(false)
   const [genConfig, setGenConfig]         = useState(loadConfig)
 
+  const LAST_PROFILE_KEY = 'photobook_last_profile'
+
   useEffect(() => {
+    axios.get('/api/config').then(r => setStadiaKeySet(!!r.data.stadia_api_key_set)).catch(() => {})
     Promise.all([
       axios.get('/api/albums').catch(() => ({ data: [] })),
       axios.get('/api/profiles').catch(() => ({ data: [] })),
@@ -412,7 +421,11 @@ export default function AlbumsPage() {
       const sorted = (ar.data || []).sort((a,b) => new Date(b.endDate||0) - new Date(a.endDate||0))
       setAlbums(sorted)
       setProfiles(pr.data || [])
-      if (pr.data?.length) setSelectedProfile(pr.data[0].id)
+      if (pr.data?.length) {
+        const lastPid = localStorage.getItem(LAST_PROFILE_KEY)
+        const match = lastPid && pr.data.find(p => p.id === lastPid)
+        setSelectedProfile(match ? lastPid : pr.data[0].id)
+      }
     }).catch(e => setError(e.message)).finally(() => setLoading(false))
   }, [])
 
@@ -601,7 +614,7 @@ export default function AlbumsPage() {
       sessionStorage.setItem('photobook_project_id', pid)
       navigate('/preview')
     } catch (e) {
-      alert('Errore nel caricamento del progetto: ' + (e.response?.data?.detail || e.message))
+      alert(a.loadProjectError(e.response?.data?.detail || e.message))
     }
   }
 
@@ -621,14 +634,14 @@ export default function AlbumsPage() {
   if (loading) return (
     <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', flexDirection:'column', gap:12 }}>
       <span className="spinner" style={{ width:32, height:32 }}/>
-      <p className="text-muted">Caricamento album da Immich…</p>
+      <p className="text-muted">{a.loading}</p>
     </div>
   )
 
   if (error) return (
     <div className="empty-state" style={{ padding:'80px 40px' }}>
       <div className="icon">⚠️</div>
-      <h3>Errore di connessione</h3>
+      <h3>{a.errorTitle}</h3>
       <p>{error}</p>
     </div>
   )
@@ -636,8 +649,8 @@ export default function AlbumsPage() {
   return (
     <>
       <div className="page-header">
-        <h2>Seleziona album</h2>
-        <p>Scegli un album da Immich e genera il layout del fotolibro</p>
+        <h2>{a.title}</h2>
+        <p>{a.subtitle}</p>
       </div>
 
       <div className="page-body">
@@ -646,15 +659,15 @@ export default function AlbumsPage() {
 
             {/* Profile selector */}
             <div style={{ flex:1, minWidth:200 }}>
-              <label className="form-label">Profilo di stampa</label>
+              <label className="form-label">{a.profileLabel}</label>
               {profiles.length === 0 ? (
                 <p className="text-sm" style={{ color:'var(--accent)' }}>
-                  ⚠ Nessun profilo.{' '}
-                  <a href="#" onClick={()=>navigate('/profiles')} style={{ color:'var(--gold)' }}>Creane uno →</a>
+                  {a.noProfiles}{' '}
+                  <a href="#" onClick={()=>navigate('/profiles')} style={{ color:'var(--gold)' }}>{a.noProfilesLink}</a>
                 </p>
               ) : (
                 <select className="form-select" value={selectedProfile}
-                  onChange={e=>setSelectedProfile(e.target.value)}>
+                  onChange={e => { setSelectedProfile(e.target.value); localStorage.setItem(LAST_PROFILE_KEY, e.target.value) }}>
                   {profiles.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               )}
@@ -662,8 +675,8 @@ export default function AlbumsPage() {
 
             {/* Search */}
             <div style={{ flex:2, minWidth:200 }}>
-              <label className="form-label">Cerca album</label>
-              <input className="form-input" placeholder="Cerca per nome…"
+              <label className="form-label">{a.searchLabel}</label>
+              <input className="form-input" placeholder={a.searchPlaceholder}
                 value={search} onChange={e=>setSearch(e.target.value)}/>
             </div>
 
@@ -676,7 +689,7 @@ export default function AlbumsPage() {
                     padding:'8px 14px', background:'var(--bg3)', border:'1px solid var(--border)',
                     borderRadius:7, fontSize:13, color:'var(--text2)' }}>
                     <span className="spinner" style={{ width:14, height:14, flexShrink:0 }}/>
-                    Generazione…
+                    {a.generating}
                   </div>
                   {/* Cancel button */}
                   <button
@@ -693,7 +706,7 @@ export default function AlbumsPage() {
                       transition: 'all 0.15s',
                       fontWeight: cancelConfirm ? 600 : 400,
                     }}>
-                    {cancelConfirm ? '⚠ Sei sicuro? Clicca ancora per annullare' : '✕ Annulla'}
+                    {cancelConfirm ? a.cancelGenerateConfirm : a.cancelGenerateBtn}
                   </button>
                 </div>
               ) : (
@@ -701,19 +714,19 @@ export default function AlbumsPage() {
                   <button className="btn btn-primary btn-lg"
                     onClick={generate}
                     disabled={!selectedAlbums.length || !selectedProfile}>
-                    📖 Genera album
+                    {a.generateBtn2}
                   </button>
                   <button className="btn btn-lg"
                     onClick={() => setShowProjects(true)}
-                    title="Apri un layout di stampa già salvato">
-                    📂 Apri progetto
+                    title={a.openProjectTitle}>
+                    {a.openProjectBtn}
                   </button>
                 </div>
               )}
 
               {/* Gear icon with badge */}
               <div style={{ position:'relative' }}>
-                <button className="btn btn-sm" title="Opzioni generazione"
+                <button className="btn btn-sm" title={a.configTitle}
                   onClick={() => setShowConfig(true)}
                   style={{ width:36, height:36, fontSize:16, padding:0,
                     display:'flex', alignItems:'center', justifyContent:'center',
@@ -755,21 +768,21 @@ export default function AlbumsPage() {
           {/* Active options summary */}
           {activeCount > 0 && (
             <div style={{ marginTop:10, display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
-              <span style={{ fontSize:11, color:'var(--text3)' }}>Opzioni attive:</span>
+              <span style={{ fontSize:11, color:'var(--text3)' }}>{a.activeOptions}</span>
               {genConfig.temporal_clustering && (
-                <span className="tag">Clustering {genConfig.event_gap_min}min</span>
+                <span className="tag">{a.tagClustering(genConfig.event_gap_min)}</span>
               )}
-              {genConfig.favorites_full_page && <span className="tag">★ Pagina intera</span>}
-              {!genConfig.face_crop && <span className="tag">Volti: off</span>}
+              {genConfig.favorites_full_page && <span className="tag">{a.tagFavorites}</span>}
+              {!genConfig.face_crop && <span className="tag">{a.tagFacesOff}</span>}
               {genConfig.quality_filter && (
-                <span className="tag">Qualità ≥{(genConfig.min_quality*100).toFixed(0)}%</span>
+                <span className="tag">{a.tagQuality((genConfig.min_quality*100).toFixed(0))}</span>
               )}
               {genConfig.remove_duplicates && (
-                <span className="tag">Dedup {(genConfig.similarity_threshold*100).toFixed(0)}%</span>
+                <span className="tag">{a.tagDedup((genConfig.similarity_threshold*100).toFixed(0))}</span>
               )}
-              {!genConfig.rhythm_alternation && <span className="tag">Ritmo: off</span>}
+              {!genConfig.rhythm_alternation && <span className="tag">{a.tagRhythmOff}</span>}
               {genConfig.density !== 75 && (
-                <span className="tag">Densità {genConfig.density}%</span>
+                <span className="tag">{a.tagDensity(genConfig.density)}</span>
               )}
             </div>
           )}
@@ -779,7 +792,7 @@ export default function AlbumsPage() {
         {filtered.length === 0 ? (
           <div className="empty-state">
             <div className="icon">🖼️</div>
-            <h3>Nessun album trovato</h3>
+            <h3>{a.noAlbums}</h3>
             <p>{albums.length===0?a.noAlbumsImmich:a.noAlbumsSearch(search)}</p>
           </div>
         ) : (
@@ -803,7 +816,7 @@ export default function AlbumsPage() {
                 </div>
                 <div className="album-info">
                   <h3>{album.albumName}</h3>
-                  <p>{album.assetCount||0} foto{album.endDate?` · ${album.endDate?.slice(0,7)}`:''}</p>
+                  <p>{a.photos(album.assetCount||0)}{album.endDate?` · ${album.endDate?.slice(0,7)}`:''}</p>
                 </div>
               </div>
             ))}

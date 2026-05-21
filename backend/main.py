@@ -149,32 +149,42 @@ async def auth_status():
 class ConfigModel(BaseModel):
     immich_url: str
     api_key: str
+    stadia_api_key: str = ""
+
+def _mask_key(key: str) -> str:
+    if not key:
+        return ""
+    return key[:4] + "•" * max(0, len(key) - 8) + key[-4:] if len(key) > 8 else "•" * len(key)
 
 @app.get("/api/config")
 async def get_config():
     if CONFIG_PATH.exists():
         data = json.loads(CONFIG_PATH.read_text())
-        # Never expose the real key to the frontend — return a masked version.
-        # The frontend only needs to know if a key is set (to show "configured").
         key = data.get("api_key", "")
         if key:
-            visible = key[:4] + "•" * max(0, len(key) - 8) + key[-4:] if len(key) > 8 else "•" * len(key)
-            data["api_key"] = visible
+            data["api_key"] = _mask_key(key)
             data["api_key_set"] = True
         else:
             data["api_key_set"] = False
+        skey = data.get("stadia_api_key", "")
+        if skey:
+            data["stadia_api_key"] = _mask_key(skey)
+            data["stadia_api_key_set"] = True
+        else:
+            # Also check env var
+            data["stadia_api_key_set"] = bool(os.getenv("STADIA_MAPS_API_KEY", "").strip())
         return data
-    return {"immich_url": "", "api_key": "", "api_key_set": False}
+    return {"immich_url": "", "api_key": "", "api_key_set": False,
+            "stadia_api_key": "", "stadia_api_key_set": bool(os.getenv("STADIA_MAPS_API_KEY", "").strip())}
 
 @app.post("/api/config")
 async def save_config(cfg: ConfigModel):
-    # If the frontend sends back a masked key (e.g. "sk-••••••1234"),
-    # keep the real existing key instead of overwriting with the masked one.
     payload = cfg.dict()
+    existing = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
     if "•" in payload.get("api_key", ""):
-        if CONFIG_PATH.exists():
-            existing = json.loads(CONFIG_PATH.read_text())
-            payload["api_key"] = existing.get("api_key", "")
+        payload["api_key"] = existing.get("api_key", "")
+    if "•" in payload.get("stadia_api_key", ""):
+        payload["stadia_api_key"] = existing.get("stadia_api_key", "")
     CONFIG_PATH.write_text(json.dumps(payload, indent=2))
     return {"ok": True}
 
@@ -342,14 +352,17 @@ async def get_album(album_id: str):
 # ─── PHOTO PROXY ─────────────────────────────────────────────────────────────
 
 @app.get("/api/thumb/{asset_id}")
-async def get_thumbnail(asset_id: str, size: str = "thumbnail"):
-    cache_key = CACHE_DIR / f"{asset_id}_{size}.jpg"
+async def get_thumbnail(asset_id: str, size: str = "thumbnail", t: str = ""):
+    safe_t = t[:20].replace(":", "").replace("/", "").replace(".", "") if t else ""
+    suffix = f"_{safe_t}" if safe_t else ""
+    cache_key = CACHE_DIR / f"{asset_id}_{size}{suffix}.jpg"
+    _NC = {"Cache-Control": "no-cache, must-revalidate"}
     if cache_key.exists():
-        return Response(cache_key.read_bytes(), media_type="image/jpeg")
+        return Response(cache_key.read_bytes(), media_type="image/jpeg", headers=_NC)
     try:
         data = await ic.get_asset_thumbnail(asset_id, size)
         cache_key.write_bytes(data)
-        return Response(data, media_type="image/jpeg")
+        return Response(data, media_type="image/jpeg", headers=_NC)
     except Exception as e:
         raise HTTPException(502, f"Thumb error: {e}")
 
@@ -417,72 +430,42 @@ async def generate_layout_new(req: GenerateRequest, _rl: None = Depends(rl_gener
     needs_faces = cfg.get("face_crop", True)
     needs_dedup = cfg.get("remove_duplicates", False)
     needs_favs  = cfg.get("favorites_full_page", False)
-    if needs_faces or needs_dedup or needs_favs:
-        enrich_fields = []
-        if needs_faces:
-            enrich_fields.extend(["people", "faces"])
-        if needs_dedup:
-            enrich_fields.extend(["checksum"])
-        enrich_fields.append("thumbhash")  # always: needed for thumbnail cache invalidation
-        if needs_favs:
-            enrich_fields.append("isFavorite")
-        assets = await ic.enrich_assets(assets, fields=enrich_fields)
+    # thumbhash always needed for thumbnail cache invalidation (detects Immich UI rotations)
+    enrich_fields = ["thumbhash"]
+    if needs_faces:
+        enrich_fields.extend(["people", "faces"])
+    if needs_dedup:
+        enrich_fields.extend(["checksum"])
+    if needs_favs:
+        enrich_fields.append("isFavorite")
+    assets = await ic.enrich_assets(assets, fields=enrich_fields)
 
-    # Fetch+cache thumbnails (60KB each): always, for display-dim correction and dedup.
-    # Immich thumbnails always reflect UI edits (rotation, crop) unlike raw EXIF data.
-    # Primary invalidation: thumbhash comparison (changes on rotation/edit in Immich UI).
-    # Fallback: updatedAt timestamp comparison.
-    from datetime import datetime, timezone as _tz
-    for a in assets:
-        aid = a["id"]
-        cache_path = CACHE_DIR / f"{aid}_thumbnail.jpg"
-        hash_path  = CACHE_DIR / f"{aid}_thumbhash.txt"
-        if not cache_path.exists():
-            continue
-        asset_thumbhash = (a.get("thumbhash") or "").strip()
-        if asset_thumbhash:
-            stored = hash_path.read_text().strip() if hash_path.exists() else ""
-            if stored != asset_thumbhash:
-                cache_path.unlink(missing_ok=True)
-                hash_path.unlink(missing_ok=True)
-                (CACHE_DIR / f"{aid}_preview.jpg").unlink(missing_ok=True)
-        else:
-            # No thumbhash in response: fall back to updatedAt
-            updated_at = a.get("updatedAt") or ""
-            if updated_at:
-                try:
-                    asset_ts = datetime.fromisoformat(updated_at.replace("Z", "+00:00")).timestamp()
-                    if asset_ts > cache_path.stat().st_mtime + 5:
-                        cache_path.unlink(missing_ok=True)
-                        hash_path.unlink(missing_ok=True)
-                        (CACHE_DIR / f"{aid}_preview.jpg").unlink(missing_ok=True)
-                except Exception:
-                    pass
-
-    missing_ids = [a["id"] for a in assets
-                   if not (CACHE_DIR / f"{a['id']}_thumbnail.jpg").exists()]
-    if missing_ids:
-        fetched = await ic.fetch_assets_bulk(missing_ids, hires=False, max_concurrent=8)
-        for aid, data in fetched.items():
+    # Always re-fetch all thumbnails from Immich during layout generation.
+    # Immich UI edits (rotation, crop) are reflected in the thumbnail immediately
+    # but thumbhash/updatedAt may not update synchronously — so cache invalidation
+    # heuristics are unreliable. Re-fetching in parallel is fast (~60KB each).
+    fetched_thumbs = await ic.fetch_assets_bulk(
+        [a["id"] for a in assets], hires=False, max_concurrent=8
+    )
+    for asset in assets:
+        aid  = asset["id"]
+        data = fetched_thumbs.get(aid)
+        if data:
+            cache_path = CACHE_DIR / f"{aid}_thumbnail.jpg"
             try:
-                (CACHE_DIR / f"{aid}_thumbnail.jpg").write_bytes(data)
-                # Store thumbhash for future invalidation comparisons
-                th = next((a.get("thumbhash","") for a in assets if a["id"]==aid), "")
+                cache_path.write_bytes(data)
+                th = (asset.get("thumbhash") or "").strip()
                 if th:
-                    (CACHE_DIR / f"{aid}_thumbhash.txt").write_text(th.strip())
+                    (CACHE_DIR / f"{aid}_thumbhash.txt").write_text(th)
             except Exception:
                 pass
-    for asset in assets:
-        cache_path = CACHE_DIR / f"{asset['id']}_thumbnail.jpg"
-        if cache_path.exists():
             try:
                 from PIL import Image
                 import io as _io
-                img_bytes = cache_path.read_bytes()
-                with Image.open(_io.BytesIO(img_bytes)) as _img:
+                with Image.open(_io.BytesIO(data)) as _img:
                     asset["_thumb_w"], asset["_thumb_h"] = _img.size
                 if needs_dedup:
-                    asset["_dhash"] = _compute_dhash(img_bytes)
+                    asset["_dhash"] = _compute_dhash(data)
             except Exception:
                 pass
 
@@ -686,7 +669,9 @@ async def smart_layout_endpoint(req: SmartLayoutRequest):
 
     await asyncio.gather(*[fetch_thumb(a["id"]) for a in assets])
 
-    pages, suggested_transforms = smart_generate_layout(assets, photo_cache)
+    from album_generator import _get_page_ar as _compute_page_ar
+    page_ar = _compute_page_ar(profile)
+    pages, suggested_transforms = smart_generate_layout(assets, photo_cache, page_ar)
     locations = smart_extract_gps(assets)
 
     return {
@@ -915,6 +900,21 @@ async def export_book(req: ExportRequest, _rl: None = Depends(rl_export)):
             _set_progress(pct, f"Composizione PDF pagina {page_idx}/{total_pages}…")
 
         _set_progress(75, f"Composizione PDF ({n_pages} pagine)…")
+        # Collect per-slot map images from disk cache
+        map_cache: dict[str, bytes] = {}
+        for _p in req.pages:
+            for _it in _p.get("items", []):
+                _item = _it.get("item")
+                if _item and _item.get("type") == "map":
+                    _mk = _item.get("map_key")
+                    if _mk:
+                        _cp = CACHE_DIR / f"{_mk}.png"
+                        try:
+                            if _cp.exists():
+                                map_cache[_mk] = _cp.read_bytes()
+                        except Exception:
+                            pass
+
         try:
             import gc
             pdf_bytes = await asyncio.wait_for(
@@ -926,6 +926,7 @@ async def export_book(req: ExportRequest, _rl: None = Depends(rl_export)):
                         divider_maps=divider_maps,
                         on_page_progress=_pdf_progress,
                         pan_offsets=req.photo_transforms,
+                        map_cache=map_cache,
                     )
                 ),
                 timeout=pdf_timeout,
@@ -1013,7 +1014,7 @@ async def delete_preset(kind: str, name: str):
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.9.3"}
+    return {"status": "ok", "version": "0.9.5"}
 
 # ─── PROJECTS (save / load / list / delete) ──────────────────────────────────
 

@@ -2,6 +2,19 @@ import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import axios from 'axios'
 import { useT } from './i18n.jsx'
+import { version as APP_VERSION } from '../package.json'
+
+const GITHUB_REPO = 'romaruss/ImmichPhotoBook'
+
+function isNewer(current, latest) {
+  const a = current.split('.').map(Number)
+  const b = latest.split('.').map(Number)
+  for (let i = 0; i < 3; i++) {
+    if ((b[i] || 0) > (a[i] || 0)) return true
+    if ((b[i] || 0) < (a[i] || 0)) return false
+  }
+  return false
+}
 import ConfigPage from './pages/ConfigPage'
 import HomePage from './pages/HomePage'
 import ProfilesPage from './pages/ProfilesPage'
@@ -14,6 +27,7 @@ function Shell() {
   const location = useLocation()
   const [connected, setConnected] = useState(null)
   const [navCollapsed, setNavCollapsed] = useState(false)
+  const [latestVersion, setLatestVersion] = useState(null)
 
   useEffect(() => {
     axios.get('/api/config/test')
@@ -21,8 +35,17 @@ function Shell() {
       .catch(() => setConnected(false))
   }, [])
 
+  useEffect(() => {
+    fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`)
+      .then(r => r.json())
+      .then(d => { const tag = (d.tag_name || '').replace(/^v/, ''); if (tag) setLatestVersion(tag) })
+      .catch(() => {})
+  }, [])
+
+  const updateAvailable = latestVersion && isNewer(APP_VERSION, latestVersion)
+
   const NAV = [
-    { path: '/',         label: 'Home',           icon: '🏠' },
+    { path: '/',         label: t.nav.home,       icon: '🏠' },
     { path: '/config',   label: t.nav.config,     icon: '⚙️' },
     { path: '/profiles', label: t.nav.profiles,   icon: '📐' },
     { path: '/albums',   label: t.nav.albums,     icon: '🖼️' },
@@ -45,7 +68,7 @@ function Shell() {
         {/* Collapse toggle tab — always visible on the right edge */}
         <button
           onClick={() => setNavCollapsed(c => !c)}
-          title={navCollapsed ? 'Espandi menu' : 'Comprimi menu'}
+          title={navCollapsed ? t.nav.expandMenu : t.nav.collapseMenu}
           style={{
             position: 'absolute',
             right: 0, top: '50%', transform: 'translateY(-50%)',
@@ -86,12 +109,27 @@ function Shell() {
 
         {!navCollapsed && (
           <div className="sidebar-bottom">
-            <span className={`conn-dot${connected === true ? ' ok' : connected === false ? ' err' : ''}`}/>
-            {connected === true
-              ? t.connection.connected
-              : connected === false
-              ? t.connection.disconnected
-              : t.connection.checking}
+            <div className="sidebar-conn">
+              <span className={`conn-dot${connected === true ? ' ok' : connected === false ? ' err' : ''}`}/>
+              {connected === true
+                ? t.connection.connected
+                : connected === false
+                ? t.connection.disconnected
+                : t.connection.checking}
+            </div>
+            <div className="sidebar-version">
+              <span>v{APP_VERSION}</span>
+              {updateAvailable && (
+                <a
+                  href={`https://github.com/${GITHUB_REPO}/releases/latest`}
+                  target="_blank" rel="noreferrer"
+                  className="update-badge"
+                  title={t.app.updateTooltip(latestVersion)}
+                >
+                  ↑ v{latestVersion}
+                </a>
+              )}
+            </div>
           </div>
         )}
       </aside>

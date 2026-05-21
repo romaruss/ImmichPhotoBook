@@ -163,6 +163,7 @@ function MiniPage({ page, profile, scale=0.07 }) {
 
 // ── Photo picker modal ────────────────────────────────────────────────────────
 function PhotoPickerModal({ assets, allAlbumAssets, albumIdx, albumNames, usageMap, onSelect, onClose }) {
+  const tp = useT().preview
   const [filter,setFilter] = useState('')
   const isMulti = allAlbumAssets?.length > 1
   const [showAll,setShowAll] = useState(false)
@@ -174,7 +175,7 @@ function PhotoPickerModal({ assets, allAlbumAssets, albumIdx, albumNames, usageM
       onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:'var(--bg2)',borderRadius:12,padding:24,width:680,maxHeight:'82vh',display:'flex',flexDirection:'column',border:'1px solid var(--border)',boxShadow:'0 24px 80px rgba(0,0,0,0.6)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-          <h3 style={{fontFamily:'var(--font-display)',fontWeight:300,fontSize:20}}>Seleziona foto</h3>
+          <h3 style={{fontFamily:'var(--font-display)',fontWeight:300,fontSize:20}}>{tp.pickerTitle}</h3>
           <button className="btn btn-sm btn-ghost" onClick={onClose}>✕</button>
         </div>
         {isMulti&&(
@@ -187,11 +188,11 @@ function PhotoPickerModal({ assets, allAlbumAssets, albumIdx, albumNames, usageM
             <button onClick={()=>setShowAll(true)}
               style={{flex:1,padding:'4px 8px',borderRadius:4,border:'none',cursor:'pointer',fontSize:12,
                 background:showAll?'var(--gold)':'transparent',color:showAll?'#0a0a0c':'var(--text)',fontWeight:showAll?700:400}}>
-              Tutti gli album
+              {tp.pickerAllAlbums}
             </button>
           </div>
         )}
-        <input className="form-input" placeholder="Cerca per nome file…" style={{marginBottom:10}} value={filter} onChange={e=>setFilter(e.target.value)} autoFocus/>
+        <input className="form-input" placeholder={tp.pickerSearch} style={{marginBottom:10}} value={filter} onChange={e=>setFilter(e.target.value)} autoFocus/>
         <div style={{overflowY:'auto',flex:1}}>
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:8}}>
             {filtered.map(asset=>{
@@ -210,7 +211,7 @@ function PhotoPickerModal({ assets, allAlbumAssets, albumIdx, albumNames, usageM
               )
             })}
           </div>
-          {filtered.length===0&&<p style={{textAlign:'center',padding:32,color:'var(--text3)'}}>Nessun risultato</p>}
+          {filtered.length===0&&<p style={{textAlign:'center',padding:32,color:'var(--text3)'}}>{tp.pickerNoResults}</p>}
         </div>
       </div>
     </div>
@@ -342,7 +343,7 @@ function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, o
       display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative',
     }}>
       <button onClick={onToggle}
-        title={open ? 'Chiudi pannello foto' : 'Apri pannello foto'}
+        title={open ? tp.collapsePanel : tp.expandPanel}
         style={{
           position:'absolute', left:0, top:'50%', transform:'translateY(-50%)',
           width:16, height:48, background:'var(--bg3)',
@@ -361,7 +362,7 @@ function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, o
           <div style={{padding:'10px 8px 6px',borderBottom:'1px solid var(--border)',flexShrink:0}}>
             <p style={{fontSize:10,fontFamily:'var(--font-mono)',color:'var(--text3)',
               textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:5}}>
-              Foto ({assets.length})
+              {tp.panelPhotos(assets.length)}
             </p>
 
             {/* Status filter */}
@@ -369,7 +370,7 @@ function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, o
               {[['all',tp.panelAll],['unused',tp.panelUnused],['multi',tp.panelMulti]].map(([k,l])=>(
                 <button key={k}
                   onClick={()=>setStatusFilter(k)}
-                  title={k==='all'?tp.panelAll:k==='unused'?'Non usate':'Usate più volte'}
+                  title={l}
                   style={{
                     flex:1, fontSize:10, padding:'3px 0',
                     border:`1px solid ${statusFilter===k?'var(--gold)':'var(--border)'}`,
@@ -382,7 +383,7 @@ function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, o
 
             {/* Search */}
             <input className="form-input" style={{fontSize:10,padding:'4px 7px'}}
-              placeholder="Cerca…" value={filter} onChange={e=>setFilter(e.target.value)}/>
+              placeholder={tp.panelSearch} value={filter} onChange={e=>setFilter(e.target.value)}/>
 
             {/* View mode */}
             <div style={{display:'flex',gap:3,marginTop:5}}>
@@ -555,12 +556,21 @@ function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, o
 function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems, pageNum }) {
   const t = useT(); const tp = t.preview
   const dragRef = useRef(null)
+  const [ctrlHeld, setCtrlHeld] = useState(false)
   const _m = marginsForPage(profile, pageNum)
   const uw = pw - _m.ml - _m.mr
   const uh = ph - _m.mt - _m.mb
   const MIN_PCT   = 8
   const EPS       = 1.5
   const SNAP_DIST = 3   // % — snap outer edge back to 0/100 within this distance
+
+  useEffect(() => {
+    const down = e => { if (e.key === 'Control') setCtrlHeld(true) }
+    const up   = e => { if (e.key === 'Control') setCtrlHeld(false) }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup',   up)
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
+  }, [])
 
   const groupClose = (vals) => {
     if (!vals.length) return []
@@ -705,12 +715,57 @@ function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems, pageNum })
     window.addEventListener('mousemove',onMove); window.addEventListener('mouseup',onUp)
   }
 
+  const startMove = (e, slotIdx) => {
+    e.preventDefault(); e.stopPropagation()
+    const snap = items.map(id => ({...id, slot: {...id.slot}}))
+    const usableW = uw * scale, usableH = uh * scale
+    dragRef.current = { move: true, slotIdx, startX: e.clientX, startY: e.clientY, snap }
+    const fmt = v => parseFloat(v.toFixed(2))
+    const onMove = me => {
+      if (!dragRef.current?.move) return
+      const { slotIdx: si, snap: s0 } = dragRef.current
+      const ns = s0.map(id => ({...id, slot: {...id.slot}}))
+      const dx = ((me.clientX - dragRef.current.startX) / usableW) * 100
+      const dy = ((me.clientY - dragRef.current.startY) / usableH) * 100
+      ns[si].slot.x = fmt(Math.max(0, Math.min(100 - s0[si].slot.w, s0[si].slot.x + dx)))
+      ns[si].slot.y = fmt(Math.max(0, Math.min(100 - s0[si].slot.h, s0[si].slot.y + dy)))
+      onUpdateItems(ns)
+      dragRef.current.startX = me.clientX
+      dragRef.current.startY = me.clientY
+      dragRef.current.snap = ns
+    }
+    const onUp = () => { dragRef.current=null; window.removeEventListener('mousemove',onMove); window.removeEventListener('mouseup',onUp) }
+    window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp)
+  }
+
   const sx = pct => (_m.ml + (pct/100)*uw) * scale
   const sy = pct => (_m.mt + (pct/100)*uh) * scale
   const GRAB = 16, PILL = 28, THICK = 10
 
   return (
     <>
+      {/* Per-slot Ctrl+drag move overlays */}
+      {items.map((id, si) => {
+        const s = id.slot; if (!s) return null
+        const x1 = sx(s.x), y1 = sy(s.y)
+        const x2 = sx(s.x + s.w), y2 = sy(s.y + s.h)
+        return (
+          <div key={`move-${si}`}
+            onMouseDown={e => { if (e.ctrlKey) startMove(e, si) }}
+            title={ctrlHeld ? `Trascina per spostare slot ${si+1}` : undefined}
+            style={{
+              position: 'absolute', left: x1, top: y1,
+              width: x2-x1, height: y2-y1,
+              zIndex: 38,
+              cursor: ctrlHeld ? 'grab' : 'default',
+              pointerEvents: ctrlHeld ? 'auto' : 'none',
+              background: ctrlHeld ? 'rgba(212,170,90,0.06)' : 'transparent',
+              boxSizing: 'border-box',
+              border: ctrlHeld ? '1.5px dashed rgba(212,170,90,0.5)' : 'none',
+            }}
+          />
+        )
+      })}
       {handles.map((h, hi) => {
         const col  = h.isOuter ? 'rgba(100,190,220,0.85)' : 'rgba(212,170,90,0.85)'
         const pill = h.isOuter ? '#5bbcd8'                : 'var(--gold)'
@@ -842,9 +897,9 @@ function PhotoSlot({ item, slotW, slotH, transform, photoAR,
       {/* Photo image */}
       <img
         draggable={false}
-        src={`/api/thumb/${item.asset_id}?size=preview`}
+        src={`/api/thumb/${item.asset_id}?size=preview&t=${item._updated_at||''}`}
         alt="" loading="lazy"
-        style={{...imgStyle, cursor: isEditMode ? 'move' : 'default'}}
+        style={{...imgStyle, imageOrientation:'from-image', cursor: isEditMode ? 'move' : 'default'}}
       />
 
       {/* Pan overlay — solo in edit mode */}
@@ -1451,11 +1506,11 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
           <div style={{width:'60%',height:1,background:(cs.accent_color||'#d4aa5a')+'99'}}/>
           <p style={{fontFamily:'var(--font-display)',fontWeight:300,
             fontSize:Math.round(24*scale*2),color:cs.text_color||'#f0ede6',textAlign:'center',padding:'0 16px'}}>
-            {page._album_info?.albumName||'Album'}
+            {tp.sectionCover(page._album_info?.albumName)}
           </p>
           {page._album_info?.assetCount>0 && (
             <p style={{fontSize:Math.round(11*scale*2),color:cs.accent_color||'#d4aa5a',fontFamily:'var(--font-mono)'}}>
-              {page._album_info.assetCount} foto
+              {tp.photoCount(page._album_info.assetCount)}
             </p>
           )}
           <div style={{width:'60%',height:1,background:(cs.accent_color||'#d4aa5a')+'99'}}/>
@@ -1509,7 +1564,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
             />
           </div>
         </div>
-        <p className="text-xs text-muted" style={{marginTop:6}}>Clicca sulla pagina per modificare</p>
+        <p className="text-xs text-muted" style={{marginTop:6}}>{tp.coverClickToEdit}</p>
       </div>
       {dividerEditOpen && (
         <DividerEditorModal
@@ -1542,9 +1597,9 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
             title={tp.addSlot} onClick={addSlot}>+ Slot</button>
           {page.page_type_id==='custom' && onSaveCustomLayout && (
             <button className="btn btn-sm btn-primary" style={{fontSize:10,flexShrink:0,padding:'3px 8px'}}
-              title="Salva come nuovo tipo di pagina nel profilo"
+              title={tp.saveCustomLayoutTitle}
               onClick={()=>onSaveCustomLayout(page.items.map(i=>i.slot))}>
-              💾 Salva
+              {tp.saveBtn}
             </button>
           )}
         </div>
@@ -1666,11 +1721,11 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                   <button className="slot-menu-btn" title="Azioni" onClick={e=>{
                     e.stopPropagation()
                     const canRemove=page.items.length>1
-                    openSlotMenu(e, 'Slot vuoto', [
-                      {icon:'📷', label:'Scegli foto', action:()=>{ onOpenPicker(pageIdx,slotIdx); setSlotMenu(null) }, color:'#d4aa5a'},
-                      {icon:'💬', label:'Didascalia',  action:()=>{ onAddCaption(pageIdx,slotIdx); setSlotMenu(null) }, color:'#4a9edd'},
-                      {icon:'🗺',  label:'Mappa GPS',  action:()=>{ onAddMap?.(pageIdx,slotIdx); setSlotMenu(null) }, color:'#5dbd7a'},
-                      ...(canRemove?[{icon:'✕', label:'Rimuovi slot', action:()=>{ removeSlot(slotIdx); setSlotMenu(null) }, danger:true}]:[]),
+                    openSlotMenu(e, tp.slotMenuEmpty, [
+                      {icon:'📷', label:tp.choosePhoto, action:()=>{ onOpenPicker(pageIdx,slotIdx); setSlotMenu(null) }, color:'#d4aa5a'},
+                      {icon:'💬', label:tp.addCaptionBtn, action:()=>{ onAddCaption(pageIdx,slotIdx); setSlotMenu(null) }, color:'#4a9edd'},
+                      {icon:'🗺',  label:tp.slotAddMap,  action:()=>{ onAddMap?.(pageIdx,slotIdx); setSlotMenu(null) }, color:'#5dbd7a'},
+                      ...(canRemove?[{icon:'✕', label:tp.removeSlot, action:()=>{ removeSlot(slotIdx); setSlotMenu(null) }, danger:true}]:[]),
                     ])
                   }}>⋮</button>
                 </>
@@ -1708,9 +1763,9 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                 return (
                   <div style={{ position:'absolute', bottom:3, left:3, display:'flex', gap:2,
                     pointerEvents:'auto', zIndex:4 }}>
-                    {isFav  && <span title="Preferita in Immich" style={{ fontSize:sz,
+                    {isFav  && <span title={tp.favoriteTitle} style={{ fontSize:sz,
                       lineHeight:1, filter:'drop-shadow(0 1px 2px rgba(0,0,0,0.8))', cursor:'default' }}>⭐</span>}
-                    {hasDesc && <span title="Ha didascalia in Immich" style={{ fontSize:sz,
+                    {hasDesc && <span title={tp.captionBadgeTitle} style={{ fontSize:sz,
                       lineHeight:1, filter:'drop-shadow(0 1px 2px rgba(0,0,0,0.8))', cursor:'default' }}>💬</span>}
                   </div>
                 )
@@ -1720,9 +1775,9 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
               {item?.type==='photo'&&!isPhotoEdit&&(
                 <button className="slot-menu-btn" title="Azioni" onClick={e=>{
                   e.stopPropagation()
-                  openSlotMenu(e, 'Foto', [
+                  openSlotMenu(e, tp.slotMenuPhoto, [
                     {icon:'🖐', label: mismatch ? tp.repositionMismatch : tp.reposition, action:()=>{ setEditPhotoSlot(slotIdx); setSlotMenu(null) }, color: mismatch?'#e05050':undefined},
-                    {icon:'🗺', label:'Inserisci mappa GPS', action:()=>{ onAddMap?.(pageIdx,slotIdx); setSlotMenu(null) }},
+                    {icon:'🗺', label:tp.slotInsertMap, action:()=>{ onAddMap?.(pageIdx,slotIdx); setSlotMenu(null) }},
                     {icon:'🔄', label:tp.changePhoto, action:()=>{ onOpenPicker(pageIdx,slotIdx); setSlotMenu(null) }},
                     {icon:'💬', label:tp.addCaption, action:()=>{ onAddCaption(pageIdx,slotIdx); setSlotMenu(null) }},
                     {icon:'🗑️', label:tp.removePhoto, action:()=>{ removeItem(slotIdx); setSlotMenu(null) }, danger:true},
@@ -1747,10 +1802,10 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
               {item?.type==='map'&&!isMapEdit&&(
                 <button className="slot-menu-btn" title="Azioni" onClick={e=>{
                   e.stopPropagation()
-                  openSlotMenu(e, 'Mappa', [
-                    {icon:'🖐', label:'Riposiziona / zoom mappa', action:()=>{ setEditMapSlot(slotIdx); setSlotMenu(null) }},
-                    {icon:'🔄', label:'Rigenera mappa', action:()=>{ onAddMap?.(pageIdx,slotIdx); setSlotMenu(null) }},
-                    {icon:'🗑️', label:'Rimuovi mappa', action:()=>{ removeItem(slotIdx); setSlotMenu(null) }, danger:true},
+                  openSlotMenu(e, tp.slotMenuMap, [
+                    {icon:'🖐', label:tp.mapReposition, action:()=>{ setEditMapSlot(slotIdx); setSlotMenu(null) }},
+                    {icon:'🔄', label:tp.mapRegenerate, action:()=>{ onAddMap?.(pageIdx,slotIdx); setSlotMenu(null) }},
+                    {icon:'🗑️', label:tp.mapRemove, action:()=>{ removeItem(slotIdx); setSlotMenu(null) }, danger:true},
                   ])
                 }}>⋮</button>
               )}
@@ -1958,7 +2013,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                             {/* Bg color */}
                             <span style={{fontSize:9,color:'rgba(255,255,255,0.35)',flexShrink:0}}>BG</span>
                             {BG_PRESETS.map(c=>(
-                              <button key={c} onMouseDown={e=>{e.preventDefault();setCs('bg',c)}} title={c==='transparent'?'Trasparente':c}
+                              <button key={c} onMouseDown={e=>{e.preventDefault();setCs('bg',c)}} title={c==='transparent'?tp.transparentColor:c}
                                 style={{width:18,height:18,flexShrink:0,borderRadius:4,cursor:'pointer',padding:0,
                                   background:c==='transparent'?'none':c,
                                   border:bg===c?'2px solid #f0c040':c==='transparent'?'1px dashed rgba(255,255,255,0.3)':'1px solid rgba(255,255,255,0.18)'}}/>
@@ -2026,13 +2081,13 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                       overflow:'hidden',display:'-webkit-box',
                       WebkitLineClamp:Math.max(2,Math.floor(r.h/((size||13)*(lineHeight||1.6)))),
                       WebkitBoxOrient:'vertical'}}>
-                      {item.text||<span style={{opacity:0.32}}>clicca per scrivere…</span>}
+                      {item.text||<span style={{opacity:0.32}}>{tp.captionPlaceholder}</span>}
                     </span>
                     <button className="slot-menu-btn" title="Azioni" onClick={e=>{
                       e.stopPropagation()
-                      openSlotMenu(e, 'Didascalia', [
-                        {icon:'✏️', label:'Modifica', action:()=>{ setEditCaptionIdx(slotIdx); setSlotMenu(null) }},
-                        {icon:'🗑️', label:'Rimuovi', action:()=>{ removeItem(slotIdx); setSlotMenu(null) }, danger:true},
+                      openSlotMenu(e, tp.slotMenuCaption, [
+                        {icon:'✏️', label:tp.editCaption, action:()=>{ setEditCaptionIdx(slotIdx); setSlotMenu(null) }},
+                        {icon:'🗑️', label:tp.captionRemove, action:()=>{ removeItem(slotIdx); setSlotMenu(null) }, danger:true},
                       ])
                     }}>⋮</button>
                   </div>
@@ -2146,6 +2201,7 @@ export default function PreviewPage() {
   const [leftSidebarOpen,setLeftSidebarOpen]=useState(true)
   const [coverEditOpen,setCoverEditOpen]=useState(false)  // false | tab-index 0-4
   const [exportModalOpen,setExportModalOpen]=useState(false)
+  const [exportSettings,setExportSettings]=useState(null)
   const [highlightedAsset,setHighlightedAsset]=useState(null)  // asset_id highlighted in right panel
   const highlightRef=useRef(null)  // ref to highlighted element in AlbumPanel
 
@@ -2223,6 +2279,7 @@ export default function PreviewPage() {
   useEffect(()=>{ liveLayoutRef.current = layout },[layout])
   useEffect(()=>{ liveTransformsRef.current = photoTransforms },[photoTransforms])
   useEffect(()=>{ livePageRef.current = currentPage },[currentPage])
+  useEffect(()=>{ setExportSettings(null) },[layout?.profile])
 
   // Auto-save every 5 minutes to the currently open project (or a new draft)
   useEffect(()=>{
@@ -2265,7 +2322,7 @@ export default function PreviewPage() {
         seen.add(item.asset_id)
         const img=new Image()
         img.onload=()=>setPhotoAspects(prev=>({...prev,[item.asset_id]:img.naturalWidth/img.naturalHeight}))
-        img.src=`/api/thumb/${item.asset_id}?size=preview`
+        img.src=`/api/thumb/${item.asset_id}?size=preview&t=${item._updated_at||''}`
       }
     }))
   },[layout])
@@ -2443,7 +2500,7 @@ export default function PreviewPage() {
     const desc=(exif.description||asset.description||'').trim()
     const photoItem={type:'photo',asset_id:asset.id,description:desc,
       originalFileName:asset.originalFileName||'',localDateTime:asset.localDateTime||'',
-      exif,has_caption:!!desc}
+      exif,has_caption:!!desc,_updated_at:asset.updatedAt||''}
     setLayout(prev=>{
       const pages=prev.pages.map((pg,pi)=>pi!==pageIdx?pg:{
         ...pg,items:pg.items.map((id,si)=>si!==slotIdx?id:{...id,item:photoItem})
@@ -2567,7 +2624,7 @@ export default function PreviewPage() {
           const desc=(exif.description||asset.description||'').trim()
           return{type:'photo',asset_id:asset.id,description:desc,
             originalFileName:asset.originalFileName||'',
-            localDateTime:asset.localDateTime||'',exif,has_caption:!!desc}
+            localDateTime:asset.localDateTime||'',exif,has_caption:!!desc,_updated_at:asset.updatedAt||''}
         })
 
       // Unisci: prima foto dalle pagine rest, poi le non usate; dedup
@@ -2686,6 +2743,7 @@ export default function PreviewPage() {
         body_paper_gsm: settingsOverride.body_paper_gsm,
         export_dpi:     settingsOverride.export_dpi,
         color_profile:  settingsOverride.color_profile,
+        crop_marks:     settingsOverride.crop_marks,
       } : null
       const isCoverSeparate = settingsOverride?.export_cover_separate ?? baseCover?.export_cover_separate
       const r=await axios.post('/api/export',{
@@ -2736,9 +2794,9 @@ export default function PreviewPage() {
   if(!layout) return(
     <div className="empty-state" style={{padding:'80px 40px'}}>
       <div className="icon">📖</div>
-      <h3>Nessun layout generato</h3>
-      <p>Vai alla pagina Album, seleziona un album e un profilo, poi clicca "Genera layout"</p>
-      <button className="btn btn-primary mt-4" onClick={()=>navigate('/albums')}>→ Vai agli album</button>
+      <h3>{tp.noLayout}</h3>
+      <p>{tp.noLayoutHint}</p>
+      <button className="btn btn-primary mt-4" onClick={()=>navigate('/albums')}>{tp.goToAlbums}</button>
     </div>
   )
 
@@ -2759,7 +2817,7 @@ export default function PreviewPage() {
         {/* Collapse toggle — always visible */}
         <button
           onClick={()=>setLeftSidebarOpen(o=>!o)}
-          title={leftSidebarOpen ? 'Comprimi sidebar' : 'Espandi sidebar'}
+          title={leftSidebarOpen ? tp.collapseLeft : tp.expandLeft}
           style={{
             position:'absolute', right:0, top:'50%', transform:'translateY(-50%)',
             width:16, height:48,
@@ -2775,29 +2833,29 @@ export default function PreviewPage() {
         {leftSidebarOpen && (<>
         <div className="preview-sidebar-header">
           <h3 style={{fontFamily:'var(--font-display)',fontWeight:300,fontSize:16,marginBottom:2}}>{album.albumName}</h3>
-          <p className="text-xs text-muted font-mono">{pages.length} pag. · {album.assetCount} foto</p>
-          <p className="text-xs text-muted" style={{marginTop:2}}>← → per navigare</p>
+          <p className="text-xs text-muted font-mono">{tp.pages(pages.length)} · {tp.photoCount(album.assetCount)}</p>
+          <p className="text-xs text-muted" style={{marginTop:2}}>{tp.keyboard}</p>
           {/* Save / Load project */}
           <div style={{display:'flex',gap:6,marginTop:8}}>
             <button className="btn" style={{flex:1,fontSize:10,justifyContent:'center',padding:'6px 4px'}}
-              onClick={()=>setProjectModal('save')} title="Salva il progetto corrente">
-              💾 Salva
+              onClick={()=>setProjectModal('save')} title={tp.saveProjectTitle}>
+              {tp.saveBtn}
             </button>
             <button className="btn" style={{flex:1,fontSize:10,justifyContent:'center',padding:'6px 4px'}}
-              onClick={()=>setProjectModal('load')} title="Apri un progetto salvato">
-              📂 Apri
+              onClick={()=>setProjectModal('load')} title={tp.openProjectTitle2}>
+              {tp.openBtn}
             </button>
           </div>
           {lastAutoSave && (
             <p style={{fontSize:9,color:'var(--text3)',textAlign:'center',marginTop:3,fontFamily:'var(--font-mono)'}}>
-              ⏱ {lastAutoSave.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})}
+              ⏱ {lastAutoSave.toLocaleTimeString(t.albums.localeDateLocale,{hour:'2-digit',minute:'2-digit'})}
             </p>
           )}
           {/* Recalculate menu */}
           <div style={{position:'relative',marginTop:8}}>
             <button ref={recalcBtnRef} className="btn w-full" style={{fontSize:11,justifyContent:'space-between'}}
               onClick={()=>setRecalcMenuOpen(o=>!o)} disabled={recalculating}>
-              <span>{recalculating?<><span className="spinner" style={{width:11,height:11}}/> Ricalcolo…</>:'🔄 Ricalcola'}</span>
+              <span>{recalculating?<><span className="spinner" style={{width:11,height:11}}/> {tp.recalcBusy}</>:tp.recalcBtn}</span>
               <span style={{opacity:0.5,fontSize:10}}>{recalcMenuOpen?'▲':'▼'}</span>
             </button>
             {recalcMenuOpen && !recalculating && (
@@ -2814,7 +2872,7 @@ export default function PreviewPage() {
           {layout?.page_logs?.length > 0 && (
             <button className="btn w-full" style={{fontSize:11,marginTop:6}}
               onClick={()=>setLogViewerOpen(true)}>
-              🔍 Log impaginazione
+              {tp.logBtn}
             </button>
           )}
         </div>
@@ -2831,7 +2889,7 @@ export default function PreviewPage() {
               const bg=(cover.front||DEFAULT_COVER_FRONT).bg||'#0a0a0e'
               return <div style={{width:tw,height:th,background:bg,borderRadius:2,flexShrink:0}}/>
             })()}
-            <span className="text-xs text-muted">Fronte</span>
+            <span className="text-xs text-muted">{tp.panelFront}</span>
           </div>
 
           {/* Page thumbs — draggable for reorder */}
@@ -2859,7 +2917,7 @@ export default function PreviewPage() {
               <MiniPage page={page} profile={profile} scale={0.052}/>
               <div style={{flex:1,minWidth:0}}>
                 <p className="text-xs" style={{color:'var(--text2)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                  {page.page_type?.label||'Pagina'}
+                  {page.page_type?.label||tp.pageFallback}
                 </p>
                 <p className="text-xs text-muted">
                   {page.items.filter(i=>i.item?.type==='photo').length}📷 {page.items.filter(i=>i.item?.type==='caption').length}💬 {page.items.filter(i=>!i.item).length}○
@@ -2868,14 +2926,14 @@ export default function PreviewPage() {
               {/* Per-page actions */}
               <div style={{display:'flex',flexDirection:'column',gap:2,flexShrink:0}}>
                 <button
-                  title="Aggiungi pagina vuota dopo"
+                  title={tp.addPageHint}
                   onClick={e=>{e.stopPropagation();addPage(idx)}}
                   style={{width:16,height:16,background:'none',border:'1px solid var(--border)',
                     borderRadius:3,cursor:'pointer',fontSize:10,color:'var(--text3)',lineHeight:1,
                     display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>
                 {pages.length>1&&(
                   <button
-                    title="Elimina pagina"
+                    title={tp.removePageHint}
                     onClick={e=>{e.stopPropagation();removePage(idx)}}
                     style={{width:16,height:16,background:'none',border:'1px solid var(--border)',
                       borderRadius:3,cursor:'pointer',fontSize:10,color:'#e05050',lineHeight:1,
@@ -2911,18 +2969,19 @@ export default function PreviewPage() {
               const bg=(cover.back||DEFAULT_COVER_BACK).bg||'#0a0a0e'
               return <div style={{width:tw,height:th,background:bg,borderRadius:2,flexShrink:0}}/>
             })()}
-            <span className="text-xs text-muted">Quarta</span>
+            <span className="text-xs text-muted">{tp.panelBack}</span>
           </div>
         </div>
         <div style={{padding:'8px 12px',borderTop:'1px solid var(--border)',flexShrink:0}}>
           <button className="btn btn-primary w-full" style={{justifyContent:'center',fontSize:12}}
             onClick={()=>setExportModalOpen(true)} disabled={exporting}>
-            {exporting ? <><span className="spinner" style={{width:12,height:12}}/> Esportazione…</> : '📄 Esporta'}
+            {exporting ? <><span className="spinner" style={{width:12,height:12}}/> {tp.exporting}</> : tp.exportBtn}
           </button>
         </div>
         {exportModalOpen && (
           <ExportModal layout={layout} onExport={exportBook} exporting={exporting}
-            onClose={()=>setExportModalOpen(false)}/>
+            onClose={()=>setExportModalOpen(false)}
+            externalSettings={exportSettings} onSettingsChange={setExportSettings}/>
         )}
 
         </>)}
@@ -3023,27 +3082,27 @@ export default function PreviewPage() {
 
           <div style={{display:'flex',alignItems:'center',gap:6,flex:1,justifyContent:'center'}}>
             <span className="text-sm font-mono text-muted" style={{minWidth:90,textAlign:'center'}}>
-              {currentPage===-1?'Copertina fronte':currentPage===pages.length?'Quarta di copertina':tp.pageOf(currentPage+1, pages.length)}
+              {currentPage===-1?tp.coverFronte:currentPage===pages.length?tp.coverQuarta:tp.pageOf(currentPage+1, pages.length)}
             </span>
             {/* View zoom */}
             <div style={{display:'flex',gap:2,alignItems:'center',background:'var(--bg3)',borderRadius:5,padding:'2px 6px',border:'1px solid var(--border)'}}>
               <button onClick={()=>setViewZoom(z=>Math.max(zoomMin,+(z-zoomStep).toFixed(2)))}
                 style={{padding:'1px 6px',border:'none',background:'transparent',cursor:'pointer',fontSize:14,color:'var(--text)',lineHeight:1}}
-                title="Riduci">−</button>
-              <span onClick={()=>setViewZoom(1)} title="Ripristina 100%"
+                title={tp.zoomOut}>−</button>
+              <span onClick={()=>setViewZoom(1)} title={tp.resetZoom}
                 style={{fontSize:10,fontFamily:'monospace',color:'var(--text2)',minWidth:34,textAlign:'center',cursor:'pointer'}}>
                 {Math.round(viewZoom*100)}%</span>
               <button onClick={()=>setViewZoom(z=>Math.min(zoomMax,+(z+zoomStep).toFixed(2)))}
                 style={{padding:'1px 6px',border:'none',background:'transparent',cursor:'pointer',fontSize:14,color:'var(--text)',lineHeight:1}}
-                title="Ingrandisci">+</button>
+                title={tp.zoomIn}>+</button>
             </div>
             {/* Spread / Single toggle */}
             <div style={{display:'flex',gap:1,background:'var(--bg3)',borderRadius:5,padding:2,border:'1px solid var(--border)'}}>
-              <button onClick={()=>{setSpreadView(false);localStorage.setItem('pb_spreadView','false')}} title="Pagina singola"
+              <button onClick={()=>{setSpreadView(false);localStorage.setItem('pb_spreadView','false')}} title={tp.singlePageTitle}
                 style={{padding:'2px 7px',borderRadius:3,border:'none',cursor:'pointer',fontSize:12,
                   background:!spreadView?'var(--bg)':'transparent',
                   color:!spreadView?'var(--text)':'var(--text3)'}}>□</button>
-              <button onClick={()=>{setSpreadView(true);localStorage.setItem('pb_spreadView','true')}} title="Doppia pagina"
+              <button onClick={()=>{setSpreadView(true);localStorage.setItem('pb_spreadView','true')}} title={tp.spreadTitle}
                 style={{padding:'2px 7px',borderRadius:3,border:'none',cursor:'pointer',fontSize:12,
                   background:spreadView?'var(--bg)':'transparent',
                   color:spreadView?'var(--text)':'var(--text3)'}}>□□</button>
@@ -3054,8 +3113,8 @@ export default function PreviewPage() {
               style={{fontSize:10,padding:'2px 8px',
                 opacity: currentPage>=0&&currentPage<pages.length ? 1 : 0.3,
                 pointerEvents: currentPage>=0&&currentPage<pages.length ? 'auto' : 'none'}}
-              title={currentPage>=0&&currentPage<pages.length ? "Aggiungi pagina vuota dopo questa" : "Non disponibile su copertina/quarta"}
-              onClick={()=>currentPage>=0&&currentPage<pages.length&&addPage(currentPage)}>+ Pag.</button>
+              title={currentPage>=0&&currentPage<pages.length ? tp.addPageHint : tp.notOnCover}
+              onClick={()=>currentPage>=0&&currentPage<pages.length&&addPage(currentPage)}>{tp.addPage}</button>
             <button className="btn btn-sm"
               style={{fontSize:10,padding:'2px 8px',
                 background: currentPage>=0&&currentPage<pages.length&&pages.length>1 ? 'rgba(197,74,74,0.12)' : 'var(--bg3)',
@@ -3063,8 +3122,8 @@ export default function PreviewPage() {
                 color: currentPage>=0&&currentPage<pages.length&&pages.length>1 ? '#e05050' : 'var(--text3)',
                 opacity: currentPage>=0&&currentPage<pages.length&&pages.length>1 ? 1 : 0.3,
                 pointerEvents: currentPage>=0&&currentPage<pages.length&&pages.length>1 ? 'auto' : 'none'}}
-              title={currentPage>=0&&currentPage<pages.length&&pages.length>1 ? "Elimina questa pagina" : "Non disponibile su copertina/quarta"}
-              onClick={()=>currentPage>=0&&currentPage<pages.length&&pages.length>1&&removePage(currentPage)}>× Elim.</button>
+              title={currentPage>=0&&currentPage<pages.length&&pages.length>1 ? tp.removePageHint : tp.notOnCover}
+              onClick={()=>currentPage>=0&&currentPage<pages.length&&pages.length>1&&removePage(currentPage)}>{tp.removePage}</button>
           </div>
 
           <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 10px'}}
@@ -3122,10 +3181,10 @@ export default function PreviewPage() {
                   )}
                 </div>
                 <p className="text-xs text-muted">
-                  {isFronte ? 'Copertina fronte' : 'Quarta di copertina'}
-                  {' · '}dorso stimato {spMm} mm
+                  {isFronte ? tp.coverFronte : tp.coverQuarta}
+                  {' · '}{tp.coverSpineEstimated(spMm)}
                 </p>
-                <p className="text-xs text-muted">Clicca sulla pagina per modificare</p>
+                <p className="text-xs text-muted">{tp.coverClickToEdit}</p>
               </div>
             )
           })()
@@ -3172,8 +3231,8 @@ export default function PreviewPage() {
                       onClick={()=>setCoverEditOpen(1)}/>
                   )}
                   {leftPage
-                    ? <p className="text-xs text-muted mt-1">Pagina {leftIdx+1}</p>
-                    : <><p className="text-xs text-muted mt-1">Seconda di copertina</p><p className="text-xs text-muted">Clicca sulla pagina per modificare</p></>}
+                    ? <p className="text-xs text-muted mt-1">{tp.pageFallback} {leftIdx+1}</p>
+                    : <><p className="text-xs text-muted mt-1">{tp.coverSeconda}</p><p className="text-xs text-muted">{tp.coverClickToEdit}</p></>}
                 </div>
                 {/* Right page */}
                 <div style={{display:'flex',flexDirection:'column',alignItems:'center',flex:1,minWidth:0}}>
@@ -3205,8 +3264,8 @@ export default function PreviewPage() {
                       onClick={()=>setCoverEditOpen(2)}/>
                   )}
                   {rightPage
-                    ? <p className="text-xs text-muted mt-1">Pagina {rightIdx+1}</p>
-                    : <><p className="text-xs text-muted mt-1">Terza di copertina</p><p className="text-xs text-muted">Clicca sulla pagina per modificare</p></>}
+                    ? <p className="text-xs text-muted mt-1">{tp.pageFallback} {rightIdx+1}</p>
+                    : <><p className="text-xs text-muted mt-1">{tp.coverTerza}</p><p className="text-xs text-muted">{tp.coverClickToEdit}</p></>}
                 </div>
               </div>
             )
