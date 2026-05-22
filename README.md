@@ -14,7 +14,7 @@
 
 > 🤖 **Entirely designed and coded with [Claude AI](https://claude.ai) (Anthropic).**
 
-🎭 **[Try the live demo](https://immichphotobook-demo.up.railway.app)** — sample data, no Immich needed
+🎭 **[Try the live demo](https://photobook-studio-production.up.railway.app)** — sample data, no Immich needed
 
 </div>
 
