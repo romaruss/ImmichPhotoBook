@@ -25,6 +25,9 @@ DATA_DIR = Path("/data")
 PROFILES_DIR = DATA_DIR / "profiles"
 CONFIG_PATH  = DATA_DIR / "config.json"
 
+# ─── DEMO MODE ───────────────────────────────────────────────────────────────
+_DEMO_MODE: bool = os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes")
+
 # ─── AUTH & RATE LIMITING ─────────────────────────────────────────────────────
 # Set PHOTOBOOK_TOKEN env var to enable auth. If unset, access is unrestricted.
 # Generate a token: python3 -c "import secrets; print(secrets.token_hex(32))"
@@ -180,6 +183,8 @@ async def get_config():
 
 @app.post("/api/config")
 async def save_config(cfg: ConfigModel):
+    if _DEMO_MODE:
+        return {"ok": True}
     payload = cfg.dict()
     existing = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
     if "•" in payload.get("api_key", ""):
@@ -192,7 +197,7 @@ async def save_config(cfg: ConfigModel):
 @app.get("/api/config/test")
 async def test_config():
     ok = await ic.test_connection()
-    return {"connected": ok}
+    return {"connected": ok, "demo": _DEMO_MODE}
 
 CUSTOM_SIZES_PATH = DATA_DIR / "custom_sizes.json"
 
@@ -1025,7 +1030,7 @@ _APP_VERSION = _read_version()
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": _APP_VERSION}
+    return {"status": "ok", "version": _APP_VERSION, "demo": _DEMO_MODE}
 
 @app.get("/api/deep-config")
 async def get_deep_config():

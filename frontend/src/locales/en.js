@@ -7,6 +7,8 @@ export default {
     subtitle:      'Studio',
     tagline:       'Print Designer',
     updateTooltip: (v) => `New version available: v${v}`,
+    demoBanner:    'Demo mode — sample data, no real Immich.',
+    demoBannerLink:'Install your own copy',
   },
   nav: {
     config:      'Configuration',

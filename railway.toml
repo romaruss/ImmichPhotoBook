@@ -1,0 +1,6 @@
+[build]
+builder = "dockerfile"
+
+[deploy]
+# Railway sets $PORT automatically; DEMO_MODE=true must be added in Railway dashboard
+startCommand = "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
