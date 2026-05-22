@@ -29,10 +29,12 @@ function Shell() {
   const [connected, setConnected] = useState(null)
   const [navCollapsed, setNavCollapsed] = useState(false)
   const [latestVersion, setLatestVersion] = useState(null)
+  const [demoMode, setDemoMode] = useState(false)
+  const [demoDismissed, setDemoDismissed] = useState(false)
 
   useEffect(() => {
     axios.get('/api/config/test')
-      .then(r => setConnected(r.data.connected))
+      .then(r => { setConnected(r.data.connected); setDemoMode(!!r.data.demo) })
       .catch(() => setConnected(false))
   }, [])
 
@@ -136,6 +138,25 @@ function Shell() {
         )}
       </aside>
       <main className="main-content">
+        {demoMode && !demoDismissed && (
+          <div style={{
+            background: 'rgba(212,170,90,0.12)', borderBottom: '1px solid rgba(212,170,90,0.35)',
+            padding: '9px 20px', display: 'flex', alignItems: 'center', gap: 10,
+            fontSize: 12, color: 'var(--text2)',
+          }}>
+            <span>🎭</span>
+            <span>{t.app.demoBanner}</span>
+            <a href="https://github.com/romaruss/ImmichPhotoBook" target="_blank" rel="noreferrer"
+              style={{ color: 'var(--gold)', marginLeft: 4 }}>
+              {t.app.demoBannerLink} →
+            </a>
+            <button onClick={() => setDemoDismissed(true)}
+              style={{ marginLeft: 'auto', background: 'none', border: 'none',
+                color: 'var(--text3)', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>
+              ✕
+            </button>
+          </div>
+        )}
         <Routes>
           <Route path="/"         element={<HomePage />} />
           <Route path="/config"   element={<ConfigPage />} />

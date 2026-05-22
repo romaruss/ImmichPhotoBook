@@ -21,7 +21,7 @@ export const LOCALES = {
 }
 
 const STORAGE_KEY = 'photobook_lang'
-const DEFAULT_LANG = 'it'
+const DEFAULT_LANG = 'en'
 
 // Deep merge: English fills in any key missing from a custom locale
 function merge(base, override) {

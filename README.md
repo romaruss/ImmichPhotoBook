@@ -14,6 +14,8 @@
 
 > 🤖 **Entirely designed and coded with [Claude AI](https://claude.ai) (Anthropic).**
 
+🎭 **[Try the live demo](https://photobook-studio-production.up.railway.app)** — sample data, no Immich needed
+
 </div>
 
 ---
@@ -22,34 +24,25 @@
 
 PhotoBook Studio connects to your [Immich](https://immich.app) instance, reads your albums and photo metadata (GPS, descriptions, faces), and lets you compose a photobook through an interactive browser-based editor. When you're done, it exports a print-ready PDF or an editable SVG ZIP.
 
-**Workflow:**
-
 ```
 Configuration → Print profile → Generate layout → Edit preview → Export PDF / SVG
 ```
-
-1. **Configuration** — enter your Immich URL and API key
-2. **Print profile** — choose page size, orientation, margins, bleed, page layouts, caption style, GPS map style
-3. **Generate** — Smart Layout (automatic, face-aware, GPS maps) or manual
-4. **Preview** — drag photos between slots, edit captions, add/remove/reorder pages, edit cover and dividers inline
-5. **Export** — PDF (print shop ready) or SVG ZIP (editable in Illustrator / Inkscape / Scribus)
 
 ---
 
 ## Main features
 
-- **Immich integration** — reads albums, EXIF, GPS, face data, descriptions; shows favourite ⭐ and caption 💬 badges; syncs captions back to Immich
-- **Smart Layout** — groups photos by time event, ranks by quality, face-aware crop, fills empty slots with GPS cluster maps
-- **Print profiles** — page sizes (A4, A3, A5, 20×20, 30×30, custom), portrait/landscape, margins, bleed, duplex; preset save/load
-- **Page type editor** — visual layout editor with drag-to-resize/move slots, snap, z-index; 50 preset layouts included
-- **Interactive preview** — swap/pan/zoom photos, inline caption editor, 2-page spread view, add/remove pages, recalculate
-- **Album dividers** — customisable text, GPS map, photo slot, separator lines; drag layers; preset save/load
-- **Cover editor** — front, back, spine, inside pages with independent backgrounds, photos and text
-- **GPS maps** — static map slots with configurable tile style, marker and route; Stadia Maps or OSM fallback
-- **Projects** — save and resume named projects across sessions
-- **Export options** — DPI (150–600), colour profile (sRGB, FOGRA39…), crop marks, spread or separate cover PDF
-- **Advanced config** — all internal algorithm parameters (quality weights, face detection thresholds, scoring penalties, map defaults) editable via UI without restart
-- **Localisation** — Italian and English built-in
+- **Immich integration** — albums, EXIF, GPS, faces, descriptions, favourites; caption sync back to Immich
+- **Smart Layout** — automatic grouping by time/event, face-aware crop, GPS cluster maps
+- **Print profiles** — A4/A3/A5/20×20/30×30/custom, portrait/landscape, margins, bleed; preset save/load
+- **Page type editor** — drag-to-resize slots, snap, 50 built-in layouts
+- **Interactive preview** — swap/pan/zoom photos, inline captions, 2-page spread, add/remove pages
+- **Cover & dividers** — front/back/spine editor, album dividers with GPS map and photo slots
+- **GPS maps** — Stadia Maps or OpenStreetMap fallback
+- **Export** — PDF (DPI 150–600, colour profiles, crop marks) or SVG ZIP
+- **Projects** — save and resume named projects
+- **Advanced config** — all algorithm parameters editable from the UI without restart
+- **Localisation** — Italian and English
 
 ---
 
@@ -99,8 +92,9 @@ Then use `http://immich_server:2283` as the Immich URL in Configuration.
 |---|---|---|
 | `PHOTOBOOK_PORT` | `7180` | Host port |
 | `PHOTOBOOK_TOKEN` | *(empty)* | Access token — leave empty to disable auth |
-| `STADIA_MAPS_API_KEY` | *(empty)* | For Stadia Maps tile styles (optional, OSM fallback if absent) |
+| `STADIA_MAPS_API_KEY` | *(empty)* | Stadia Maps tile styles (optional, OSM fallback if absent) |
 | `TZ` | `Europe/Rome` | Timezone |
+| `DEMO_MODE` | *(empty)* | Set to `true` to run with built-in sample data (no Immich needed) |
 
 Persistent data is stored in a Docker volume mounted at `/data` inside the container.
 

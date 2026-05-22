@@ -25,6 +25,9 @@ DATA_DIR = Path("/data")
 PROFILES_DIR = DATA_DIR / "profiles"
 CONFIG_PATH  = DATA_DIR / "config.json"
 
+# ─── DEMO MODE ───────────────────────────────────────────────────────────────
+_DEMO_MODE: bool = os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes")
+
 # ─── AUTH & RATE LIMITING ─────────────────────────────────────────────────────
 # Set PHOTOBOOK_TOKEN env var to enable auth. If unset, access is unrestricted.
 # Generate a token: python3 -c "import secrets; print(secrets.token_hex(32))"
@@ -85,6 +88,88 @@ def _compute_dhash(img_bytes: bytes, size: int = 8) -> int | None:
 
 for d in [PROFILES_DIR, CACHE_DIR, EXPORT_DIR, PROJECTS_DIR, PRESETS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
+
+if _DEMO_MODE:
+    def _s(*slots): return list(slots)
+    _caption_style = {"font": "Georgia, serif", "size": 13, "color": "#e8e6e0",
+                      "align": "center", "valign": "center", "bg": "#111116",
+                      "italic": True, "bold": False}
+    _pt_portrait = [
+        {"id": "00000000-0000-0001-0001-000000000001", "label": "1 photo",
+         "slots": _s({"x":0,"y":0,"w":100,"h":100})},
+        {"id": "00000000-0000-0001-0001-000000000002", "label": "2 horizontal",
+         "slots": _s({"x":0,"y":0,"w":100,"h":50},{"x":0,"y":50,"w":100,"h":50})},
+        {"id": "00000000-0000-0001-0001-000000000003", "label": "2 vertical",
+         "slots": _s({"x":0,"y":0,"w":50,"h":100},{"x":50,"y":0,"w":50,"h":100})},
+        {"id": "00000000-0000-0001-0001-000000000004", "label": "3 top + 2 bottom",
+         "slots": _s({"x":0,"y":0,"w":100,"h":55},{"x":0,"y":55,"w":50,"h":45},{"x":50,"y":55,"w":50,"h":45})},
+        {"id": "00000000-0000-0001-0001-000000000005", "label": "2 top + big bottom",
+         "slots": _s({"x":0,"y":0,"w":50,"h":40},{"x":50,"y":0,"w":50,"h":40},{"x":0,"y":40,"w":100,"h":60})},
+        {"id": "00000000-0000-0001-0001-000000000006", "label": "big left + 2 right",
+         "slots": _s({"x":0,"y":0,"w":60,"h":100},{"x":60,"y":0,"w":40,"h":50},{"x":60,"y":50,"w":40,"h":50})},
+        {"id": "00000000-0000-0001-0001-000000000007", "label": "2 left + big right",
+         "slots": _s({"x":0,"y":0,"w":40,"h":50},{"x":0,"y":50,"w":40,"h":50},{"x":40,"y":0,"w":60,"h":100})},
+        {"id": "00000000-0000-0001-0001-000000000008", "label": "4 grid",
+         "slots": _s({"x":0,"y":0,"w":50,"h":50},{"x":50,"y":0,"w":50,"h":50},
+                     {"x":0,"y":50,"w":50,"h":50},{"x":50,"y":50,"w":50,"h":50})},
+        {"id": "00000000-0000-0001-0001-000000000009", "label": "big left + 3 right",
+         "slots": _s({"x":0,"y":0,"w":62,"h":100},{"x":62,"y":0,"w":38,"h":34},
+                     {"x":62,"y":34,"w":38,"h":33},{"x":62,"y":67,"w":38,"h":33})},
+        {"id": "00000000-0000-0001-0001-000000000010", "label": "big top + 3 bottom",
+         "slots": _s({"x":0,"y":0,"w":100,"h":55},{"x":0,"y":55,"w":34,"h":45},
+                     {"x":34,"y":55,"w":33,"h":45},{"x":67,"y":55,"w":33,"h":45})},
+        {"id": "00000000-0000-0001-0001-000000000011", "label": "5 — top + 2×2",
+         "slots": _s({"x":0,"y":0,"w":100,"h":44},{"x":0,"y":44,"w":50,"h":28},
+                     {"x":50,"y":44,"w":50,"h":28},{"x":0,"y":72,"w":50,"h":28},{"x":50,"y":72,"w":50,"h":28})},
+        {"id": "00000000-0000-0001-0001-000000000012", "label": "6 grid 2×3",
+         "slots": _s({"x":0,"y":0,"w":50,"h":34},{"x":50,"y":0,"w":50,"h":34},
+                     {"x":0,"y":34,"w":50,"h":33},{"x":50,"y":34,"w":50,"h":33},
+                     {"x":0,"y":67,"w":50,"h":33},{"x":50,"y":67,"w":50,"h":33})},
+        {"id": "00000000-0000-0001-0001-000000000013", "label": "3 columns",
+         "slots": _s({"x":0,"y":0,"w":34,"h":100},{"x":34,"y":0,"w":33,"h":100},{"x":67,"y":0,"w":33,"h":100})},
+    ]
+    _pt_landscape = [
+        {"id": "00000000-0000-0001-0002-000000000001", "label": "1 photo",
+         "slots": _s({"x":0,"y":0,"w":100,"h":100})},
+        {"id": "00000000-0000-0001-0002-000000000002", "label": "2 vertical",
+         "slots": _s({"x":0,"y":0,"w":50,"h":100},{"x":50,"y":0,"w":50,"h":100})},
+        {"id": "00000000-0000-0001-0002-000000000003", "label": "2 horizontal",
+         "slots": _s({"x":0,"y":0,"w":100,"h":50},{"x":0,"y":50,"w":100,"h":50})},
+        {"id": "00000000-0000-0001-0002-000000000004", "label": "big left + 2 right",
+         "slots": _s({"x":0,"y":0,"w":60,"h":100},{"x":60,"y":0,"w":40,"h":50},{"x":60,"y":50,"w":40,"h":50})},
+        {"id": "00000000-0000-0001-0002-000000000005", "label": "2 left + big right",
+         "slots": _s({"x":0,"y":0,"w":40,"h":50},{"x":0,"y":50,"w":40,"h":50},{"x":40,"y":0,"w":60,"h":100})},
+        {"id": "00000000-0000-0001-0002-000000000006", "label": "big top + 2 bottom",
+         "slots": _s({"x":0,"y":0,"w":100,"h":60},{"x":0,"y":60,"w":50,"h":40},{"x":50,"y":60,"w":50,"h":40})},
+        {"id": "00000000-0000-0001-0002-000000000007", "label": "2 top + big bottom",
+         "slots": _s({"x":0,"y":0,"w":50,"h":42},{"x":50,"y":0,"w":50,"h":42},{"x":0,"y":42,"w":100,"h":58})},
+        {"id": "00000000-0000-0001-0002-000000000008", "label": "4 grid",
+         "slots": _s({"x":0,"y":0,"w":50,"h":50},{"x":50,"y":0,"w":50,"h":50},
+                     {"x":0,"y":50,"w":50,"h":50},{"x":50,"y":50,"w":50,"h":50})},
+        {"id": "00000000-0000-0001-0002-000000000009", "label": "big left + 3 right",
+         "slots": _s({"x":0,"y":0,"w":62,"h":100},{"x":62,"y":0,"w":38,"h":34},
+                     {"x":62,"y":34,"w":38,"h":33},{"x":62,"y":67,"w":38,"h":33})},
+        {"id": "00000000-0000-0001-0002-000000000010", "label": "big top + 3 bottom",
+         "slots": _s({"x":0,"y":0,"w":100,"h":55},{"x":0,"y":55,"w":34,"h":45},
+                     {"x":34,"y":55,"w":33,"h":45},{"x":67,"y":55,"w":33,"h":45})},
+        {"id": "00000000-0000-0001-0002-000000000011", "label": "5 — 3 top + 2 bottom",
+         "slots": _s({"x":0,"y":0,"w":34,"h":55},{"x":34,"y":0,"w":33,"h":55},{"x":67,"y":0,"w":33,"h":55},
+                     {"x":0,"y":55,"w":50,"h":45},{"x":50,"y":55,"w":50,"h":45})},
+        {"id": "00000000-0000-0001-0002-000000000012", "label": "6 grid 3×2",
+         "slots": _s({"x":0,"y":0,"w":34,"h":50},{"x":34,"y":0,"w":33,"h":50},{"x":67,"y":0,"w":33,"h":50},
+                     {"x":0,"y":50,"w":34,"h":50},{"x":34,"y":50,"w":33,"h":50},{"x":67,"y":50,"w":33,"h":50})},
+        {"id": "00000000-0000-0001-0002-000000000013", "label": "3 rows",
+         "slots": _s({"x":0,"y":0,"w":100,"h":34},{"x":0,"y":34,"w":100,"h":33},{"x":0,"y":67,"w":100,"h":33})},
+    ]
+    _base = {"duplex": False, "margin_mm": 10.0, "bleed": False, "bleed_mm": 3.0, "gap_mm": 3.0,
+             "caption_style": _caption_style, "export_dpi": 300, "color_profile": "srgb",
+             "crop_marks": False, "body_paper_gsm": 90.0}
+    _portrait = {**_base, "name": "Demo A4 Portrait", "page_size": "a4",
+                 "orientation": "portrait", "page_types": _pt_portrait}
+    _landscape = {**_base, "name": "Demo A4 Landscape", "page_size": "a4",
+                  "orientation": "landscape", "page_types": _pt_landscape}
+    (PROFILES_DIR / "00000000-0000-0000-0000-000000000101.json").write_text(json.dumps(_portrait, indent=2))
+    (PROFILES_DIR / "00000000-0000-0000-0000-000000000102.json").write_text(json.dumps(_landscape, indent=2))
 
 def _load_smart_config() -> dict:
     if SMART_CONFIG_PATH.exists():
@@ -180,6 +265,8 @@ async def get_config():
 
 @app.post("/api/config")
 async def save_config(cfg: ConfigModel):
+    if _DEMO_MODE:
+        return {"ok": True}
     payload = cfg.dict()
     existing = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
     if "•" in payload.get("api_key", ""):
@@ -192,7 +279,7 @@ async def save_config(cfg: ConfigModel):
 @app.get("/api/config/test")
 async def test_config():
     ok = await ic.test_connection()
-    return {"connected": ok}
+    return {"connected": ok, "demo": _DEMO_MODE}
 
 CUSTOM_SIZES_PATH = DATA_DIR / "custom_sizes.json"
 
@@ -1025,7 +1112,7 @@ _APP_VERSION = _read_version()
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": _APP_VERSION}
+    return {"status": "ok", "version": _APP_VERSION, "demo": _DEMO_MODE}
 
 @app.get("/api/deep-config")
 async def get_deep_config():

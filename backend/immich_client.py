@@ -11,6 +11,8 @@ import os
 
 logger = logging.getLogger(__name__)
 
+DEMO_MODE: bool = os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes")
+
 CONFIG_PATH = "/data/config.json"
 
 def load_config():
@@ -45,7 +47,58 @@ def _make_client(read_timeout: float = 60.0) -> httpx.AsyncClient:
         follow_redirects=True,
     )
 
+# ── Demo mode helpers ─────────────────────────────────────────────────────────
+
+async def _demo_fetch_image(asset_id: str, hires: bool = False) -> bytes:
+    import demo_data as _dd
+    asset = _dd.ASSET_MAP.get(asset_id)
+    if not asset:
+        raise Exception(f"Demo asset not found: {asset_id}")
+    picsum_id = asset["_picsum_id"]
+    w, h = asset["_width"], asset["_height"]
+    if not hires:
+        scale = 320 / max(w, h)
+        w, h = max(1, int(w * scale)), max(1, int(h * scale))
+    url = f"https://picsum.photos/id/{picsum_id}/{w}/{h}"
+    async with _make_client(30.0) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        return r.content
+
+
+async def _demo_fetch_bulk(
+    asset_ids: list[str],
+    hires: bool = False,
+    on_progress=None,
+    max_concurrent: int = 4,
+) -> dict[str, bytes]:
+    results: dict[str, bytes] = {}
+    total = len(asset_ids)
+    done = 0
+    sem = asyncio.Semaphore(max_concurrent)
+
+    async def _one(aid: str):
+        nonlocal done
+        async with sem:
+            try:
+                data = await _demo_fetch_image(aid, hires)
+                if data:
+                    results[aid] = data
+            except Exception as e:
+                logger.warning(f"Demo: skip {aid}: {e}")
+            done += 1
+            if on_progress:
+                on_progress(done, total)
+
+    await asyncio.gather(*[_one(aid) for aid in asset_ids])
+    return results
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
 async def test_connection() -> bool:
+    if DEMO_MODE:
+        return True
     try:
         async with _make_client(10.0) as client:
             r = await client.get(f"{get_base_url()}/server/ping", headers=get_headers())
@@ -54,12 +107,21 @@ async def test_connection() -> bool:
         return False
 
 async def get_albums() -> list:
+    if DEMO_MODE:
+        import demo_data as _dd
+        return _dd.DEMO_ALBUMS
     async with _make_client(30.0) as client:
         r = await client.get(f"{get_base_url()}/albums", headers=get_headers())
         r.raise_for_status()
         return r.json()
 
 async def get_album_detail(album_id: str) -> dict:
+    if DEMO_MODE:
+        import demo_data as _dd
+        detail = _dd.DEMO_ALBUM_DETAILS.get(album_id)
+        if not detail:
+            raise Exception(f"Demo album not found: {album_id}")
+        return detail
     async with _make_client(60.0) as client:
         r = await client.get(
             f"{get_base_url()}/albums/{album_id}",
@@ -70,6 +132,8 @@ async def get_album_detail(album_id: str) -> dict:
         return r.json()
 
 async def get_asset_thumbnail(asset_id: str, size: str = "thumbnail") -> bytes:
+    if DEMO_MODE:
+        return await _demo_fetch_image(asset_id, hires=False)
     async with _make_client(30.0) as client:
         r = await client.get(
             f"{get_base_url()}/assets/{asset_id}/thumbnail",
@@ -83,14 +147,9 @@ async def get_asset_original(
     asset_id: str,
     client: httpx.AsyncClient | None = None,
 ) -> tuple[bytes, str]:
-    """
-    Fetch the highest-quality version of an asset.
-    Strategy:
-      1. /thumbnail?size=preview  (always reflects Immich edits, JPEG, ~2-5 MB)
-      2. /assets/{id}/original    (raw file, may be RAW/TIFF, up to 30+ MB)
-
-    Accepts an optional shared client for connection reuse during bulk fetch.
-    """
+    if DEMO_MODE:
+        data = await _demo_fetch_image(asset_id, hires=True)
+        return data, "image/jpeg"
     _client = client or _make_client(180.0)
     close_after = client is None
 
@@ -119,6 +178,8 @@ async def get_asset_original(
     return await _do(_client)
 
 async def update_asset_description(asset_id: str, description: str) -> bool:
+    if DEMO_MODE:
+        return True
     try:
         async with _make_client(30.0) as client:
             r = await client.put(
@@ -131,6 +192,12 @@ async def update_asset_description(asset_id: str, description: str) -> bool:
         return False
 
 async def get_asset_detail(asset_id: str) -> dict:
+    if DEMO_MODE:
+        import demo_data as _dd
+        asset = _dd.ASSET_MAP.get(asset_id)
+        if not asset:
+            raise Exception(f"Demo asset not found: {asset_id}")
+        return asset
     async with _make_client(15.0) as client:
         r = await client.get(
             f"{get_base_url()}/assets/{asset_id}",
@@ -145,19 +212,8 @@ async def fetch_assets_bulk(
     on_progress: "callable | None" = None,
     max_concurrent: int = 4,
 ) -> dict[str, bytes]:
-    """
-    Fetch multiple assets efficiently using a single shared client and a semaphore
-    to limit concurrency (avoid OOM and Immich overload).
-
-    Args:
-        asset_ids:      list of Immich asset UUIDs
-        hires:          True = preview JPEG (~2-5MB), False = thumbnail (~60KB)
-        on_progress:    callback(done: int, total: int) called after each fetch
-        max_concurrent: max simultaneous requests (default 4 for hires, 8 for thumbs)
-
-    Returns:
-        dict mapping asset_id → bytes (missing assets are omitted, not None)
-    """
+    if DEMO_MODE:
+        return await _demo_fetch_bulk(asset_ids, hires, on_progress, max_concurrent)
     results: dict[str, bytes] = {}
     total = len(asset_ids)
     done_count = 0
@@ -210,10 +266,8 @@ async def fetch_assets_bulk(
     return results
 
 async def enrich_assets(assets: list[dict], fields: list[str] = None) -> list[dict]:
-    """
-    Fetch full asset details for enrichment (people, checksum, etc.)
-    Uses a shared client with batches of 20.
-    """
+    if DEMO_MODE:
+        return assets
     if not assets:
         return assets
 
