@@ -89,7 +89,7 @@ def _compute_dhash(img_bytes: bytes, size: int = 8) -> int | None:
 for d in [PROFILES_DIR, CACHE_DIR, EXPORT_DIR, PROJECTS_DIR, PRESETS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-if _DEMO_MODE and not any(PROFILES_DIR.glob("*.json")):
+if _DEMO_MODE:
     def _s(*slots): return list(slots)
     _caption_style = {"font": "Georgia, serif", "size": 13, "color": "#e8e6e0",
                       "align": "center", "valign": "center", "bg": "#111116",
