@@ -89,6 +89,32 @@ def _compute_dhash(img_bytes: bytes, size: int = 8) -> int | None:
 for d in [PROFILES_DIR, CACHE_DIR, EXPORT_DIR, PROJECTS_DIR, PRESETS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
+if _DEMO_MODE and not any(PROFILES_DIR.glob("*.json")):
+    _demo_pid = "00000000-0000-0000-0000-000000000101"
+    _demo_profile = {
+        "name": "Demo A4 Portrait",
+        "page_size": "a4",
+        "orientation": "portrait",
+        "duplex": False,
+        "margin_mm": 10.0,
+        "bleed": False,
+        "bleed_mm": 3.0,
+        "gap_mm": 3.0,
+        "page_types": [
+            {"id": "00000000-0000-0000-0001-000000000001", "label": "1 foto", "slots": default_slot_grid(1)},
+            {"id": "00000000-0000-0000-0001-000000000002", "label": "2 foto", "slots": default_slot_grid(2)},
+            {"id": "00000000-0000-0000-0001-000000000004", "label": "4 foto", "slots": default_slot_grid(4)},
+        ],
+        "caption_style": {"font": "Georgia, serif", "size": 13, "color": "#e8e6e0",
+                          "align": "center", "valign": "center", "bg": "#111116",
+                          "italic": True, "bold": False},
+        "export_dpi": 300,
+        "color_profile": "srgb",
+        "crop_marks": False,
+        "body_paper_gsm": 90.0,
+    }
+    (PROFILES_DIR / f"{_demo_pid}.json").write_text(json.dumps(_demo_profile, indent=2))
+
 def _load_smart_config() -> dict:
     if SMART_CONFIG_PATH.exists():
         try:
