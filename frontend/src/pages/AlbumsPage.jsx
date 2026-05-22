@@ -75,7 +75,7 @@ function SliderInput({ value, onChange, label, help, min, max, step, unit, disab
 }
 
 // ── Config modal ───────────────────────────────────────────────────────────────
-function ConfigModal({ config, onChange, onClose }) {
+function ConfigModal({ config, onChange, onClose, stadiaKeySet }) {
   const a = useT().albums
   const [local, setLocal]               = useState({ ...config })
   const [presets, setPresets]           = useState(loadPresets)
@@ -828,7 +828,8 @@ export default function AlbumsPage() {
         <ConfigModal
           config={genConfig}
           onChange={setGenConfig}
-          onClose={() => setShowConfig(false)}/>
+          onClose={() => setShowConfig(false)}
+          stadiaKeySet={stadiaKeySet}/>
       )}
       {showProjects && (
         <ProjectListModal
