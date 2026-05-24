@@ -28,6 +28,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "rhythm_alternation":    True,
     "density":               75,
     "fill_empty_with_map":   False,
+    "photo_badges":          True,
+    "event_caption_pages":   True,
 }
 
 FALLBACK_PAGE_TYPES = [
@@ -929,7 +931,7 @@ def _best_page_type(
 
 
 
-def _best_hero_layout(photo: Photo, pt_pool: list[dict], page_ar: float) -> dict:
+def _best_hero_layout(photo: Photo, pt_pool: list[dict], page_ar: float, n_fillers: int = 0) -> dict:
     """
     For favorites_full_page:
     - Orientation match (portrait→portrait or landscape→landscape): single-slot full page.
@@ -946,40 +948,69 @@ def _best_hero_layout(photo: Photo, pt_pool: list[dict], page_ar: float) -> dict
     single_slot = [pt for pt in pt_pool if len(photo_slots(pt)) == 1]
     matching_single = [pt for pt in single_slot if _slot_is_portrait(photo_slots(pt)[0], page_ar) == ph_portrait]
 
-    if matching_single:
-        def slot_area(pt):
-            s = photo_slots(pt)[0]
-            return s.get("w", 0) * s.get("h", 0)
-        return max(matching_single, key=slot_area)
+    def _slot_area(pt):
+        s = photo_slots(pt)[0]
+        return s.get("w", 0) * s.get("h", 0)
 
-    # ── Case 2: orientation mismatch → multi-slot with largest hero matching orientation ──
-    multi_slot = [pt for pt in pt_pool if len(photo_slots(pt)) >= 2]
-    # Among multi-slot layouts, hero slot = largest photo slot
     def hero_slot(pt):
         slots = photo_slots(pt)
         return max(slots, key=lambda s: s.get("w", 0) * s.get("h", 0))
 
-    # Keep layouts where hero slot orientation matches the photo
-    matching_multi = [pt for pt in multi_slot if _slot_is_portrait(hero_slot(pt), page_ar) == ph_portrait]
+    if matching_single:
+        return max(matching_single, key=_slot_area)
 
+    # ── Case 2: multi-slot with hero matching orientation, only if enough filler
+    #    photos available to fill remaining photo slots (no map fallbacks) ──────────
+    multi_slot = [pt for pt in pt_pool if len(photo_slots(pt)) >= 2]
+    matching_multi = [pt for pt in multi_slot if _slot_is_portrait(hero_slot(pt), page_ar) == ph_portrait]
+    # Only accept multi-slot if we have enough non-favorite photos to fill all non-hero slots
+    fillable_multi = [pt for pt in matching_multi if len(photo_slots(pt)) - 1 <= n_fillers]
+
+    if fillable_multi:
+        return max(fillable_multi, key=lambda pt: hero_slot(pt).get("w", 0) * hero_slot(pt).get("h", 0))
+
+    # ── Case 3: any single-slot (orientation mismatch tolerated) ─────────────────
+    if single_slot:
+        return max(single_slot, key=_slot_area)
+
+    # ── Case 4: multi-slot as last resort ────────────────────────────────────────
     if matching_multi:
-        # Pick the layout with the largest hero slot (most dominant presentation)
         return max(matching_multi, key=lambda pt: hero_slot(pt).get("w", 0) * hero_slot(pt).get("h", 0))
 
-    # ── Case 3: fallback — any single-slot or FULL_PAGE_TYPE ──────────────────
-    if single_slot:
-        def slot_area(pt):
-            s = photo_slots(pt)[0]
-            return s.get("w", 0) * s.get("h", 0)
-        return max(single_slot, key=slot_area)
+    if multi_slot:
+        return max(multi_slot, key=lambda pt: hero_slot(pt).get("w", 0) * hero_slot(pt).get("h", 0))
 
     return FULL_PAGE_TYPE
 
 
-def _make_photo_item(photo: Photo) -> Item:
+_MONTH_NAMES: dict[str, list[str]] = {
+    "it": ["gen","feb","mar","apr","mag","giu","lug","ago","set","ott","nov","dic"],
+    "en": ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"],
+}
+
+def _fmt_date(dt, lang: str = "it") -> str:
+    months = _MONTH_NAMES.get(lang) or _MONTH_NAMES["it"]
+    return f"{dt.day} {months[dt.month - 1]} {dt.year}"
+
+
+def _badge_date_str(photo: Photo, lang: str = "it") -> str:
+    dt = _photo_dt(photo)
+    if not dt:
+        return ""
+    return _fmt_date(dt, lang)
+
+
+def _badge_location_str(photo: Photo) -> str:
+    exif = photo.get("exifInfo") or {}
+    return (exif.get("city") or exif.get("state") or "").strip()
+
+
+def _make_photo_item(photo: Photo, add_badges: bool = False, lang: str = "it") -> Item:
     exif = photo.get("exifInfo") or {}
     desc = (exif.get("description") or photo.get("description") or "").strip()
-    return {
+    badge_date = _badge_date_str(photo, lang)
+    badge_loc  = _badge_location_str(photo)
+    item: Item = {
         "type":             "photo",
         "asset_id":         photo["id"],
         "description":      desc,
@@ -989,6 +1020,78 @@ def _make_photo_item(photo: Photo) -> Item:
         "has_caption":      bool(desc),
         "isFavorite":       bool(photo.get("isFavorite")),
         "_updated_at":      photo.get("updatedAt", ""),
+        "_badge_date":      badge_date,
+        "_badge_location":  badge_loc,
+    }
+    if add_badges:
+        parts = [p for p in [badge_loc, badge_date] if p]
+        if parts:
+            item["badges"] = [{"id": "auto", "text": " · ".join(parts), "type": "auto"}]
+    return item
+
+
+# ── Event caption helpers ─────────────────────────────────────────────────────
+
+def _event_majority_location(photos: list[Photo]) -> str:
+    """Return the most common city/state among event photos."""
+    from collections import Counter
+    locations = [_badge_location_str(p) for p in photos if _badge_location_str(p)]
+    if not locations:
+        return ""
+    return Counter(locations).most_common(1)[0][0]
+
+
+def _event_date_range_str(photos: list[Photo], lang: str = "it") -> str:
+    """Return a human-readable date range for an event."""
+    dates = sorted((_photo_dt(p) for p in photos if _photo_dt(p)))
+    if not dates:
+        return ""
+    first, last = dates[0], dates[-1]
+    months = _MONTH_NAMES.get(lang) or _MONTH_NAMES["it"]
+    def mon(dt): return months[dt.month - 1]
+    if first.date() == last.date():
+        return f"{first.day} {mon(first)} {first.year}"
+    if first.month == last.month and first.year == last.year:
+        return f"{first.day} – {last.day} {mon(last)} {last.year}"
+    if first.year == last.year:
+        return f"{first.day} {mon(first)} – {last.day} {mon(last)} {last.year}"
+    return f"{first.day} {mon(first)} {first.year} – {last.day} {mon(last)} {last.year}"
+
+
+def _find_mixed_caption_page_type(page_types: list[dict]) -> dict | None:
+    """Return a page type that has both photo slots AND at least one caption slot.
+    Never returns a pure caption-only page. Returns None if no suitable type found."""
+    for pt in page_types:
+        slots = pt.get("slots", [])
+        n_photo, n_cap = _count_slot_types(slots)
+        if n_photo >= 1 and n_cap >= 1:
+            return pt
+    return None
+
+
+def _make_event_caption_page(photos: list[Photo], page_types: list[dict], lang: str = "it") -> Page | None:
+    """Build an intro caption page for a temporal event using a mixed photo+caption page type."""
+    pt = _find_mixed_caption_page_type(page_types)
+    if pt is None:
+        return None  # no suitable page type in profile — skip
+    loc  = _event_majority_location(photos)
+    date = _event_date_range_str(photos, lang)
+    parts = [p for p in [loc, date] if p]
+    if not parts:
+        return None
+    text = " · ".join(parts)
+    items = [
+        {
+            "slot": s,
+            "item": {"type": "caption", "text": text} if s.get("slot_type") == "caption" else None,
+        }
+        for s in pt.get("slots", [])
+    ]
+    return {
+        "page_type_id":      pt.get("id"),
+        "page_type":         pt,
+        "items":             items,
+        "_is_event_caption": True,
     }
 
 
@@ -1007,16 +1110,19 @@ def _make_pages_from_group(
     page_offset: int,
     page_ar: float = 1.0,
     similarity_scores: dict | None = None,
+    event_caption_text: str = "",
 ) -> list[Page]:
     if not photos:
         return []
 
-    density      = config.get("density", 75)
-    rhythm       = config.get("rhythm_alternation", True)
-    face_crop    = config.get("face_crop", True)
-    favs_full    = config.get("favorites_full_page", False)
-    fill_map     = config.get("fill_empty_with_map", False)
+    density       = config.get("density", 75)
+    rhythm        = config.get("rhythm_alternation", True)
+    face_crop     = config.get("face_crop", True)
+    favs_full     = config.get("favorites_full_page", False)
+    fill_map      = config.get("fill_empty_with_map", False)
     auto_captions = config.get("auto_captions", True)
+    photo_badges  = config.get("photo_badges", False)
+    lang          = config.get("lang", "it")
 
     # Pre-filter page_types: when auto_captions=False, exclude layouts with caption slots
     page_types_no_cap = [pt for pt in page_types if not any(s.get("slot_type") == "caption" for s in pt.get("slots", []))]
@@ -1028,6 +1134,7 @@ def _make_pages_from_group(
     pages: list[Page] = []
     remaining = list(photos)
     prev_dense: bool | None = None
+    _first_page = True  # used to inject event_caption_text on first page
 
     page_logs: list[dict] = []
     while remaining:
@@ -1039,7 +1146,8 @@ def _make_pages_from_group(
         # - orientamenti diversi → layout multi-slot dove lo slot più grande corrisponde
         #   all'orientamento della foto; gli altri slot sono riempiti con foto successive
         if favs_full and photo.get("isFavorite"):
-            pt    = _best_hero_layout(photo, pt_pool, page_ar)
+            _n_fillers = sum(1 for p in remaining[1:] if not p.get("isFavorite"))
+            pt    = _best_hero_layout(photo, pt_pool, page_ar, n_fillers=_n_fillers)
             n_photo_sl, n_cap_sl = _count_slot_types(pt.get("slots", []))
             _page_candidates = [{'id':pt.get('id','__full__'),'label':pt.get('label','Pagina intera'),'score':0,'winner':True,'breakdown':{'total':0,'orient_violations':0,'n_photo_slots':n_photo_sl,'n_caption_slots':n_cap_sl,'unused_bonus':False,'rhythm_penalty':False}}]
             # Favorite goes first; fill extra photo slots with non-favorite successors
@@ -1071,8 +1179,16 @@ def _make_pages_from_group(
 
             # Quante foto usare per questa pagina?
             max_slots_all = max((len(pt.get("slots", [])) for pt in pt_pool), default=1)
+            # On first page with event caption: prefer page types that have a caption slot
+            _active_pool = pt_pool
+            if _first_page and event_caption_text:
+                _cap_pool = [p for p in pt_pool
+                             if _count_slot_types(p.get("slots", []))[1] >= 1
+                             and _count_slot_types(p.get("slots", []))[0] >= 1]
+                if _cap_pool:
+                    _active_pool = _cap_pool
             pt, _page_candidates = _best_page_type(
-                pt_pool, effective, usage_counter, density, rhythm, prev_dense,
+                _active_pool, effective, usage_counter, density, rhythm, prev_dense,
                 page_ar, _return_candidates=True)
             slots_all = pt.get("slots", [])
             n_photo_sl, n_cap_sl = _count_slot_types(slots_all)
@@ -1125,7 +1241,11 @@ def _make_pages_from_group(
 
             # ── Caption slot → fill with text, never a photo ──────────────────
             if slot_type == "caption":
-                if auto_captions and descriptions_queue:
+                if _first_page and event_caption_text:
+                    caption_item = {"type": "caption", "text": event_caption_text}
+                    items.append({"slot": slot, "item": caption_item})
+                    log.append(f"  [📅 EVENTO] Slot {si+1} didascalia → '{event_caption_text[:60]}'")
+                elif auto_captions and descriptions_queue:
                     src_photo, desc_text = descriptions_queue.pop(0)
                     caption_item = {
                         "type":           "caption",
@@ -1150,7 +1270,7 @@ def _make_pages_from_group(
                     items.append({"slot": slot, "item": None})
                 continue
 
-            item = _make_photo_item(photo_a)
+            item = _make_photo_item(photo_a, add_badges=photo_badges, lang=lang)
             items.append({"slot": slot, "item": item})
 
             # ── Logging orientamento ──
@@ -1252,6 +1372,7 @@ def _make_pages_from_group(
             'n_photos_with_desc':n_chunk_with_desc,
             'n_caption_slots':n_cap_sl})
         pages.append({'page_type_id':tid,'page_type':pt,'items':items})
+        _first_page = False
 
     return pages, page_logs
 
@@ -1393,12 +1514,26 @@ def generate_album(
     usage_counter: dict[str, int] = {}
     all_pages: list[Page] = []
     all_page_logs: list[dict] = []
+    event_caption_pages = cfg.get("event_caption_pages", False)
+    _lang = cfg.get("lang", "it")
 
     for label, group in units:
         log.append(f"─── {label.upper()} ({len(group)} foto) ───")
+
+        # Compute event caption text for this cluster (injected into first page's caption slot)
+        _event_cap_text = ""
+        if event_caption_pages and cfg.get("temporal_clustering") and label.startswith("cluster") and group:
+            loc  = _event_majority_location(group)
+            date = _event_date_range_str(group, _lang)
+            parts = [p for p in [loc, date] if p]
+            if parts:
+                _event_cap_text = " · ".join(parts)
+                log.append(f"  [📅 EVENTO] Didascalia evento da inserire: '{_event_cap_text}'")
+
         group_pages, group_logs = _make_pages_from_group(
             group, page_types, usage_counter, cfg, transforms, log, label, len(all_pages), page_ar,
             similarity_scores=similarity_scores,
+            event_caption_text=_event_cap_text,
         )
         all_pages.extend(group_pages)
         all_page_logs.extend(group_logs)

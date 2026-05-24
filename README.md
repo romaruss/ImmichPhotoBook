@@ -34,6 +34,8 @@ Configuration → Print profile → Generate layout → Edit preview → Export 
 
 - **Immich integration** — albums, EXIF, GPS, faces, descriptions, favourites; caption sync back to Immich
 - **Smart Layout** — automatic grouping by time/event, face-aware crop, GPS cluster maps
+- **Photo badges** — configurable date/location overlay on each photo, removable per-photo in preview
+- **Event caption pages** — auto-fills a caption slot on the first page of each detected event with date range and GPS location
 - **Print profiles** — A4/A3/A5/20×20/30×30/custom, portrait/landscape, margins, bleed; preset save/load
 - **Page type editor** — drag-to-resize slots, snap, 50 built-in layouts
 - **Interactive preview** — swap/pan/zoom photos, inline captions, 2-page spread, add/remove pages

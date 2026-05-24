@@ -223,7 +223,7 @@ function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, o
   const t = useT()
   const tp = t.preview
   const [filter, setFilter]         = useState('')
-  const [view, setView]             = useState(()=>{try{return JSON.parse(localStorage.getItem('pb_view'))||1}catch{return 1}})
+  const [view, setView]             = useState(()=>{try{const v=localStorage.getItem('pb_view');return v!==null?JSON.parse(v):2}catch{return 2}})
   const [statusFilter, setStatusFilter] = useState('all')
   const [previewAsset, setPreviewAsset] = useState(null)  // foto ingrandita
   const highlightRef = useRef(null)  // ref to highlighted photo item
@@ -1450,6 +1450,24 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
       ? {...id,item:{...id.item, ...(text!==undefined?{text}:{}), ...(style?{caption_style:style}:{})}}
       : id)})
 
+  const addBadge=(slotIdx)=>{
+    const id=page.items[slotIdx]; if(!id?.item) return
+    const it=id.item
+    const parts=[it._badge_location, it._badge_date].filter(Boolean)
+    if(!parts.length) return
+    const text=parts.join(' · ')
+    const existing=(it.badges||[]).filter(b=>b.id!=='auto')
+    const badge={id:'auto', text, type:'auto'}
+    onUpdatePage({...page,items:page.items.map((id2,i)=>i===slotIdx
+      ? {...id2,item:{...id2.item,badges:[...existing,badge]}}
+      : id2)})
+  }
+
+  const removeBadge=(slotIdx, badgeId)=>
+    onUpdatePage({...page,items:page.items.map((id,i)=>i===slotIdx
+      ? {...id,item:{...id.item,badges:(id.item?.badges||[]).filter(b=>b.id!==badgeId)}}
+      : id)})
+
   // Sync caption text back to Immich as asset description
   const syncCaptionToImmich = async (slotIdx) => {
     const id = page.items[slotIdx]
@@ -1771,12 +1789,47 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                 )
               })()}
 
+              {/* Photo location/date badges overlay */}
+              {item?.type==='photo'&&!isPhotoEdit&&(item.badges||[]).length>0&&(()=>{
+                const bc = profile?.badge_config || {}
+                const pos = bc.position || 'bottom-right'
+                const shape = bc.shape || 'rounded'
+                const fs = Math.max(6, (bc.font_size || 10) * scale)
+                const br = shape==='pill' ? 99 : shape==='rounded' ? 4 : 1
+                return (item.badges||[]).map(badge=>(
+                  <div key={badge.id}
+                    style={{
+                      position:'absolute',
+                      ...(pos.includes('top') ? {top: 4*scale} : {bottom: 4*scale}),
+                      ...(pos.includes('left') ? {left: 4*scale} : {right: 4*scale}),
+                      display:'flex', alignItems:'center', gap: 2*scale,
+                      background: bc.bg_color || 'rgba(0,0,0,0.55)',
+                      color: bc.text_color || '#ffffff',
+                      fontSize: fs,
+                      padding: `${1.5*scale}px ${5*scale}px`,
+                      borderRadius: br,
+                      zIndex:5, pointerEvents:'auto',
+                      whiteSpace:'nowrap',
+                    }}>
+                    <span style={{lineHeight:1}}>{badge.text}</span>
+                    <button
+                      onClick={e=>{ e.stopPropagation(); removeBadge(slotIdx, badge.id) }}
+                      title={tp.removeBadge}
+                      style={{ background:'none', border:'none', cursor:'pointer',
+                        color: bc.text_color || '#ffffff', padding:0, fontSize: fs,
+                        lineHeight:1, opacity:0.75, marginLeft: 2*scale }}>✕</button>
+                  </div>
+                ))
+              })()}
+
               {/* ⋮ button — opens floating action menu for photo slot */}
               {item?.type==='photo'&&!isPhotoEdit&&(
                 <button className="slot-menu-btn" title="Azioni" onClick={e=>{
                   e.stopPropagation()
+                  const hasBadgeData=!!(item._badge_date||item._badge_location)
                   openSlotMenu(e, tp.slotMenuPhoto, [
                     {icon:'🖐', label: mismatch ? tp.repositionMismatch : tp.reposition, action:()=>{ setEditPhotoSlot(slotIdx); setSlotMenu(null) }, color: mismatch?'#e05050':undefined},
+                    ...(hasBadgeData?[{icon:'🏷', label:tp.addBadge, action:()=>{ addBadge(slotIdx); setSlotMenu(null) }}]:[]),
                     {icon:'🗺', label:tp.slotInsertMap, action:()=>{ onAddMap?.(pageIdx,slotIdx); setSlotMenu(null) }},
                     {icon:'🔄', label:tp.changePhoto, action:()=>{ onOpenPicker(pageIdx,slotIdx); setSlotMenu(null) }},
                     {icon:'💬', label:tp.addCaption, action:()=>{ onAddCaption(pageIdx,slotIdx); setSlotMenu(null) }},
@@ -2192,7 +2245,7 @@ export default function PreviewPage() {
   const sidebarListRef = useRef(null)
   const [panelOpen,setPanelOpen]=useState(()=>{try{return JSON.parse(localStorage.getItem('pb_panelOpen'))??true}catch{return true}})
   const [draggedAsset,setDraggedAsset]=useState(null)
-  const [spreadView,setSpreadView]=useState(()=>{try{return JSON.parse(localStorage.getItem('pb_spreadView'))||false}catch{return false}})
+  const [spreadView,setSpreadView]=useState(()=>{try{const v=localStorage.getItem('pb_spreadView');return v!==null?JSON.parse(v):true}catch{return true}})
   const [viewZoom,setViewZoom]=useState(1.0)
   const zoomStep=0.10
   const zoomMin=0.3

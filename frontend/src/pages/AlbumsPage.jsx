@@ -7,18 +7,20 @@ import { migrateDividerStyle } from '../components/DividerEditor'
 
 // ── Default config ─────────────────────────────────────────────────────────────
 const DEFAULTS = {
-  temporal_clustering:  false,
+  temporal_clustering:  true,
   event_gap_min:        60,
-  favorites_full_page:  false,
+  favorites_full_page:  true,
   face_crop:            true,
-  quality_filter:       false,
+  quality_filter:       true,
   min_quality:          0.6,
-  remove_duplicates:    false,
+  remove_duplicates:    true,
   similarity_threshold: 0.83,
   rhythm_alternation:   true,
   density:              75,
-  fill_empty_with_map:  false,
+  fill_empty_with_map:  true,
   auto_captions:        true,
+  photo_badges:         true,
+  event_caption_pages:  true,
 }
 
 const STORAGE_KEY  = 'photobook_gen_config'
@@ -194,6 +196,14 @@ function ConfigModal({ config, onChange, onClose, stadiaKeySet }) {
           </select>
 
           {selectedPresetId && (
+            <button onClick={() => applyPreset(selectedPresetId)} title={a.revertPresetTitle}
+              style={{ background:'none', border:'1px solid var(--border)', color:'var(--gold)',
+                borderRadius:5, padding:'4px 8px', fontSize:13, cursor:'pointer',
+                flexShrink:0 }}>
+              ↺
+            </button>
+          )}
+          {selectedPresetId && (
             <button onClick={deletePreset} title={a.deletePresetTitle}
               style={{ background:'none', border:'1px solid var(--border)', color:'var(--text3)',
                 borderRadius:5, padding:'4px 8px', fontSize:12, cursor:'pointer',
@@ -302,6 +312,17 @@ function ConfigModal({ config, onChange, onClose, stadiaKeySet }) {
           <Section title={a.sectionRhythm}/>
           <Toggle k="rhythm_alternation" label={a.cfgRhythmLabel}
             help={a.cfgRhythmHelp}/>
+
+          {/* Photo badges */}
+          <Section title={a.sectionBadges}/>
+          <Toggle k="photo_badges" label={a.cfgBadgeLabel}
+            help={a.cfgBadgeHelp}/>
+
+          {/* Event caption pages */}
+          <Section title={a.sectionEventCaptions}/>
+          <Toggle k="event_caption_pages" label={a.cfgEventCaptionsLabel}
+            help={a.cfgEventCaptionsHelp}
+            disabled={!local.temporal_clustering}/>
 
         </div>
 
@@ -487,8 +508,10 @@ export default function AlbumsPage() {
 
       if (selectedAlbums.length === 1) {
         // ── Single album ────────────────────────────────────────────────────
+        const _lang = localStorage.getItem('photobook_lang') || 'it'
         const r = await axios.post('/api/layout/generate', {
-          album_id: selectedAlbums[0], profile_id: selectedProfile, config: genConfig,
+          album_id: selectedAlbums[0], profile_id: selectedProfile,
+          config: { ...genConfig, lang: _lang },
         }, { signal: controller.signal })
         const { photo_transforms = {}, ...layoutData } = r.data
         const albumData = r.data.album || {}
@@ -517,7 +540,8 @@ export default function AlbumsPage() {
         const results = await Promise.all(
           selectedAlbums.map(id =>
             axios.post('/api/layout/generate', {
-              album_id: id, profile_id: selectedProfile, config: genConfig,
+              album_id: id, profile_id: selectedProfile,
+              config: { ...genConfig, lang: localStorage.getItem('photobook_lang') || 'it' },
             }, { signal: controller.signal })
           )
         )
@@ -624,11 +648,17 @@ export default function AlbumsPage() {
   const activeCount = [
     genConfig.temporal_clustering,
     genConfig.favorites_full_page,
-    !genConfig.face_crop,      // face_crop ON is default, so badge only if disabled
+    genConfig.face_crop,
+    !genConfig.face_crop,
     genConfig.quality_filter,
     genConfig.remove_duplicates,
+    genConfig.rhythm_alternation,
     !genConfig.rhythm_alternation,
+    genConfig.fill_empty_with_map,
+    genConfig.auto_captions,
     genConfig.density !== 75,
+    genConfig.photo_badges,
+    genConfig.event_caption_pages,
   ].filter(Boolean).length
 
   if (loading) return (
@@ -773,6 +803,7 @@ export default function AlbumsPage() {
                 <span className="tag">{a.tagClustering(genConfig.event_gap_min)}</span>
               )}
               {genConfig.favorites_full_page && <span className="tag">{a.tagFavorites}</span>}
+              {genConfig.face_crop && <span className="tag">{a.tagFacesOn}</span>}
               {!genConfig.face_crop && <span className="tag">{a.tagFacesOff}</span>}
               {genConfig.quality_filter && (
                 <span className="tag">{a.tagQuality((genConfig.min_quality*100).toFixed(0))}</span>
@@ -780,10 +811,15 @@ export default function AlbumsPage() {
               {genConfig.remove_duplicates && (
                 <span className="tag">{a.tagDedup((genConfig.similarity_threshold*100).toFixed(0))}</span>
               )}
+              {genConfig.rhythm_alternation && <span className="tag">{a.tagRhythm}</span>}
               {!genConfig.rhythm_alternation && <span className="tag">{a.tagRhythmOff}</span>}
+              {genConfig.fill_empty_with_map && <span className="tag">{a.tagMapFill}</span>}
+              {genConfig.auto_captions && <span className="tag">{a.tagCaptions}</span>}
               {genConfig.density !== 75 && (
                 <span className="tag">{a.tagDensity(genConfig.density)}</span>
               )}
+              {genConfig.photo_badges && <span className="tag">{a.tagBadges}</span>}
+              {genConfig.event_caption_pages && <span className="tag">{a.tagEventCaptions}</span>}
             </div>
           )}
         </div>

@@ -297,6 +297,31 @@ export default {
       diamond: 'Rombo',
       pin:     'Pin',
     },
+
+    // Badge config section
+    badgeCard:          'Badge foto',
+    badgeCardHint:      'Piccola etichetta sovrapposta a ogni foto che mostra data e/o luogo dello scatto.',
+    badgeEnabled:       'Abilita badge (default on/off per le nuove generazioni)',
+    badgeShowDate:      'Mostra data',
+    badgeShowLocation:  'Mostra luogo',
+    badgePosition:      'Posizione',
+    badgePositions: {
+      'top-left':     'Alto sinistra',
+      'top-right':    'Alto destra',
+      'bottom-left':  'Basso sinistra',
+      'bottom-right': 'Basso destra',
+    },
+    badgeShape:         'Forma',
+    badgeShapes: {
+      rect:    'Rettangolo',
+      rounded: 'Arrotondato',
+      pill:    'Pillola',
+    },
+    badgeBgColor:       'Sfondo',
+    badgeTextColor:     'Colore testo',
+    badgeFontSize:      'Dimensione font (px)',
+    badgePreview:       'Anteprima',
+    badgePreviewText:   '14 Giu 2024 · Parigi',
   },
 
   // ── Page type editor ────────────────────────────────────────────────────────
@@ -367,6 +392,7 @@ export default {
     presetLabel:      'Preset:',
     noPreset:         '— nessun preset —',
     deletePresetTitle:'Elimina preset',
+    revertPresetTitle:'Ripristina preset salvato',
     presetNamePlaceholder: 'Nome preset…',
     savePresetBtn:    '+ Salva preset',
     savePresetTitle:  'Salva impostazioni correnti come preset',
@@ -393,9 +419,13 @@ export default {
     tagClustering:  (min) => `Clustering ${min}min`,
     tagFavorites:   '★ Pagina intera',
     tagFacesOff:    'Volti: off',
+    tagFacesOn:     'Volti: on',
     tagQuality:     (pct) => `Qualità ≥${pct}%`,
     tagDedup:       (pct) => `Dedup ${pct}%`,
     tagRhythmOff:   'Ritmo: off',
+    tagRhythm:      'Ritmo',
+    tagMapFill:     'Riempimento mappa GPS',
+    tagCaptions:    'Didascalie auto',
     tagDensity:     (pct) => `Densità ${pct}%`,
     // Config modal sections
     sectionDensity:    "Densità dell'album",
@@ -432,6 +462,16 @@ export default {
     cfgMapHelp:         'Quando un layout ha più slot del numero di foto disponibili, inserisce una mappa con le posizioni GPS delle foto del gruppo.',
     cfgRhythmLabel:     'Alterna layout densi e minimali',
     cfgRhythmHelp:      'Evita di mettere troppe pagine con 4-6 foto di fila — alterna con pagine più ariose.',
+
+    sectionBadges:           'i) Badge foto',
+    cfgBadgeLabel:           'Aggiungi badge data/luogo a ogni foto',
+    cfgBadgeHelp:            'Sovrappone una piccola etichetta su ogni slot foto con la data e/o il luogo dello scatto. Controllabile singolarmente per ogni foto in anteprima.',
+    tagBadges:               'Badge',
+
+    sectionEventCaptions:    'j) Pagine didascalia evento',
+    cfgEventCaptionsLabel:   'Inserisci una pagina titolo per ogni evento rilevato',
+    cfgEventCaptionsHelp:    'Quando il clustering temporale è attivo, aggiunge una pagina introduttiva all\'inizio di ogni evento con il periodo e il luogo GPS. Richiede un tipo pagina con slot didascalia nel profilo.',
+    tagEventCaptions:        'Titoli evento',
   },
 
   // ── Smart config modal ──────────────────────────────────────────────────────
@@ -584,6 +624,9 @@ export default {
     mapRemove:      'Rimuovi mappa',
     slotMenuCaption:'Didascalia',
     captionRemove:  'Rimuovi',
+    addBadge:       '🏷 Aggiungi badge',
+    removeBadge:    '✕',
+    badgeMenuTitle: 'Badge',
     favoriteTitle:      'Preferita in Immich',
     captionBadgeTitle:  'Ha didascalia in Immich',
     mismatch:      '↕↔ orientamento diverso',

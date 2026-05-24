@@ -697,6 +697,51 @@ def _draw_title_page(c: canvas.Canvas, album: dict,
     c.drawRightString(pw - margin, foot_y, f"{photo_count} fotografie")
 
 
+def _draw_badge(c: canvas.Canvas, badge_text: str, sx: float, sy: float,
+                sw: float, sh: float, badge_config: dict) -> None:
+    """Render a single text badge overlay on a photo slot in PDF coords."""
+    from reportlab.lib.colors import HexColor, Color
+    pos      = badge_config.get("position", "bottom-right")
+    shape    = badge_config.get("shape", "rounded")
+    fs_px    = float(badge_config.get("font_size", 10) or 10)
+    bg_raw   = badge_config.get("bg_color", "rgba(0,0,0,0.55)") or "rgba(0,0,0,0.55)"
+    txt_raw  = badge_config.get("text_color", "#ffffff") or "#ffffff"
+    pad_x, pad_y = fs_px * 0.5, fs_px * 0.2
+    margin = fs_px * 0.4
+
+    def parse_color(raw):
+        raw = raw.strip()
+        if raw.startswith("rgba"):
+            parts = raw[5:-1].split(",")
+            r,g,b = int(parts[0]),int(parts[1]),int(parts[2])
+            a = float(parts[3]) if len(parts)>3 else 1.0
+            return Color(r/255,g/255,b/255,alpha=a)
+        try: return HexColor(raw)
+        except Exception: return HexColor("#000000")
+
+    bg_color  = parse_color(bg_raw)
+    txt_color = parse_color(txt_raw)
+    c.setFont("Helvetica", fs_px)
+    text_w = c.stringWidth(badge_text, "Helvetica", fs_px)
+    rect_w = text_w + pad_x * 2
+    rect_h = fs_px + pad_y * 2
+    br = fs_px * 0.5 if shape == "pill" else (fs_px * 0.3 if shape == "rounded" else 0)
+
+    bx = (sx + margin) if "left" in pos else (sx + sw - margin - rect_w)
+    by_top = sh - margin - rect_h
+    by = (sy + by_top) if "top" in pos else (sy + margin)
+
+    c.saveState()
+    c.setFillColor(bg_color)
+    if br > 0:
+        c.roundRect(bx, by, rect_w, rect_h, br, stroke=0, fill=1)
+    else:
+        c.rect(bx, by, rect_w, rect_h, stroke=0, fill=1)
+    c.setFillColor(txt_color)
+    c.drawString(bx + pad_x, by + pad_y, badge_text)
+    c.restoreState()
+
+
 def _draw_photo_page_fast(c: canvas.Canvas, page: dict,
                           processed_cache: dict,
                           pw: float, ph: float,
@@ -708,7 +753,8 @@ def _draw_photo_page_fast(c: canvas.Canvas, page: dict,
                           profile_cs: dict | None = None,
                           map_cache: dict | None = None,
                           dpi: int = 300,
-                          color_profile: str = "srgb") -> None:
+                          color_profile: str = "srgb",
+                          badge_config: dict | None = None) -> None:
     """
     Fast render: images already pre-processed (JPEG bytes, offsets pre-computed).
     pan_offsets: {"pageIdx_slotIdx": {x, y, zoom}} from frontend editor.
@@ -784,6 +830,15 @@ def _draw_photo_page_fast(c: canvas.Canvas, page: dict,
                 c.restoreState()
             except Exception as e:
                 logger.warning(f"Draw error {aid}: {e}")
+            # Draw badges if any
+            if badge_config:
+                for badge in item.get("badges") or []:
+                    txt = badge.get("text", "")
+                    if txt:
+                        try:
+                            _draw_badge(c, txt, sx, sy, sw, sh, badge_config)
+                        except Exception as be:
+                            logger.warning(f"Badge draw error: {be}")
         else:
             logger.warning(f"Missing pre-processed image for {aid} — slot left blank")
 
@@ -1087,7 +1142,8 @@ def generate_pdf(
                     page_counter += 1
                     continue
                 ml_pt, mr_pt, mt_pt, mb_pt = margins_for_page(page_counter)
-                profile_cs = profile.get("caption_style") or {}
+                profile_cs   = profile.get("caption_style") or {}
+                badge_config = profile.get("badge_config") or None
                 if page.get("_album_divider"):
                     div_map = (divider_maps or {}).get(page_idx, map_image)
                     _draw_divider_page(cv_out, page, processed_cache, pw, ph,
@@ -1099,7 +1155,8 @@ def generate_pdf(
                                           ml_pt, mr_pt, mt_pt, mb_pt, gap, bleed,
                                           crop_marks=crop_marks, pan_offsets=pan_offsets,
                                           page_idx=page_idx, profile_cs=profile_cs,
-                                          map_cache=map_cache, dpi=dpi, color_profile=color_profile)
+                                          map_cache=map_cache, dpi=dpi, color_profile=color_profile,
+                                          badge_config=badge_config)
                 cv_out.showPage()
                 page_counter += 1
             return page_counter

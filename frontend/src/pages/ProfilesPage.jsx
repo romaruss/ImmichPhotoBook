@@ -56,6 +56,17 @@ const MARKER_SHAPES = [
     <svg width="28" height="28" viewBox="0 0 28 28"><circle cx="14" cy="10" r="8" fill={c} fillOpacity=".25"/><polygon points="10,14 18,14 14,25" fill={c} fillOpacity=".25"/><circle cx="14" cy="10" r="5" fill={c}/></svg> },
 ]
 
+const DEFAULT_BADGE_CONFIG = {
+  enabled:       false,
+  show_date:     true,
+  show_location: true,
+  position:      'bottom-right',
+  shape:         'rounded',
+  bg_color:      'rgba(0,0,0,0.55)',
+  text_color:    '#ffffff',
+  font_size:     10,
+}
+
 const DEFAULT_PROFILE = {
   name:'', page_size:'20x30', orientation:'portrait', duplex:false,
   margin_mm:5, margin_top:5, margin_right:5, margin_bottom:5, margin_left:5,
@@ -67,6 +78,7 @@ const DEFAULT_PROFILE = {
   cover: null,
   body_paper_gsm: 90,
   map_style: { ...DEFAULT_MAP_STYLE },
+  badge_config: { ...DEFAULT_BADGE_CONFIG },
 }
 
 // ── Section open/close state persisted in session ────────────────────────────
@@ -950,8 +962,132 @@ export default function ProfilesPage() {
             })()}
           </CollapsibleCard>
 
+          {/* ── Photo badge config ───────────────────────────────────────────── */}
+          <CollapsibleCard title={p.badgeCard}>
+            <p className="text-sm text-muted mb-4">{p.badgeCardHint}</p>
+            {(() => {
+              const bc = form.badge_config || {}
+              const setBc = (key, val) => set('badge_config', { ...DEFAULT_BADGE_CONFIG, ...bc, [key]: val })
+              return (
+                <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+
+                  {/* Enable toggle */}
+                  <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                    <label style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
+                      <input type="checkbox" checked={!!bc.enabled}
+                        onChange={e => setBc('enabled', e.target.checked)}
+                        style={{ width:16, height:16 }}/>
+                      <span className="text-sm">{p.badgeEnabled}</span>
+                    </label>
+                  </div>
+
+                  {/* Show date / show location */}
+                  <div style={{ display:'flex', gap:24, flexWrap:'wrap' }}>
+                    <label style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
+                      <input type="checkbox" checked={bc.show_date !== false}
+                        onChange={e => setBc('show_date', e.target.checked)}
+                        style={{ width:16, height:16 }}/>
+                      <span className="text-sm">{p.badgeShowDate}</span>
+                    </label>
+                    <label style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
+                      <input type="checkbox" checked={bc.show_location !== false}
+                        onChange={e => setBc('show_location', e.target.checked)}
+                        style={{ width:16, height:16 }}/>
+                      <span className="text-sm">{p.badgeShowLocation}</span>
+                    </label>
+                  </div>
+
+                  {/* Position + Shape row */}
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label className="form-label">{p.badgePosition}</label>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:4 }}>
+                        {Object.entries(p.badgePositions).map(([v, label]) => (
+                          <button key={v} onClick={() => setBc('position', v)}
+                            style={{ padding:'4px 8px', borderRadius:5, border:'1px solid var(--border)',
+                              cursor:'pointer', fontSize:11, textAlign:'center',
+                              background: (bc.position||'bottom-right')===v ? 'var(--gold-dim)' : 'var(--bg3)',
+                              color: (bc.position||'bottom-right')===v ? 'var(--gold)' : 'var(--text2)' }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">{p.badgeShape}</label>
+                      <div style={{ display:'flex', gap:4, flexDirection:'column' }}>
+                        {Object.entries(p.badgeShapes).map(([v, label]) => (
+                          <button key={v} onClick={() => setBc('shape', v)}
+                            style={{ padding:'4px 8px', borderRadius: v==='pill'?20:v==='rounded'?6:2,
+                              border:'1px solid var(--border)', cursor:'pointer', fontSize:11,
+                              background: (bc.shape||'rounded')===v ? 'var(--gold-dim)' : 'var(--bg3)',
+                              color: (bc.shape||'rounded')===v ? 'var(--gold)' : 'var(--text2)' }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">{p.badgeFontSize}</label>
+                      <input type="number" className="form-input" min={8} max={20} step={1}
+                        value={bc.font_size||10} onChange={e => setBc('font_size', +e.target.value)}/>
+                    </div>
+                  </div>
+
+                  {/* Colors row */}
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label className="form-label">{p.badgeBgColor}</label>
+                      <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                        <input type="color" value={bc.bg_color||'#000000'}
+                          onChange={e => setBc('bg_color', e.target.value)}
+                          style={{ width:40, height:34, padding:2, border:'1px solid var(--border)', borderRadius:5, cursor:'pointer' }}/>
+                        <input className="form-input" style={{ flex:1, fontFamily:'var(--font-mono)', fontSize:12 }}
+                          value={bc.bg_color||'rgba(0,0,0,0.55)'} onChange={e => setBc('bg_color', e.target.value)}/>
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">{p.badgeTextColor}</label>
+                      <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                        <input type="color" value={bc.text_color||'#ffffff'}
+                          onChange={e => setBc('text_color', e.target.value)}
+                          style={{ width:40, height:34, padding:2, border:'1px solid var(--border)', borderRadius:5, cursor:'pointer' }}/>
+                        <input className="form-input" style={{ flex:1, fontFamily:'var(--font-mono)', fontSize:12 }}
+                          value={bc.text_color||'#ffffff'} onChange={e => setBc('text_color', e.target.value)}/>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Live preview */}
+                  <div className="form-group" style={{ marginBottom:0 }}>
+                    <label className="form-label">{p.badgePreview}</label>
+                    <div style={{ position:'relative', width:200, height:120, background:'#555', borderRadius:6, overflow:'hidden', border:'1px solid var(--border)' }}>
+                      <div style={{
+                        position:'absolute',
+                        ...(bc.position||'bottom-right').includes('top') ? { top:6 } : { bottom:6 },
+                        ...(bc.position||'bottom-right').includes('left') ? { left:6 } : { right:6 },
+                        background: bc.bg_color||'rgba(0,0,0,0.55)',
+                        color: bc.text_color||'#ffffff',
+                        fontSize: bc.font_size||10,
+                        padding:'2px 7px',
+                        borderRadius: (bc.shape||'rounded')==='pill' ? 20 : (bc.shape||'rounded')==='rounded' ? 5 : 2,
+                        whiteSpace:'nowrap',
+                        pointerEvents:'none',
+                      }}>
+                        {[bc.show_location!==false && p.badgePreviewText.split('·')[1]?.trim(),
+                          bc.show_date!==false && p.badgePreviewText.split('·')[0]?.trim()]
+                          .filter(Boolean).join(' · ') || p.badgePreviewText}
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+              )
+            })()}
+          </CollapsibleCard>
+
           {/* ── GPS Map style ────────────────────────────────────────────────── */}
-          <CollapsibleCard title={p.mapCard} defaultOpen={false}
+          <CollapsibleCard title={p.mapCard}
             actions={<>
               <button className="btn btn-sm" style={{fontSize:10}}
                 onClick={()=>{
@@ -1147,7 +1283,7 @@ export default function ProfilesPage() {
           </CollapsibleCard>
 
           {/* ── Copertina settings ──────────────────────────────────────────── */}
-          <CollapsibleCard title={p.coverCard2} defaultOpen={false}
+          <CollapsibleCard title={p.coverCard2}
             actions={<>
               <button className="btn btn-sm btn-primary" style={{fontSize:10}}
                 onClick={()=>setCoverEditorOpen(true)}>

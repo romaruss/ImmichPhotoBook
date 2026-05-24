@@ -297,6 +297,31 @@ export default {
       diamond: 'Diamond',
       pin:     'Pin',
     },
+
+    // Badge config section
+    badgeCard:          'Photo badges',
+    badgeCardHint:      'Small label overlaid on each photo showing date and/or GPS location of the shot.',
+    badgeEnabled:       'Enable badges (default on/off for new generations)',
+    badgeShowDate:      'Show date',
+    badgeShowLocation:  'Show location',
+    badgePosition:      'Position',
+    badgePositions: {
+      'top-left':     'Top left',
+      'top-right':    'Top right',
+      'bottom-left':  'Bottom left',
+      'bottom-right': 'Bottom right',
+    },
+    badgeShape:         'Shape',
+    badgeShapes: {
+      rect:    'Rectangle',
+      rounded: 'Rounded',
+      pill:    'Pill',
+    },
+    badgeBgColor:       'Background',
+    badgeTextColor:     'Text colour',
+    badgeFontSize:      'Font size (px)',
+    badgePreview:       'Preview',
+    badgePreviewText:   '14 Jun 2024 · Paris',
   },
 
   // ── Page type editor ────────────────────────────────────────────────────────
@@ -367,6 +392,7 @@ export default {
     presetLabel:      'Preset:',
     noPreset:         '— no preset —',
     deletePresetTitle:'Delete preset',
+    revertPresetTitle:'Revert to saved preset',
     presetNamePlaceholder: 'Preset name…',
     savePresetBtn:    '+ Save preset',
     savePresetTitle:  'Save current settings as preset',
@@ -393,9 +419,13 @@ export default {
     tagClustering:  (min) => `Clustering ${min}min`,
     tagFavorites:   '★ Full page',
     tagFacesOff:    'Faces: off',
+    tagFacesOn:     'Faces: on',
     tagQuality:     (pct) => `Quality ≥${pct}%`,
     tagDedup:       (pct) => `Dedup ${pct}%`,
     tagRhythmOff:   'Rhythm: off',
+    tagRhythm:      'Rhythm',
+    tagMapFill:     'GPS map fill',
+    tagCaptions:    'Auto captions',
     tagDensity:     (pct) => `Density ${pct}%`,
     // Config modal sections
     sectionDensity:    'Album density',
@@ -432,6 +462,16 @@ export default {
     cfgMapHelp:         'When a layout has more slots than available photos, inserts a map with the GPS positions of the group photos.',
     cfgRhythmLabel:     'Alternate dense and minimal layouts',
     cfgRhythmHelp:      'Avoids placing too many 4–6 photo pages in a row — alternates with more spacious pages.',
+
+    sectionBadges:           'i) Photo badges',
+    cfgBadgeLabel:           'Add date/location badge to each photo',
+    cfgBadgeHelp:            'Overlays a small label on every photo slot showing the shot date and/or GPS location. Controlled independently per photo in the preview.',
+    tagBadges:               'Badges',
+
+    sectionEventCaptions:    'j) Event caption pages',
+    cfgEventCaptionsLabel:   'Insert a title page for each detected event',
+    cfgEventCaptionsHelp:    'When temporal clustering is active, adds an intro page at the start of each event with the date range and GPS location. Requires a page type with a caption slot in the profile.',
+    tagEventCaptions:        'Event titles',
   },
 
   // ── Smart config modal ──────────────────────────────────────────────────────
@@ -584,6 +624,9 @@ export default {
     mapRemove:      'Remove map',
     slotMenuCaption:'Caption',
     captionRemove:  'Remove',
+    addBadge:       '🏷 Add badge',
+    removeBadge:    '✕',
+    badgeMenuTitle: 'Badge',
     favoriteTitle:      'Favourite in Immich',
     captionBadgeTitle:  'Has caption in Immich',
     mismatch:      '↕↔ orientation mismatch',
