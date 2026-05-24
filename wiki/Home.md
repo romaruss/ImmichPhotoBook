@@ -52,6 +52,8 @@ PhotoBook Studio does **not** store or re-upload your photos. It reads thumbnail
 - **Print-ready output** — PDF with ICC color profiles (sRGB, FOGRA39/ISO Coated for CMYK offset printing), bleed and crop marks, correct DPI
 - **SVG export** — each page as an editable SVG, bundled in a ZIP
 - **GPS maps** — title and divider pages embed satellite/street maps from Stadia Maps or OpenStreetMap
+- **Photo badges** — optional date/location overlay on each photo, configurable per profile (shape, position, colors); deduplicated within each page
+- **Event caption pages** — first page of each temporal cluster auto-filled with date range and location when clustering is enabled
 - **Caption sync** — captions written in the editor can be synced back to Immich as EXIF descriptions
 - **Demo mode** — works without any Immich server; built-in demo albums using picsum.photos
 - **i18n** — Italian and English UI (more locales can be added)

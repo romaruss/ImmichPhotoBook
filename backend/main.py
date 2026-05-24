@@ -26,7 +26,8 @@ PROFILES_DIR = DATA_DIR / "profiles"
 CONFIG_PATH  = DATA_DIR / "config.json"
 
 # ─── DEMO MODE ───────────────────────────────────────────────────────────────
-_DEMO_MODE: bool = os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes")
+_DEMO_MODE: bool     = os.environ.get("DEMO_MODE",     "").lower() in ("1", "true", "yes")
+_DEV_TOOLS: bool     = os.environ.get("PHOTOBOOK_DEV", "").lower() in ("1", "true", "yes")
 
 # ─── AUTH & RATE LIMITING ─────────────────────────────────────────────────────
 # Set PHOTOBOOK_TOKEN env var to enable auth. If unset, access is unrestricted.
@@ -279,7 +280,7 @@ async def save_config(cfg: ConfigModel):
 @app.get("/api/config/test")
 async def test_config():
     ok = await ic.test_connection()
-    return {"connected": ok, "demo": _DEMO_MODE}
+    return {"connected": ok, "demo": _DEMO_MODE, "dev_tools": _DEV_TOOLS}
 
 CUSTOM_SIZES_PATH = DATA_DIR / "custom_sizes.json"
 
@@ -478,7 +479,7 @@ async def sync_caption_description(asset_id: str, body: CaptionSyncRequest):
 
 # ─── NEW UNIFIED LAYOUT GENERATOR ────────────────────────────────────────────
 
-from album_generator import generate_album
+from album_generator import generate_album, recalculate_from_items
 
 # In-memory store for last generation log (keyed by session, simplified to one global)
 _last_log: dict[str, str] = {}
@@ -687,18 +688,19 @@ async def generate_layout_endpoint(req: LayoutRequest):
 class RecalcRequest(BaseModel):
     photo_items: list[dict]   # photo items in desired order (no captions, no nulls)
     profile_id: str
+    gen_config: dict = {}     # generation options used for this layout
 
 @app.post("/api/layout/recalculate")
 async def recalculate_layout(req: RecalcRequest):
-    """Re-pack a custom-ordered list of photos into pages using the given profile."""
+    """Re-pack a custom-ordered list of photos into pages using the full generation algorithm."""
     path = PROFILES_DIR / f"{req.profile_id}.json"
     if not path.exists():
         raise HTTPException(404, "Profile not found")
     profile = json.loads(path.read_text())
     profile["id"] = req.profile_id
 
-    flow = rebuild_flow_from_photos(req.photo_items)
-    pages = generate_layout(flow, profile)
+    pages, log_text = recalculate_from_items(req.photo_items, profile, req.gen_config)
+    _last_log["latest"] = log_text
     return {"pages": pages}
 
 

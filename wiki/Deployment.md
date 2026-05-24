@@ -233,6 +233,7 @@ Set these in the **Variables** tab:
 | `PHOTOBOOK_TOKEN` | A strong secret |
 | `STADIA_MAPS_API_KEY` | Stadia Maps key (optional) |
 | `DEMO_MODE` | `true` for a public demo instance |
+| `PHOTOBOOK_DEV` | `true` to enable Advanced Config and Layout Log (developer mode) |
 
 Do **not** set `PORT` manually — Railway manages it.
 

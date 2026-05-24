@@ -31,10 +31,11 @@ function Shell() {
   const [latestVersion, setLatestVersion] = useState(null)
   const [demoMode, setDemoMode] = useState(false)
   const [demoDismissed, setDemoDismissed] = useState(false)
+  const [devTools, setDevTools] = useState(false)
 
   useEffect(() => {
     axios.get('/api/config/test')
-      .then(r => { setConnected(r.data.connected); setDemoMode(!!r.data.demo) })
+      .then(r => { setConnected(r.data.connected); setDemoMode(!!r.data.demo); setDevTools(!!r.data.dev_tools) })
       .catch(() => setConnected(false))
   }, [])
 
@@ -53,7 +54,7 @@ function Shell() {
     { path: '/profiles', label: t.nav.profiles,   icon: '📐' },
     { path: '/albums',   label: t.nav.albums,     icon: '🖼️' },
     { path: '/preview',  label: t.nav.preview,    icon: '📖' },
-    { path: '/deep-config', label: t.nav.deepConfig, icon: '🔧' },
+    ...(devTools ? [{ path: '/deep-config', label: t.nav.deepConfig, icon: '🔧' }] : []),
   ]
 
   const currentPath = '/' + location.pathname.split('/')[1]
@@ -163,7 +164,7 @@ function Shell() {
           <Route path="/profiles" element={<ProfilesPage />} />
           <Route path="/profiles/:pid" element={<ProfilesPage />} />
           <Route path="/albums"   element={<AlbumsPage />} />
-          <Route path="/preview"  element={<PreviewPage />} />
+          <Route path="/preview"  element={<PreviewPage devTools={devTools} />} />
           <Route path="/deep-config" element={<DeepConfigPage />} />
         </Routes>
       </main>

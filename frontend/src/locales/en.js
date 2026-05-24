@@ -608,7 +608,8 @@ export default {
     repositionMismatch: '↕↔ Reposition (orientation mismatch)',
     changePhoto:   '🔄 Replace',
     addCaption:    '💬 Caption',
-    removePhoto:   '🗑️ Remove',
+    removePhoto:          '🗑️ Remove',
+    removePermFromAlbum:  '⛔ Remove permanently from album',
     editCaption:   '✏️ Edit',
     emptySlot:     'empty slot',
     choosePhoto:   '📷 Choose photo',
@@ -666,6 +667,12 @@ export default {
     panelUsedTimes: (n) => `${n}× used`,
     panelNotUsedLabel: 'unused',
     panelPageHint:  (pages) => `Page ${pages.map(p=>p+1).join(', ')}`,
+    panelUsedInPages: (pages) => `Used — page ${pages.map(p=>p+1).join(', ')}`,
+    panelExcludedPermanent: 'Permanently removed from album',
+    panelExcludedQuality: (detail) => `Not used — low quality (${detail})`,
+    panelExcludedDuplicate: (detail) => `Not used — duplicate (${detail})`,
+    panelExcludedUnknown: (detail) => `Not used — ${detail || 'filtered out'}`,
+    panelNotUsedNoReason: 'Not used — exceeded page capacity',
     panelAlt:       (name, uses, pages) => {
       if (uses === 0) return `${name}\nUnused`
       if (pages.length) return `${name}\nPage ${pages.map(p=>p+1).join(', ')}`

@@ -15,6 +15,7 @@ Un **profilo di stampa** definisce tutto ciò che riguarda il libro fisico che v
 - [Bleed e Segni di Taglio](#bleed-e-segni-di-taglio)
 - [Margini — Uniformi, Per Lato e Duplex](#margini--uniformi-per-lato-e-duplex)
 - [Stile Didascalie](#stile-didascalie)
+- [Configurazione Badge Foto](#configurazione-badge-foto)
 - [Profili Colore](#profili-colore)
 - [Guida DPI per l'Export](#guida-dpi-per-lexport)
 
@@ -242,6 +243,27 @@ L'oggetto `caption_style` controlla come appare il testo negli slot di tipo `"ca
 | `bg` | string | Colore di riempimento dello sfondo per lo slot didascalia (es. `"#ffffff"` o `"transparent"`) |
 
 Il testo è multilinea; le didascalie lunghe vengono mandate a capo automaticamente e, se superano l'altezza dello slot, troncate con i puntini di sospensione.
+
+---
+
+## Configurazione Badge Foto
+
+L'oggetto `badge_config` in un profilo controlla l'aspetto dei badge foto automatici (overlay di data/posizione). I badge vengono abilitati o disabilitati per ogni generazione, ma il loro stile visivo è definito nel profilo.
+
+| Campo | Tipo | Predefinito | Descrizione |
+|-------|------|-------------|-------------|
+| `enabled` | boolean | `true` | Se i badge sono attivi per questo profilo |
+| `show_date` | boolean | `true` | Mostra la data nel badge |
+| `show_location` | boolean | `true` | Mostra la posizione (città/stato) nel badge |
+| `position` | string | `"bottom-left"` | Angolo del badge: `"top-left"`, `"top-right"`, `"bottom-left"`, `"bottom-right"` |
+| `shape` | string | `"rounded"` | Forma del badge: `"rect"` (angoli netti), `"rounded"`, `"pill"` |
+| `bg_color` | string | `"rgba(0,0,0,0.55)"` | Colore sfondo (CSS hex o rgba) |
+| `text_color` | string | `"#ffffff"` | Colore testo |
+| `font_size` | number | `11` | Dimensione font in punti |
+
+I badge vengono renderizzati nell'export PDF usando queste impostazioni. Nell'anteprima interattiva, i badge sono mostrati come overlay e possono essere rimossi singolarmente per ogni foto (o aggiunti tramite il menu 3 punti dello slot).
+
+Vedi [Generazione Album — Badge Foto](Album-Generation-IT.md#badge-foto) per come viene generato il contenuto dei badge.
 
 ---
 

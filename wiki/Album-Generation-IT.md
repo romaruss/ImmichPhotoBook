@@ -17,6 +17,8 @@ Il codice principale di generazione si trova in `backend/album_generator.py` (~1
 - [Fase 6 — Assegnazione Slot e Crop Face-Aware](#fase-6--assegnazione-slot-e-crop-face-aware)
 - [Alternanza del Ritmo](#alternanza-del-ritmo)
 - [Riempimento Mappa GPS](#riempimento-mappa-gps)
+- [Badge Foto](#badge-foto)
+- [Pagine Didascalia Evento](#pagine-didascalia-evento)
 - [Parametro Densità](#parametro-densità)
 - [Pipeline Smart Layout](#pipeline-smart-layout)
 - [Parametri Deep Config](#parametri-deep-config)
@@ -339,6 +341,53 @@ I parametri della mappa sono configurabili:
 | `grid_color` | `"#dee2e6"` | Colore delle linee della griglia |
 | `grid_lines` | 5 | Numero di linee griglia per asse |
 | `bbox_padding_deg` | 0.05 | Gradi di padding intorno al bounding box GPS |
+
+---
+
+## Badge Foto
+
+Quando i **Badge Foto** sono abilitati nelle opzioni di generazione, ogni foto può mostrare una piccola etichetta sovrapposta con la data e/o la posizione.
+
+### Fonti dei dati badge
+
+- **Data**: presa dal campo EXIF `dateTimeOriginal`, formattata come `giorno mese anno` (es. `12 marzo 2024`). I nomi dei mesi seguono la lingua impostata nella configurazione (italiano o inglese).
+- **Posizione**: città o stato dai dati EXIF di Immich (campo `city`, con fallback a `state`).
+
+### Deduplicazione badge
+
+Se più foto sulla stessa pagina produrrebbero lo stesso testo badge, solo la prima foto della pagina mostra il badge. Le foto successive con lo stesso testo badge lo hanno rimosso per evitare la ripetizione visiva.
+
+### Aspetto dei badge
+
+Lo stile dei badge (forma, posizione, colori, dimensione font) è configurato per profilo — vedi [Profili di Stampa — Configurazione Badge Foto](Print-Profiles-IT.md#configurazione-badge-foto).
+
+### Editor interattivo
+
+Nell'editor di anteprima, i badge sono mostrati come overlay su ogni foto. Puoi:
+- Rimuovere un badge cliccando il pulsante **✕** su di esso.
+- Aggiungere un badge a qualsiasi foto che ha dati di data o posizione tramite il **menu 3 punti → Aggiungi badge**.
+
+I badge vengono renderizzati nel PDF esportato usando la configurazione badge del profilo.
+
+---
+
+## Pagine Didascalia Evento
+
+Quando sia il **Clustering Temporale** che le **Pagine Didascalia Evento** sono abilitati, la prima pagina di ogni cluster evento riceve automaticamente una didascalia con l'intervallo di date e la posizione principale del cluster.
+
+### Formato del testo didascalia
+
+```
+12–15 marzo 2024 · Firenze
+```
+
+L'intervallo di date va dalla prima all'ultima foto del cluster. Se entrambe le date sono nello stesso mese, viene mostrato solo l'intervallo dei giorni (`12–15 marzo 2024`). Se coprono mesi diversi, entrambi vengono scritti per esteso (`28 feb – 3 marzo 2024`). I nomi dei mesi seguono la lingua configurata.
+
+La posizione è la città/stato che appare più frequentemente tra le foto del cluster (voto di maggioranza GPS).
+
+### Selezione tipo pagina
+
+La didascalia evento viene inserita in uno **slot didascalia** sulla prima pagina del cluster — mai su un layout a foto intera. L'algoritmo cerca un tipo di pagina nel profilo che abbia **almeno uno slot foto e almeno uno slot didascalia**. Se nel profilo non esiste un tipo di pagina misto del genere, la didascalia automatica viene saltata per quel cluster.
 
 ---
 

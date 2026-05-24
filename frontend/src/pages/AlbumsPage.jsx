@@ -530,7 +530,7 @@ export default function AlbumsPage() {
 
         // Shift page_num by +1 for the divider inserted at index 0
         const correctedLogs = (layoutData.page_logs || []).map(pl => ({...pl, page_num: pl.page_num + 1}))
-        sessionStorage.setItem('photobook_layout', JSON.stringify({ ...layoutData, page_logs: correctedLogs, pages }))
+        sessionStorage.setItem('photobook_layout', JSON.stringify({ ...layoutData, page_logs: correctedLogs, pages, gen_config: genConfig }))
         if (Object.keys(shiftedTransforms).length > 0)
           sessionStorage.setItem('photobook_transforms', JSON.stringify(shiftedTransforms))
         else
@@ -594,6 +594,7 @@ export default function AlbumsPage() {
           ...results[0].data,
           pages: allPages,
           page_logs: allPageLogs,
+          gen_config: genConfig,
           _multi_album: true,
           _album_count: results.length,
           _album_ids:   results.map(r => r.data.album?.id).filter(Boolean),

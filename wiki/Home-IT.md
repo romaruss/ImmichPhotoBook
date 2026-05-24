@@ -52,6 +52,8 @@ PhotoBook Studio **non** archivia né ricarica le tue foto. Legge thumbnail e me
 - **Output pronto per la stampa** — PDF con profili colore ICC (sRGB, FOGRA39/ISO Coated per offset CMYK), bleed e segni di taglio, DPI corretto
 - **Export SVG** — ogni pagina come SVG modificabile, in un bundle ZIP
 - **Mappe GPS** — le pagine di titolo e divisore incorporano mappe satellitari/stradali da Stadia Maps o OpenStreetMap
+- **Badge foto** — overlay opzionale di data/posizione su ogni foto, configurabile per profilo (forma, posizione, colori); deduplicati all'interno di ogni pagina
+- **Pagine didascalia evento** — la prima pagina di ogni cluster temporale viene riempita automaticamente con l'intervallo di date e la posizione quando il clustering è abilitato
 - **Sincronizzazione didascalie** — le didascalie scritte nell'editor possono essere risincronizzate in Immich come descrizioni EXIF
 - **Modalità demo** — funziona senza alcun server Immich; album demo integrati tramite picsum.photos
 - **i18n** — interfaccia in italiano e inglese (è possibile aggiungere altre lingue)

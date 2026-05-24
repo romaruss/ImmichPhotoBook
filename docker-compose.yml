@@ -16,6 +16,9 @@ services:
       # Lascia vuoto o rimuovi la riga per disabilitare (accesso libero in LAN).
       # Genera un token: python3 -c "import secrets; print(secrets.token_hex(32))"
       - PHOTOBOOK_TOKEN=${PHOTOBOOK_TOKEN:-}
+      # Strumenti sviluppo: abilita Advanced Config e Layout Log nell'UI.
+      # Imposta a "true" per abilitare, lascia vuoto o rimuovi per disabilitare.
+      - PHOTOBOOK_DEV=${PHOTOBOOK_DEV:-}
     # ── Connessione alla rete di Immich ──────────────────────────────────────
     # Decommenta la riga qui sotto se Immich gira con docker-compose
     # e sostituisci "immich_default" con il nome della tua rete Immich.

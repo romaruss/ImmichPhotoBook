@@ -17,6 +17,8 @@ The main generation code lives in `backend/album_generator.py` (~1434 lines) and
 - [Step 6 — Slot Assignment and Face-Aware Crop](#step-6--slot-assignment-and-face-aware-crop)
 - [Rhythm Alternation](#rhythm-alternation)
 - [GPS Map Fill](#gps-map-fill)
+- [Photo Badges](#photo-badges)
+- [Event Caption Pages](#event-caption-pages)
 - [Density Parameter](#density-parameter)
 - [Smart Layout Pipeline](#smart-layout-pipeline)
 - [Deep Config Parameters](#deep-config-parameters)
@@ -339,6 +341,53 @@ Map parameters are configurable:
 | `grid_color` | `"#dee2e6"` | Grid line color |
 | `grid_lines` | 5 | Number of grid lines per axis |
 | `bbox_padding_deg` | 0.05 | Degrees of padding around GPS bounding box |
+
+---
+
+## Photo Badges
+
+When **Photo Badges** is enabled in the generation options, each photo can display a small label overlay showing its date and/or location.
+
+### Badge data sources
+
+- **Date**: taken from the EXIF `dateTimeOriginal` field, formatted as `day month year` (e.g. `12 March 2024`). Month names follow the language set in the configuration (Italian or English).
+- **Location**: city or state from the Immich EXIF data (`city` field, falling back to `state`).
+
+### Badge deduplication
+
+If multiple photos on the same page would produce identical badge text, only the first photo on that page shows the badge. Subsequent photos with the same badge text have it removed to avoid visual repetition.
+
+### Badge appearance
+
+Badge style (shape, position, colors, font size) is configured per profile — see [Print Profiles — Photo Badge Configuration](Print-Profiles.md#photo-badge-configuration).
+
+### Interactive editor
+
+In the preview editor, badges are shown as overlays on each photo. You can:
+- Remove a badge by clicking the **✕** button on it.
+- Add a badge to any photo that has date or location data via the **3-dot menu → Add badge**.
+
+Badges are rendered in the exported PDF using the profile's badge configuration.
+
+---
+
+## Event Caption Pages
+
+When both **Temporal Clustering** and **Event Caption Pages** are enabled, the first page of each event cluster automatically receives a caption overlay showing the cluster's date range and majority location.
+
+### Caption text format
+
+```
+12–15 March 2024 · Florence
+```
+
+Date range spans from the first to the last photo in the cluster. If both dates are in the same month, only the day range is shown (`12–15 March 2024`). If they span months, both are written in full (`28 Feb – 3 March 2024`). Month names follow the configured language.
+
+The location is the city/state that appears most frequently across photos in the cluster (GPS majority vote).
+
+### Page type selection
+
+The event caption is placed in a **caption slot** on the first page of the cluster — never on a full-page-photo layout. The algorithm looks for a page type in the profile that has **both at least one photo slot and at least one caption slot**. If no such mixed page type exists in the profile, the automatic caption is skipped for that cluster.
 
 ---
 

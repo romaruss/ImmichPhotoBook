@@ -38,7 +38,7 @@ Configuration → Print profile → Generate layout → Edit preview → Export 
 - **Event caption pages** — auto-fills a caption slot on the first page of each detected event with date range and GPS location
 - **Print profiles** — A4/A3/A5/20×20/30×30/custom, portrait/landscape, margins, bleed; preset save/load
 - **Page type editor** — drag-to-resize slots, snap, 50 built-in layouts
-- **Interactive preview** — swap/pan/zoom photos, inline captions, 2-page spread, add/remove pages
+- **Interactive preview** — swap/pan/zoom photos, inline captions, 2-page spread, add/remove pages, recalculate layout from current photos
 - **Cover & dividers** — front/back/spine editor, album dividers with GPS map and photo slots
 - **GPS maps** — Stadia Maps or OpenStreetMap fallback
 - **Export** — PDF (DPI 150–600, colour profiles, crop marks) or SVG ZIP
@@ -97,6 +97,7 @@ Then use `http://immich_server:2283` as the Immich URL in Configuration.
 | `STADIA_MAPS_API_KEY` | *(empty)* | Stadia Maps tile styles (optional, OSM fallback if absent) |
 | `TZ` | `Europe/Rome` | Timezone |
 | `DEMO_MODE` | *(empty)* | Set to `true` to run with built-in sample data (no Immich needed) |
+| `PHOTOBOOK_DEV` | *(empty)* | Set to `true` to show the advanced config (Deep Config) menu |
 
 Persistent data is stored in a Docker volume mounted at `/data` inside the container.
 

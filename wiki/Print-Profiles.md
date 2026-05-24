@@ -15,6 +15,7 @@ A **print profile** defines everything about the physical book you want to produ
 - [Bleed and Crop Marks](#bleed-and-crop-marks)
 - [Margins — Uniform vs Per-Side vs Duplex](#margins--uniform-vs-per-side-vs-duplex)
 - [Caption Style](#caption-style)
+- [Photo Badge Configuration](#photo-badge-configuration)
 - [Color Profiles](#color-profiles)
 - [Export DPI Guide](#export-dpi-guide)
 
@@ -242,6 +243,27 @@ The `caption_style` object controls how text appears in `"caption"` type slots:
 | `bg` | string | Background fill color for the caption slot (e.g. `"#ffffff"` or `"transparent"`) |
 
 Text is multi-line; long captions are automatically wrapped and, if they exceed the slot height, truncated with an ellipsis.
+
+---
+
+## Photo Badge Configuration
+
+The `badge_config` object in a profile controls the appearance of automatic photo badges (date/location overlays). Badges are enabled or disabled per generation run, but their visual style is defined in the profile.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `true` | Whether badges are active for this profile |
+| `show_date` | boolean | `true` | Show the date in the badge |
+| `show_location` | boolean | `true` | Show the location (city/state) in the badge |
+| `position` | string | `"bottom-left"` | Badge corner: `"top-left"`, `"top-right"`, `"bottom-left"`, `"bottom-right"` |
+| `shape` | string | `"rounded"` | Badge shape: `"rect"` (sharp corners), `"rounded"`, `"pill"` |
+| `bg_color` | string | `"rgba(0,0,0,0.55)"` | Background color (CSS hex or rgba) |
+| `text_color` | string | `"#ffffff"` | Text color |
+| `font_size` | number | `11` | Font size in points |
+
+Badges are rendered in the PDF export using these settings. In the interactive preview, badges are shown as overlays and can be removed individually per photo (or added via the 3-dot slot menu).
+
+See [Album Generation — Photo Badges](Album-Generation.md#photo-badges) for how badge content is generated.
 
 ---
 

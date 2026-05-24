@@ -219,7 +219,7 @@ function PhotoPickerModal({ assets, allAlbumAssets, albumIdx, albumNames, usageM
 }
 
 
-function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, onDragStart, onNavigate, highlightedAsset, onClearHighlight }) {
+function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, onDragStart, onNavigate, highlightedAsset, onClearHighlight, excludedPhotos = [], permanentlyRemoved = [] }) {
   const t = useT()
   const tp = t.preview
   const [filter, setFilter]         = useState('')
@@ -239,6 +239,9 @@ function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, o
     ? assets.filter(a => (a.type||'IMAGE').toUpperCase() !== 'VIDEO')
     : [...assets].filter(a => (a.type||'IMAGE').toUpperCase() !== 'VIDEO')
         .sort((a,b)=>(a.localDateTime||'').localeCompare(b.localDateTime||''))
+
+  const excludedMap = Object.fromEntries((excludedPhotos||[]).map(e => [e.asset_id, e]))
+  const permRemovedSet = new Set(permanentlyRemoved)
   const filtered = sortedAssets.filter(a => {
     const uses = usageMap[a.id] || 0
     if (statusFilter === 'unused' && uses > 0)  return false
@@ -283,7 +286,7 @@ function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, o
 
   return (
     <>
-    {/* Modal anteprima foto non usata */}
+    {/* Modal anteprima foto */}
     {previewAsset && createPortal(
       <>
         <div
@@ -311,26 +314,58 @@ function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, o
                 lineHeight:1,
               }}>✕</button>
             {/* Immagine */}
-            <img
-              src={`/api/thumb/${previewAsset.id}?size=preview`}
-              alt={previewAsset.originalFileName || previewAsset.id}
-              style={{
-                maxWidth:'85vw', maxHeight:'80vh',
-                objectFit:'contain',
-                borderRadius:6,
-                boxShadow:'0 8px 40px rgba(0,0,0,0.8)',
-                border:'2px solid #e05050',
-              }}
-            />
-            {/* Nome file */}
-            <p style={{
-              fontSize:12, color:'rgba(255,255,255,0.7)',
-              fontFamily:'var(--font-mono)', textAlign:'center',
-              maxWidth:'80vw', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
-            }}>
-              {previewAsset.originalFileName || previewAsset.id}
-              <span style={{color:'#e05050', marginLeft:8}}>● non usata</span>
-            </p>
+            {(()=>{
+              const uses  = usageMap[previewAsset.id] || 0
+              const pages = usagePages[previewAsset.id] || []
+              const excl  = excludedMap[previewAsset.id]
+              const isPerm = permRemovedSet.has(previewAsset.id)
+              const borderClr = uses > 0 ? '#4ac585' : '#e05050'
+              let statusLabel, statusColor
+              if (uses > 0) {
+                statusLabel = tp.panelUsedInPages(pages)
+                statusColor = '#4ac585'
+              } else if (isPerm) {
+                statusLabel = tp.panelExcludedPermanent
+                statusColor = '#e05050'
+              } else if (excl) {
+                const r = excl.reason || ''
+                if (r === 'quality')
+                  statusLabel = tp.panelExcludedQuality(excl.detail || '')
+                else if (r.startsWith('duplicate'))
+                  statusLabel = tp.panelExcludedDuplicate(excl.detail || '')
+                else
+                  statusLabel = tp.panelExcludedUnknown(excl.detail || '')
+                statusColor = '#e05050'
+              } else {
+                statusLabel = tp.panelNotUsedNoReason
+                statusColor = '#e89a3a'
+              }
+              return (<>
+                <img
+                  src={`/api/thumb/${previewAsset.id}?size=preview`}
+                  alt={previewAsset.originalFileName || previewAsset.id}
+                  style={{
+                    maxWidth:'85vw', maxHeight:'76vh',
+                    objectFit:'contain', borderRadius:6,
+                    boxShadow:'0 8px 40px rgba(0,0,0,0.8)',
+                    border:`2px solid ${borderClr}`,
+                  }}
+                />
+                <div style={{ textAlign:'center', maxWidth:'80vw' }}>
+                  <p style={{
+                    fontSize:12, color:'rgba(255,255,255,0.75)',
+                    fontFamily:'var(--font-mono)',
+                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+                    marginBottom:4,
+                  }}>
+                    {previewAsset.originalFileName || previewAsset.id}
+                  </p>
+                  <p style={{ fontSize:11, color: statusColor, fontFamily:'var(--font-mono)' }}>
+                    {statusLabel}
+                  </p>
+                </div>
+              </>)
+            })()}
           </div>
         </div>
       </>,
@@ -553,7 +588,8 @@ function AlbumPanel({ assets, presorted, usageMap, usagePages, open, onToggle, o
 // Ogni slot ha 4 handle (top/bottom/left/right).
 // Trascinare un handle sposta quel bordo e, se c'è uno slot adiacente, lo ridimensiona.
 // Se non c'è adiacente, il bordo viene spostato liberamente (entro i limiti della pagina).
-function SlotDividers({ items, pw, ph, profile, scale, onUpdateItems, pageNum }) {
+function SlotDividers({ items: _rawItems, pw, ph, profile, scale, onUpdateItems, pageNum }) {
+  const items = _rawItems || []
   const t = useT(); const tp = t.preview
   const dragRef = useRef(null)
   const [ctrlHeld, setCtrlHeld] = useState(false)
@@ -1340,7 +1376,8 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                         onTransformChange, onSwapTransforms, onSlotRemoved,
                         onUpdatePage, onOpenPicker, onAddCaption,
                         onDrop, maxW=570, onPhotoClick, onAddMap, isActive=false, zoomFactor=1,
-                        dividerMapUrl, assets, assetById={}, onSaveCustomLayout }) {
+                        dividerMapUrl, assets, assetById={}, onSaveCustomLayout,
+                        onRemovePermanently }) {
   const t = useT(); const tp = t.preview
   const [pw,ph]=getPageDims(profile)
   const containerRef = useRef(null)
@@ -1834,6 +1871,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                     {icon:'🔄', label:tp.changePhoto, action:()=>{ onOpenPicker(pageIdx,slotIdx); setSlotMenu(null) }},
                     {icon:'💬', label:tp.addCaption, action:()=>{ onAddCaption(pageIdx,slotIdx); setSlotMenu(null) }},
                     {icon:'🗑️', label:tp.removePhoto, action:()=>{ removeItem(slotIdx); setSlotMenu(null) }, danger:true},
+                    {icon:'⛔', label:tp.removePermFromAlbum, action:()=>{ const aid=item.asset_id; removeItem(slotIdx); onRemovePermanently?.(aid); setSlotMenu(null) }, danger:true},
                   ])
                 }}>⋮</button>
               )}
@@ -2214,7 +2252,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function PreviewPage() {
+export default function PreviewPage({ devTools = false }) {
   const t = useT(); const tp = t.preview
   const navigate=useNavigate()
   const [layout,setLayout]=useState(null)
@@ -2262,6 +2300,9 @@ export default function PreviewPage() {
     const stored = sessionStorage.getItem('photobook_layout')
     if (!stored) return
     let data = JSON.parse(stored)
+    if (data.pages) {
+      data = { ...data, pages: data.pages.map(pg => pg.items ? pg : {...pg, items: []}) }
+    }
     if (data.pages && data.pages.length % 2 === 1) {
       data = { ...data, pages: ensureEvenPages(data.pages, data.profile) }
     }
@@ -2369,7 +2410,7 @@ export default function PreviewPage() {
   useEffect(()=>{
     if(!layout) return
     const seen=new Set()
-    layout.pages.forEach(pg=>pg.items.forEach(id=>{
+    layout.pages.forEach(pg=>(pg.items||[]).forEach(id=>{
       const item=id.item
       if(item?.type==='photo'&&!photoAspects[item.asset_id]&&!seen.has(item.asset_id)){
         seen.add(item.asset_id)
@@ -2402,7 +2443,7 @@ export default function PreviewPage() {
   const usageMap   = {}
   const usagePages = {}  // assetId → [pageIdx, ...]
   if(layout) {
-    layout.pages.forEach((pg, pi) => pg.items.forEach(id => {
+    layout.pages.forEach((pg, pi) => (pg.items||[]).forEach(id => {
       if(id.item?.type==='photo') {
         const aid = id.item.asset_id
         usageMap[aid]   = (usageMap[aid]   || 0) + 1
@@ -2432,6 +2473,14 @@ export default function PreviewPage() {
 
   const updatePage=useCallback((idx,newPage)=>{
     setLayout(prev=>{const pages=[...prev.pages];pages[idx]=newPage;return persist({...prev,pages})})
+    setHasChanges(true)
+  },[])
+
+  const removePermanently=useCallback((assetId)=>{
+    setLayout(prev=>{
+      const perm=[...new Set([...(prev.permanently_removed||[]),assetId])]
+      return persist({...prev,permanently_removed:perm})
+    })
     setHasChanges(true)
   },[])
 
@@ -2610,7 +2659,7 @@ export default function PreviewPage() {
   // ── Helper: collect photo items from a page range (deduplicated) ──────────
   const collectPhotos = (pages, from, to) => {
     const items=[], seen=new Set()
-    pages.slice(from, to).forEach(pg=>pg.items.forEach(id=>{
+    pages.slice(from, to).forEach(pg=>(pg.items||[]).forEach(id=>{
       const it=id.item
       if(it?.type==='photo'&&!seen.has(it.asset_id)){seen.add(it.asset_id);items.push(it)}
     }))
@@ -2638,40 +2687,41 @@ export default function PreviewPage() {
 
   // ── 1. Consolida fino alla pagina corrente, ricalcola il resto ──────────────
   //    - Blocca pagine 0..currentPage (inclusa)
-  //    - Colleziona tutte le foto delle pagine successive (currentPage+1..end)
-  //    - Aggiunge le foto dell'album non ancora presenti nelle pagine bloccate
-  //      con localDateTime >= la più recente delle pagine bloccate
-  //    - Deduplicazione per asset_id
-  //    - Invia al backend per ridistribuzione
+  //    - Copertine e divisori DOPO currentPage restano intatti (posizione preservata)
+  //    - Pagine fotografiche successive vengono ricostruite con le opzioni originali
+  //    - Reinserisce foto tolte dall'utente (non quelle rimosse definitivamente o
+  //      escluse dall'algoritmo per qualità/duplicati)
   const recalcFromNext=async()=>{
-    const lockUntil=Math.max(0,currentPage)  // 0-based: blocca pagine 0..lockUntil incluso
+    const lockUntil=Math.max(0,currentPage)
     setRecalculating(true)
     try{
       const lockedPages=layout.pages.slice(0,lockUntil+1)
       const restPages  =layout.pages.slice(lockUntil+1)
 
+      const isProtected=pg=>!!(pg._album_cover||pg._album_divider||pg._album_separator)
+
       // Foto già nelle pagine bloccate → da escludere
       const lockedIds=new Set()
-      lockedPages.forEach(pg=>pg.items.forEach(id=>{
+      lockedPages.forEach(pg=>(pg.items||[]).forEach(id=>{
         if(id.item?.type==='photo') lockedIds.add(id.item.asset_id)
       }))
 
-      // Data più recente tra le foto bloccate → soglia per includere foto non usate
-      let latestLocked=''
-      lockedPages.forEach(pg=>pg.items.forEach(id=>{
-        if(id.item?.type==='photo'&&(id.item.localDateTime||'')>latestLocked)
-          latestLocked=id.item.localDateTime||''
-      }))
+      // Foto rimosse definitivamente dall'utente → non reinserire
+      const permRemovedIds=new Set(layout.permanently_removed||[])
 
-      // Foto dalle pagine successive (già nel layout, non bloccate)
-      const restPhotos=collectPhotos(restPages,0)
+      // Foto escluse dall'algoritmo (qualità, duplicati) → non reinserire
+      const excludedIds=new Set((layout.excluded_photos||[]).map(e=>e.asset_id))
+
+      // Foto dalle pagine fotografiche del resto (non protette)
+      const photoRestPages=restPages.filter(pg=>!isProtected(pg))
+      const restPhotos=collectPhotos(photoRestPages,0)
       const seenInRest=new Set(restPhotos.map(p=>p.asset_id))
 
-      // Foto dell'album non usate da nessuna parte e con data >= latestLocked
+      // Foto dell'album non nelle pagine bloccate, non rimosse definitivamente,
+      // non escluse dall'algoritmo, non già presenti nel resto
       const unusedPhotos=albumAssets
         .filter(a=>(a.type||'IMAGE').toUpperCase()!=='VIDEO')
-        .filter(a=>!lockedIds.has(a.id)&&!seenInRest.has(a.id))
-        .filter(a=>!latestLocked||(a.localDateTime||'')>=latestLocked)
+        .filter(a=>!lockedIds.has(a.id)&&!permRemovedIds.has(a.id)&&!excludedIds.has(a.id)&&!seenInRest.has(a.id))
         .map(asset=>{
           const exif=asset.exifInfo||{}
           const desc=(exif.description||asset.description||'').trim()
@@ -2680,7 +2730,7 @@ export default function PreviewPage() {
             localDateTime:asset.localDateTime||'',exif,has_caption:!!desc,_updated_at:asset.updatedAt||''}
         })
 
-      // Unisci: prima foto dalle pagine rest, poi le non usate; dedup
+      // Pool finale: foto dal resto + foto non usate; dedup
       const seenFinal=new Set()
       const photoItems=[...restPhotos,...unusedPhotos].filter(p=>{
         if(seenFinal.has(p.asset_id)) return false
@@ -2689,8 +2739,28 @@ export default function PreviewPage() {
 
       if(!photoItems.length){showToast(tp.recalcToasts.noPhotos,'info');return}
 
-      const r=await axios.post('/api/layout/recalculate',{photo_items:photoItems,profile_id:layout.profile.id})
-      setLayout(prev=>persist({...prev,pages:[...lockedPages,...r.data.pages],page_logs:null}))
+      const r=await axios.post('/api/layout/recalculate',{
+        photo_items:photoItems,
+        profile_id:layout.profile.id,
+        gen_config:layout.gen_config||{},
+      })
+
+      // Interleave: mantieni le pagine protette nelle loro posizioni originali
+      const newRecalcPages=(r.data.pages||[]).map(pg=>({...pg,items:pg.items||[]}))
+      let rIdx=0
+      const newRestPages=[]
+      for(const pg of restPages){
+        if(isProtected(pg)){
+          newRestPages.push(pg)
+        } else {
+          if(rIdx<newRecalcPages.length) newRestPages.push(newRecalcPages[rIdx++])
+          // se il ricalcolo restituisce meno pagine, la pagina viene eliminata
+        }
+      }
+      // Eventuali pagine ricalcolate in eccesso → append
+      while(rIdx<newRecalcPages.length) newRestPages.push(newRecalcPages[rIdx++])
+
+      setLayout(prev=>persist({...prev,pages:[...lockedPages,...newRestPages],page_logs:null}))
       setHasChanges(false)
       showToast(tp.recalcToasts.fromNext(lockUntil+1),'success')
     }catch{showToast(tp.recalcToasts.recalcError,'error')}
@@ -2922,7 +2992,7 @@ export default function PreviewPage() {
               />
             )}
           </div>
-          {layout?.page_logs?.length > 0 && (
+          {devTools && layout?.page_logs?.length > 0 && (
             <button className="btn w-full" style={{fontSize:11,marginTop:6}}
               onClick={()=>setLogViewerOpen(true)}>
               {tp.logBtn}
@@ -2973,7 +3043,7 @@ export default function PreviewPage() {
                   {page.page_type?.label||tp.pageFallback}
                 </p>
                 <p className="text-xs text-muted">
-                  {page.items.filter(i=>i.item?.type==='photo').length}📷 {page.items.filter(i=>i.item?.type==='caption').length}💬 {page.items.filter(i=>!i.item).length}○
+                  {(page.items||[]).filter(i=>i.item?.type==='photo').length}📷 {(page.items||[]).filter(i=>i.item?.type==='caption').length}💬 {(page.items||[]).filter(i=>!i.item).length}○
                 </p>
               </div>
               {/* Per-page actions */}
@@ -3274,7 +3344,8 @@ export default function PreviewPage() {
                       dividerMapUrl={dividerMapUrls[leftIdx]}
                       assets={allAlbumAssets[leftPage?._album_idx??0]??albumAssets}
                       assetById={assetById}
-                      onSaveCustomLayout={saveCustomLayout}/>
+                      onSaveCustomLayout={saveCustomLayout}
+                      onRemovePermanently={removePermanently}/>
                   ) : (
                     <CoverSpreadPage
                       coverStyle={cover.inside_front||DEFAULT_COVER_INSIDE}
@@ -3307,7 +3378,8 @@ export default function PreviewPage() {
                       dividerMapUrl={dividerMapUrls[rightIdx]}
                       assets={allAlbumAssets[rightPage?._album_idx??0]??albumAssets}
                       assetById={assetById}
-                      onSaveCustomLayout={saveCustomLayout}/>
+                      onSaveCustomLayout={saveCustomLayout}
+                      onRemovePermanently={removePermanently}/>
                   ) : (
                     <CoverSpreadPage
                       coverStyle={cover.inside_back||DEFAULT_COVER_INSIDE}
@@ -3346,6 +3418,7 @@ export default function PreviewPage() {
             assets={allAlbumAssets[pages[currentPage]?._album_idx??0]??albumAssets}
             assetById={assetById}
             onSaveCustomLayout={saveCustomLayout}
+            onRemovePermanently={removePermanently}
           />
         )}
         </div>{/* end canvas area */}
@@ -3363,6 +3436,8 @@ export default function PreviewPage() {
         onNavigate={pi=>setCurrentPage(pi)}
         highlightedAsset={highlightedAsset}
         onClearHighlight={()=>setHighlightedAsset(null)}
+        excludedPhotos={layout?.excluded_photos || []}
+        permanentlyRemoved={layout?.permanently_removed || []}
       />
 
       {photoPicker&&(
@@ -3426,7 +3501,7 @@ export default function PreviewPage() {
       )}
 
       {toast&&<div className={`toast ${toast.type}`}>{toast.msg}</div>}
-  {logViewerOpen && layout?.page_logs?.length > 0 && (
+  {devTools && logViewerOpen && layout?.page_logs?.length > 0 && (
     <LogViewer
       pageLogs={layout.page_logs}
       excludedPhotos={layout.excluded_photos || []}

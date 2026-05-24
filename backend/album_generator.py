@@ -1000,7 +1000,7 @@ def _badge_date_str(photo: Photo, lang: str = "it") -> str:
     return _fmt_date(dt, lang)
 
 
-def _badge_location_str(photo: Photo) -> str:
+def _badge_location_str(photo: Photo, lang: str = "it") -> str:
     exif = photo.get("exifInfo") or {}
     return (exif.get("city") or exif.get("state") or "").strip()
 
@@ -1009,7 +1009,7 @@ def _make_photo_item(photo: Photo, add_badges: bool = False, lang: str = "it") -
     exif = photo.get("exifInfo") or {}
     desc = (exif.get("description") or photo.get("description") or "").strip()
     badge_date = _badge_date_str(photo, lang)
-    badge_loc  = _badge_location_str(photo)
+    badge_loc  = _badge_location_str(photo, lang)
     item: Item = {
         "type":             "photo",
         "asset_id":         photo["id"],
@@ -1032,10 +1032,10 @@ def _make_photo_item(photo: Photo, add_badges: bool = False, lang: str = "it") -
 
 # ── Event caption helpers ─────────────────────────────────────────────────────
 
-def _event_majority_location(photos: list[Photo]) -> str:
-    """Return the most common city/state among event photos."""
+def _event_majority_location(photos: list[Photo], lang: str = "it") -> str:
+    """Return the most common location (POI or city) among event photos."""
     from collections import Counter
-    locations = [_badge_location_str(p) for p in photos if _badge_location_str(p)]
+    locations = [_badge_location_str(p, lang) for p in photos if _badge_location_str(p, lang)]
     if not locations:
         return ""
     return Counter(locations).most_common(1)[0][0]
@@ -1225,6 +1225,16 @@ def _make_pages_from_group(
         # Assegna foto agli slot rispettando orientamento
         assigned = _assign_to_slots(chunk, slots, page_ar)
 
+        # Favorite hero guarantee: ensure the favorite (chunk[0]) lands in the
+        # largest photo slot (hero slot), swapping with whoever is there.
+        if favs_full and chunk and chunk[0].get("isFavorite") and len(chunk) > 1:
+            photo_slot_idx = [i for i, s in enumerate(slots) if s.get("slot_type") != "caption"]
+            if photo_slot_idx:
+                hero_idx = max(photo_slot_idx, key=lambda i: slots[i].get("w", 0) * slots[i].get("h", 0))
+                fav_idx  = next((i for i, p in enumerate(assigned) if p is not None and p.get("isFavorite")), None)
+                if fav_idx is not None and fav_idx != hero_idx:
+                    assigned[fav_idx], assigned[hero_idx] = assigned[hero_idx], assigned[fav_idx]
+
         items: list[dict] = []
         page_num = page_offset + len(pages)
 
@@ -1371,6 +1381,19 @@ def _make_pages_from_group(
             'is_dense':n_slots>=3,
             'n_photos_with_desc':n_chunk_with_desc,
             'n_caption_slots':n_cap_sl})
+        # Deduplicate badges within the page: same text → keep only first occurrence
+        if photo_badges:
+            seen_badge_texts: set[str] = set()
+            for id_ in items:
+                it = id_.get("item")
+                if it and it.get("type") == "photo" and it.get("badges"):
+                    unique = []
+                    for b in it["badges"]:
+                        if b.get("text") not in seen_badge_texts:
+                            seen_badge_texts.add(b.get("text", ""))
+                            unique.append(b)
+                    it["badges"] = unique
+
         pages.append({'page_type_id':tid,'page_type':pt,'items':items})
         _first_page = False
 
@@ -1523,7 +1546,7 @@ def generate_album(
         # Compute event caption text for this cluster (injected into first page's caption slot)
         _event_cap_text = ""
         if event_caption_pages and cfg.get("temporal_clustering") and label.startswith("cluster") and group:
-            loc  = _event_majority_location(group)
+            loc  = _event_majority_location(group, _lang)
             date = _event_date_range_str(group, _lang)
             parts = [p for p in [loc, date] if p]
             if parts:
@@ -1566,4 +1589,84 @@ def generate_album(
 
     return all_pages, transforms, "\n".join(log), all_page_logs, all_excluded
 
+
+def recalculate_from_items(photo_items: list[dict], profile: dict, config: dict) -> tuple[list[dict], str]:
+    """
+    Re-run _make_pages_from_group on already-processed photo items (from a prior layout).
+    Items use layout format (asset_id, exif, isFavorite …) which is converted to Photo
+    format expected by the scoring / placement engine.
+    Quality filtering and dedup are NOT re-applied — items are taken as-is.
+    Returns: (pages, log_text)
+    """
+    log: list[str] = []
+    log.append("═══ PhotoBook Studio — Log ricalcolo ═══")
+    log.append(f"  Profilo: {profile.get('name','?')}")
+    log.append(f"  Foto in input: {len(photo_items)}")
+
+    page_types = profile.get("page_types") or FALLBACK_PAGE_TYPES
+    profile_orientation = profile.get("orientation", "portrait")
+    page_types = [
+        pt for pt in page_types
+        if pt.get("enabled", True)
+        and pt.get("orientation", "any") in ("any", profile_orientation)
+    ] or FALLBACK_PAGE_TYPES
+
+    page_ar = _get_page_ar(profile)
+    log.append(f"  Formato: {profile.get('page_size','?')} {profile_orientation} → page_ar={page_ar:.3f}")
+    log.append(f"  Tipi pagina disponibili: {len(page_types)}")
+    if config:
+        log.append(f"  Config: {config}")
+    log.append("")
+
+    def _to_photo(item: dict) -> dict:
+        """Convert a layout photo item back to a Photo-compatible dict."""
+        exif = item.get("exif", {}) or {}
+        return {
+            "id":               item.get("asset_id", ""),
+            "asset_id":         item.get("asset_id", ""),
+            "exifInfo":         exif,
+            "exif":             exif,
+            "description":      item.get("description", ""),
+            "originalFileName": item.get("originalFileName", ""),
+            "localDateTime":    item.get("localDateTime", ""),
+            "has_caption":      item.get("has_caption", False),
+            "isFavorite":       item.get("isFavorite", False),
+            "_updated_at":      item.get("_updated_at", ""),
+            "_badge_date":      item.get("_badge_date", ""),
+            "_badge_location":  item.get("_badge_location", ""),
+            "badges":           item.get("badges", []),
+            "people":           [],
+            "faces":            [],
+        }
+
+    photos = [_to_photo(it) for it in photo_items if it.get("type") == "photo"]
+    log.append(f"  Foto valide (type=photo): {len(photos)}")
+    if not photos:
+        log.append("  ATTENZIONE: nessuna foto valida — ricalcolo saltato")
+        return [], "\n".join(log)
+
+    usage_counter: dict[str, int] = {}
+    transforms: dict = {}
+
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    _log.info(f"[recalc] {len(photos)} foto, {len(page_types)} tipi pagina, page_ar={page_ar:.3f}")
+    for pt in page_types[:3]:
+        _log.info(f"[recalc]   page_type '{pt.get('label')}' slots={len(pt.get('slots') or [])}")
+
+    pages, _page_logs = _make_pages_from_group(
+        photos=photos,
+        page_types=page_types,
+        usage_counter=usage_counter,
+        config=config,
+        transforms=transforms,
+        log=log,
+        group_label="recalc",
+        page_offset=0,
+        page_ar=page_ar,
+    )
+    _log.info(f"[recalc] → {len(pages)} pagine, items per pagina: {[len(p.get('items') or []) for p in pages]}")
+    log.append("")
+    log.append(f"  Pagine generate: {len(pages)}")
+    return pages, "\n".join(log)
 
