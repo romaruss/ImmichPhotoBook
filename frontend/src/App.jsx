@@ -27,7 +27,7 @@ function Shell() {
   const navigate = useNavigate()
   const location = useLocation()
   const [connected, setConnected] = useState(null)
-  const [navCollapsed, setNavCollapsed] = useState(false)
+  const [navCollapsed, setNavCollapsed] = useState(() => location.pathname.startsWith('/preview'))
   const [latestVersion, setLatestVersion] = useState(null)
   const [demoMode, setDemoMode] = useState(false)
   const [demoDismissed, setDemoDismissed] = useState(false)
@@ -47,6 +47,11 @@ function Shell() {
   }, [])
 
   const updateAvailable = latestVersion && isNewer(APP_VERSION, latestVersion)
+
+  // Auto-collapse nav when entering preview
+  useEffect(() => {
+    if (location.pathname.startsWith('/preview')) setNavCollapsed(true)
+  }, [location.pathname])
 
   const NAV = [
     { path: '/',         label: t.nav.home,       icon: '🏠' },

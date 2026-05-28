@@ -9,7 +9,7 @@
  *    stato usata/usata più volte/non usata, drag verso slot
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
@@ -1297,20 +1297,21 @@ function ensureEvenPages(pagesArr, profile) {
 }
 
 // ── CoverSpreadPage: DividerCanvas in spread with ghost toolbar for alignment ──
-function CoverSpreadPage({ coverStyle, albumInfo, profile, allPageTypes, dividerMapUrl, onClick }) {
+function CoverSpreadPage({ coverStyle, albumInfo, profile, allPageTypes, dividerMapUrl, onClick, fixedScale=null }) {
   const [pw, ph] = getPageDims(profile)
   const containerRef = useRef(null)
   const [containerW, setContainerW] = useState(570)
 
   useEffect(() => {
+    if (fixedScale != null) return
     if (!containerRef.current) return
     const ro = new ResizeObserver(([e]) => setContainerW(e.contentRect.width || 570))
     ro.observe(containerRef.current)
     return () => ro.disconnect()
-  }, [])
+  }, [fixedScale])
 
   const maxH_px = typeof window !== 'undefined' ? window.innerHeight * 0.65 : 600
-  const scale = Math.min(containerW / pw, maxH_px / ph)
+  const scale = fixedScale != null ? fixedScale : Math.min(containerW / pw, maxH_px / ph)
   const W = Math.round(pw * scale)
   const H = Math.round(ph * scale)
   // Match LayoutPickerDropdown button height: SlotPreview SVG height + padding
@@ -1376,6 +1377,7 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
                         onTransformChange, onSwapTransforms, onSlotRemoved,
                         onUpdatePage, onOpenPicker, onAddCaption,
                         onDrop, maxW=570, onPhotoClick, onAddMap, isActive=false, zoomFactor=1,
+                        fixedScale=null,
                         dividerMapUrl, assets, assetById={}, onSaveCustomLayout,
                         onRemovePermanently }) {
   const t = useT(); const tp = t.preview
@@ -1384,16 +1386,15 @@ function EditablePage({ page, pageIdx, profile, allPageTypes,
   const [containerW, setContainerW] = useState(maxW)
 
   useEffect(()=>{
+    if(fixedScale!=null) return
     if(!containerRef.current) return
     const ro = new ResizeObserver(([e])=> setContainerW(e.contentRect.width||maxW))
     ro.observe(containerRef.current)
     return ()=>ro.disconnect()
-  },[maxW])
+  },[maxW, fixedScale])
 
-  // Cap scale so portrait pages don't overflow available viewport height.
-  // 65vh leaves room for the top toolbar (~80px) and nav bar (~50px).
   const maxH_px = typeof window !== 'undefined' ? window.innerHeight * 0.65 : 600
-  const scale=Math.min(containerW/pw, maxH_px/ph) * zoomFactor
+  const scale = fixedScale != null ? fixedScale : Math.min(containerW/pw, maxH_px/ph) * zoomFactor
   const W=pw*scale, H=ph*scale
 
   const [dragFromIdx,setDragFromIdx]=useState(null)
@@ -2288,6 +2289,11 @@ export default function PreviewPage({ devTools = false }) {
   const zoomStep=0.10
   const zoomMin=0.3
   const zoomMax=2.5
+  const canvasAreaRef=useRef(null)
+  const previewMainRef=useRef(null)
+  const wheelHandlerRef=useRef(null)
+  const [pageScaleBase,setPageScaleBase]=useState(0.8)   // single-page auto-fit scale
+  const [spreadScaleBase,setSpreadScaleBase]=useState(0.6) // two-page spread auto-fit scale
   const [sidebarDrag,setSidebarDrag]=useState(null)
   const [leftSidebarOpen,setLeftSidebarOpen]=useState(true)
   const [coverEditOpen,setCoverEditOpen]=useState(false)  // false | tab-index 0-4
@@ -2405,6 +2411,80 @@ export default function PreviewPage({ devTools = false }) {
     }, 5 * 60 * 1000)
     return () => clearInterval(autoSaveTimerRef.current)
   }, [!!layout])  // restart only when layout goes null↔loaded
+
+  // Stable page dims as dep keys (safe when layout=null → defaults)
+  const _pageSize=layout?.profile?.page_size??'20x30'
+  const _orientation=layout?.profile?.orientation??'portrait'
+
+  // Shared scale computation — called from useLayoutEffect, ResizeObserver and 100% button
+  const computeScaleBases=useCallback(()=>{
+    const el=canvasAreaRef.current
+    if(!el) return
+    const rect=el.getBoundingClientRect()
+    if(!rect.width||!rect.height) return
+    const [pw,ph]=getPageDims(layout?.profile)
+    const availW=Math.max(80,rect.width-16)
+    const availH=Math.max(80,rect.height-52)
+    setPageScaleBase(Math.max(0.05,Math.min(availW/pw,availH/ph)))
+    setSpreadScaleBase(Math.max(0.05,Math.min((availW-12)/(2*pw),availH/ph)))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[_pageSize,_orientation])
+
+  // Synchronous measurement before first paint — prevents 100% flicker on load
+  useLayoutEffect(()=>{
+    computeScaleBases()
+  },[!!layout,computeScaleBases])
+
+  // ResizeObserver for window resize / sidebar collapse / panel toggle
+  useEffect(()=>{
+    const el=canvasAreaRef.current
+    if(!el) return
+    const ro=new ResizeObserver(computeScaleBases)
+    ro.observe(el)
+    return()=>ro.disconnect()
+  },[!!layout,computeScaleBases])
+
+  // Native wheel listener (passive:false required for preventDefault)
+  // Update ref each render so handler always sees latest state
+  wheelHandlerRef.current = {spreadView, layout, setCurrentPage, setViewZoom, zoomMin, zoomMax}
+  useEffect(()=>{
+    const el=previewMainRef.current
+    if(!el) return
+    const handler=e=>{
+      const {spreadView,layout,setCurrentPage,setViewZoom,zoomMin,zoomMax}=wheelHandlerRef.current
+      let node=e.target
+      while(node&&node!==el){
+        const s=window.getComputedStyle(node)
+        if(s.position==='fixed'||s.position==='sticky') return
+        const oy=s.overflowY
+        if((oy==='auto'||oy==='scroll'||oy==='overlay')&&
+           node.scrollHeight>node.clientHeight+2&&
+           ((e.deltaY>0&&node.scrollTop<node.scrollHeight-node.clientHeight-2)||
+            (e.deltaY<0&&node.scrollTop>0))) return
+        node=node.parentElement
+      }
+      e.preventDefault()
+      if(e.ctrlKey){
+        const delta=e.deltaY>0?-0.05:0.05
+        setViewZoom(z=>Math.max(zoomMin,Math.min(zoomMax,+(z+delta).toFixed(2))))
+        return
+      }
+      if(e.deltaY>0){
+        setCurrentPage(p=>{
+          if(spreadView&&p>=0&&p<(layout?.pages?.length??0)){const l=p%2===0?p-1:p;return Math.min(layout.pages.length,l+2)}
+          return Math.min((layout?.pages?.length??0),p+1)
+        })
+      } else {
+        setCurrentPage(p=>{
+          if(spreadView&&p>=0){const l=p%2===0?p-1:p;return l===1?0:Math.max(-1,l-2)}
+          return Math.max(-1,p-1)
+        })
+      }
+    }
+    el.addEventListener('wheel',handler,{passive:false})
+    return ()=>el.removeEventListener('wheel',handler)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[!!layout])
 
   // Detect aspect ratios
   useEffect(()=>{
@@ -2926,6 +3006,11 @@ export default function PreviewPage({ devTools = false }) {
   const {album,profile,pages}=layout
   const allPageTypes=profile?.page_types||[]
 
+  const [_pw,_ph]=getPageDims(profile)
+  // Cover/quarta are always single-page even when spreadView=true
+  const _isSpreadPage=spreadView&&currentPage>=0&&currentPage<pages.length
+  const pageScale=Math.max(0.05,(_isSpreadPage?spreadScaleBase:pageScaleBase)*viewZoom)
+
   return(
     <div style={{display:'flex',height:'100%',overflow:'hidden'}}>
 
@@ -3111,42 +3196,7 @@ export default function PreviewPage({ devTools = false }) {
       </div>
 
       {/* ── Main canvas ── */}
-      <div className="preview-main" style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}
-        onWheel={e=>{
-          // Yield to fixed overlays (PhotoPicker, caption toolbar, slot menu)
-          // and to scrollable elements that actually CAN scroll in this direction.
-          // The canvas div has overflow:auto but usually no overflow → pass through.
-          let el = e.target
-          while (el && el !== e.currentTarget) {
-            const s = window.getComputedStyle(el)
-            if (s.position === 'fixed' || s.position === 'sticky') return
-            const oy = s.overflowY
-            if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') &&
-                el.scrollHeight > el.clientHeight + 2 &&
-                ((e.deltaY > 0 && el.scrollTop < el.scrollHeight - el.clientHeight - 2) ||
-                 (e.deltaY < 0 && el.scrollTop > 0))) {
-              return
-            }
-            el = el.parentElement
-          }
-          e.preventDefault()
-          if(e.ctrlKey){
-            const delta=e.deltaY>0?-0.05:0.05
-            setViewZoom(z=>Math.max(zoomMin,Math.min(zoomMax,+(z+delta).toFixed(2))))
-            return
-          }
-          if(e.deltaY>0){
-            setCurrentPage(p=>{
-              if(spreadView&&p>=0&&p<layout.pages.length){const l=p%2===0?p-1:p;return Math.min(layout.pages.length,l+2)}
-              return Math.min(layout.pages.length,p+1)
-            })
-          } else {
-            setCurrentPage(p=>{
-              if(spreadView&&p>=0){const l=p%2===0?p-1:p;return l===1?0:Math.max(-1,l-2)}
-              return Math.max(-1,p-1)
-            })
-          }
-        }}>
+      <div ref={previewMainRef} className="preview-main" style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0,alignItems:'stretch',padding:0,gap:0}}>
         {/* Profile mismatch banner */}
         {profileMismatch && (
           <div style={{
@@ -3212,7 +3262,7 @@ export default function PreviewPage({ devTools = false }) {
               <button onClick={()=>setViewZoom(z=>Math.max(zoomMin,+(z-zoomStep).toFixed(2)))}
                 style={{padding:'1px 6px',border:'none',background:'transparent',cursor:'pointer',fontSize:14,color:'var(--text)',lineHeight:1}}
                 title={tp.zoomOut}>−</button>
-              <span onClick={()=>setViewZoom(1)} title={tp.resetZoom}
+              <span onClick={()=>{setViewZoom(1);computeScaleBases()}} title={tp.resetZoom}
                 style={{fontSize:10,fontFamily:'monospace',color:'var(--text2)',minWidth:34,textAlign:'center',cursor:'pointer'}}>
                 {Math.round(viewZoom*100)}%</span>
               <button onClick={()=>setViewZoom(z=>Math.min(zoomMax,+(z+zoomStep).toFixed(2)))}
@@ -3261,17 +3311,15 @@ export default function PreviewPage({ devTools = false }) {
             }} disabled={currentPage>=pages.length}>{tp.nextBtn}</button>
         </div>
 
-        {/* Canvas area — fills all remaining height, centers content */}
-        <div style={{flex:1,overflow:'auto',display:'flex',alignItems:'center',justifyContent:'center',padding:'16px 8px'}}>
+        {/* Canvas area: getBoundingClientRect (border-box) gives stable dims unaffected by scrollbars */}
+        <div ref={canvasAreaRef} style={{flex:1,overflow:'auto',display:'flex',alignItems:'flex-start',justifyContent:'flex-start',padding:'16px 8px',minHeight:0,minWidth:0}}>
 
         {(currentPage===-1||currentPage===pages.length)?(
           /* ── Copertina fronte (−1) or Quarta di copertina (pages.length) ── */
           (()=>{
             const [pw,ph] = getPageDims(layout.profile)
-            const maxH_px_cov = typeof window !== 'undefined' ? window.innerHeight * 0.65 : 600
-            const scale_cov   = Math.min(570 / pw, maxH_px_cov / ph) * viewZoom
-            const coverW  = Math.round(pw * scale_cov)
-            const coverH  = Math.round(ph * scale_cov)
+            const coverW  = Math.round(pw * pageScale)
+            const coverH  = Math.round(ph * pageScale)
             const cover   = migrateCoverConfig(layout.profile?.cover, layout.profile?.cover_style)
             const pw_mm   = pw / 2.835
             const spMm    = cover.spine_width_mm ?? calcSpineWidthMm(pages.length, layout.profile?.body_paper_gsm ?? 90)
@@ -3282,7 +3330,7 @@ export default function PreviewPage({ devTools = false }) {
             const coverStyle = isFronte ? (cover.front || DEFAULT_COVER_FRONT) : (cover.back || DEFAULT_COVER_BACK)
             const spine     = cover.spine || DEFAULT_SPINE
             return (
-              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:10}}>
+              <div style={{margin:'auto',display:'flex',flexDirection:'column',alignItems:'center',gap:10}}>
                 <div style={{display:'flex',flexDirection:'row',alignItems:'stretch',gap:0,
                   boxShadow:'0 16px 64px rgba(0,0,0,0.55)',borderRadius:2,overflow:'hidden',
                   cursor:'pointer'}}
@@ -3323,9 +3371,9 @@ export default function PreviewPage({ devTools = false }) {
             const isTerza   = rightIdx >= pages.length
             const albumInfo = { albumName:album.albumName, assetCount:album.assetCount, dateRange:album.dateRange }
             return (
-              <div style={{display:'flex',gap:12,alignItems:'flex-start',justifyContent:'center',width:'100%'}}>
+              <div style={{margin:'auto',display:'flex',gap:12,alignItems:'flex-start'}}>
                 {/* Left page */}
-                <div style={{display:'flex',flexDirection:'column',alignItems:'center',flex:1,minWidth:0}}>
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center'}}>
                   {leftPage ? (
                     <EditablePage
                       page={leftPage} pageIdx={leftIdx}
@@ -3340,7 +3388,7 @@ export default function PreviewPage({ devTools = false }) {
                       onDrop={handleDropFromPanel}
                       onPhotoClick={aid=>{ setHighlightedAsset(aid); if(!panelOpen) setPanelOpen(true) }}
                       onAddMap={addMapToSlot}
-                      isActive={currentPage===leftIdx} zoomFactor={viewZoom}
+                      isActive={currentPage===leftIdx} zoomFactor={viewZoom} fixedScale={pageScale}
                       dividerMapUrl={dividerMapUrls[leftIdx]}
                       assets={allAlbumAssets[leftPage?._album_idx??0]??albumAssets}
                       assetById={assetById}
@@ -3352,6 +3400,7 @@ export default function PreviewPage({ devTools = false }) {
                       albumInfo={albumInfo}
                       profile={profile} allPageTypes={allPageTypes}
                       dividerMapUrl={mapUrl}
+                      fixedScale={pageScale}
                       onClick={()=>setCoverEditOpen(1)}/>
                   )}
                   {leftPage
@@ -3359,7 +3408,7 @@ export default function PreviewPage({ devTools = false }) {
                     : <><p className="text-xs text-muted mt-1">{tp.coverSeconda}</p><p className="text-xs text-muted">{tp.coverClickToEdit}</p></>}
                 </div>
                 {/* Right page */}
-                <div style={{display:'flex',flexDirection:'column',alignItems:'center',flex:1,minWidth:0}}>
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center'}}>
                   {rightPage ? (
                     <EditablePage
                       page={rightPage} pageIdx={rightIdx}
@@ -3374,7 +3423,7 @@ export default function PreviewPage({ devTools = false }) {
                       onDrop={handleDropFromPanel}
                       onPhotoClick={aid=>{ setHighlightedAsset(aid); if(!panelOpen) setPanelOpen(true) }}
                       onAddMap={addMapToSlot}
-                      isActive={currentPage===rightIdx} zoomFactor={viewZoom}
+                      isActive={currentPage===rightIdx} zoomFactor={viewZoom} fixedScale={pageScale}
                       dividerMapUrl={dividerMapUrls[rightIdx]}
                       assets={allAlbumAssets[rightPage?._album_idx??0]??albumAssets}
                       assetById={assetById}
@@ -3386,6 +3435,7 @@ export default function PreviewPage({ devTools = false }) {
                       albumInfo={albumInfo}
                       profile={profile} allPageTypes={allPageTypes}
                       dividerMapUrl={mapUrl}
+                      fixedScale={pageScale}
                       onClick={()=>setCoverEditOpen(2)}/>
                   )}
                   {rightPage
@@ -3396,6 +3446,7 @@ export default function PreviewPage({ devTools = false }) {
             )
           })()
         ):(
+          <div style={{margin:'auto',width:Math.round(_pw*pageScale)}}>
           <EditablePage
             page={pages[currentPage]}
             pageIdx={currentPage}
@@ -3413,13 +3464,14 @@ export default function PreviewPage({ devTools = false }) {
             onDrop={handleDropFromPanel}
             onPhotoClick={aid=>{ setHighlightedAsset(aid); if(!panelOpen) setPanelOpen(true) }}
             onAddMap={addMapToSlot}
-            isActive={true} zoomFactor={viewZoom}
+            isActive={true} zoomFactor={viewZoom} fixedScale={pageScale}
             dividerMapUrl={dividerMapUrls[currentPage]}
             assets={allAlbumAssets[pages[currentPage]?._album_idx??0]??albumAssets}
             assetById={assetById}
             onSaveCustomLayout={saveCustomLayout}
             onRemovePermanently={removePermanently}
           />
+          </div>
         )}
         </div>{/* end canvas area */}
       </div>
