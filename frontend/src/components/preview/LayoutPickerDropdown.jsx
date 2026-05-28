@@ -48,6 +48,7 @@ export default function LayoutPickerDropdown({ allPageTypes, currentId, profile,
 
       {open && (
         <div
+          data-no-page-nav="1"
           onWheel={e=>e.stopPropagation()}
           style={{
           position:'absolute', top:'100%', left:0, zIndex:9200,
@@ -56,6 +57,7 @@ export default function LayoutPickerDropdown({ allPageTypes, currentId, profile,
           height:360, minHeight:120, maxHeight:'70vh',
           overflowY:'auto', minWidth:200, marginTop:2,
           resize:'vertical',
+          overscrollBehavior:'contain',
         }}>
           {allPageTypes.map(pt => (
             <div key={pt.id}

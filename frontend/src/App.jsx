@@ -40,9 +40,18 @@ function Shell() {
   }, [])
 
   useEffect(() => {
-    fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`)
+    fetch(`https://api.github.com/repos/${GITHUB_REPO}/tags`)
       .then(r => r.json())
-      .then(d => { const tag = (d.tag_name || '').replace(/^v/, ''); if (tag) setLatestVersion(tag) })
+      .then(d => {
+        if (!Array.isArray(d) || !d.length) return
+        const tags = d.map(t => (t.name||'').replace(/^v/,'')).filter(Boolean)
+        const latest = tags.sort((a,b) => {
+          const av = a.split('.').map(Number), bv = b.split('.').map(Number)
+          for (let i=0;i<3;i++) { if ((bv[i]||0)!==(av[i]||0)) return (bv[i]||0)-(av[i]||0) }
+          return 0
+        })[0]
+        if (latest) setLatestVersion(latest)
+      })
       .catch(() => {})
   }, [])
 

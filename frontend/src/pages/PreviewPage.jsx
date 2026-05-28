@@ -220,6 +220,7 @@ export default function PreviewPage({ devTools = false }) {
       const {spreadView,layout,setCurrentPage,setViewZoom,zoomMin,zoomMax}=wheelHandlerRef.current
       let node=e.target
       while(node&&node!==el){
+        if(node.dataset?.noPageNav) return
         const s=window.getComputedStyle(node)
         if(s.position==='fixed'||s.position==='sticky') return
         const oy=s.overflowY
