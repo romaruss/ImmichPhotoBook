@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import config_loader
-import immich_client as ic
+import source_router as ic
 from layout_engine import (build_flow, generate_layout, extract_gps_locations,
                            default_slot_grid, rebuild_flow_from_photos)
 from smart_layout import smart_generate_layout, smart_extract_gps, apply_config, _DEFAULTS as SMART_DEFAULTS
@@ -234,9 +234,11 @@ async def auth_status():
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 
 class ConfigModel(BaseModel):
-    immich_url: str
-    api_key: str
+    immich_url: str = ""
+    api_key: str = ""
     stadia_api_key: str = ""
+    source_type: str = "immich"
+    local_photos_path: str = ""
 
 def _mask_key(key: str) -> str:
     if not key:
@@ -280,7 +282,9 @@ async def save_config(cfg: ConfigModel):
 @app.get("/api/config/test")
 async def test_config():
     ok = await ic.test_connection()
-    return {"connected": ok, "demo": _DEMO_MODE, "dev_tools": _DEV_TOOLS}
+    cfg = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
+    return {"connected": ok, "demo": _DEMO_MODE, "dev_tools": _DEV_TOOLS,
+            "source_type": cfg.get("source_type", "immich")}
 
 CUSTOM_SIZES_PATH = DATA_DIR / "custom_sizes.json"
 

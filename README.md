@@ -2,7 +2,7 @@
 
 # 📖 PhotoBook Studio
 
-**Self-hosted web app for creating print-ready photobooks from your Immich library**
+**Self-hosted web app for creating print-ready photobooks from your photo library**
 
 [![ghcr.io](https://img.shields.io/badge/ghcr.io-romaruss%2FImmichPhotoBook-2496ED?logo=docker&logoColor=white)](https://github.com/romaruss/ImmichPhotoBook/pkgs/container/immichphotobook)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://python.org)
@@ -22,7 +22,7 @@
 
 ## How it works
 
-PhotoBook Studio connects to your [Immich](https://immich.app) instance, reads your albums and photo metadata (GPS, descriptions, faces), and lets you compose a photobook through an interactive browser-based editor. When you're done, it exports a print-ready PDF or an editable SVG ZIP.
+PhotoBook Studio reads your photos from [Immich](https://immich.app) or a local folder, and lets you compose a photobook through an interactive browser-based editor. It uses photo metadata (GPS, EXIF, descriptions, faces) to auto-generate smart layouts. When done, it exports a print-ready PDF or an editable SVG ZIP.
 
 ```
 Configuration → Print profile → Generate layout → Edit preview → Export PDF / SVG
@@ -32,29 +32,22 @@ Configuration → Print profile → Generate layout → Edit preview → Export 
 
 ## Main features
 
-- **Immich integration** — albums, EXIF, GPS, faces, descriptions, favourites; caption sync back to Immich
-- **Smart Layout** — automatic grouping by time/event, face-aware crop, GPS cluster maps
-- **Photo badges** — configurable date/location overlay on each photo, removable per-photo in preview
-- **Event caption pages** — auto-fills a caption slot on the first page of each detected event with date range and GPS location
+- **Dual photo source** — connect to Immich (albums, faces, GPS, favourites) or use a local folder
+- **Smart layout** — automatic grouping by time/event, face-aware crop, GPS cluster maps
+- **Photo badges** — configurable date/location overlay per photo
+- **Event caption pages** — auto-fills caption slot per event with date range and GPS location
 - **Print profiles** — A4/A3/A5/20×20/30×30/custom, portrait/landscape, margins, bleed; preset save/load
 - **Page type editor** — drag-to-resize slots, snap, 50 built-in layouts
-- **Interactive preview** — swap/pan/zoom photos, inline captions, 2-page spread, add/remove pages, recalculate layout from current photos
+- **Interactive preview** — swap/pan/zoom photos, inline captions, 2-page spread, add/remove/reorder pages
 - **Cover & dividers** — front/back/spine editor, album dividers with GPS map and photo slots
 - **GPS maps** — Stadia Maps or OpenStreetMap fallback
 - **Export** — PDF (DPI 150–600, colour profiles, crop marks) or SVG ZIP
 - **Projects** — save and resume named projects
-- **Advanced config** — all algorithm parameters editable from the UI without restart
 - **Localisation** — Italian and English
 
 ---
 
 ## Installation
-
-### Prerequisites
-
-- Docker and Docker Compose
-- A running [Immich](https://immich.app) instance (v1.91+)
-- Immich API key with: **Asset: Read**, **Asset: View**, **Asset: Update**, **Album: Read**, **Person: Read**
 
 ### Option A — Pre-built image (recommended)
 
@@ -101,13 +94,22 @@ Then use `http://immich_server:2283` as the Immich URL in Configuration.
 
 Persistent data is stored in a Docker volume mounted at `/data` inside the container.
 
+### Using a local folder as photo source
+
+In Configuration, switch source to **Local folder** and set the path (default `/data/local_photos`). Each subfolder becomes an album. Mount your photos into the container via the compose file:
+
+```yaml
+volumes:
+  - /your/photos:/data/local_photos:ro
+```
+
 ---
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---|---|
-| Not connected | Check Immich URL and API key in Configuration |
+| Not connected to Immich | Check URL and API key in Configuration |
 | Albums not loading | Verify Immich is reachable from the container |
 | Caption sync fails (403) | API key needs Asset: Update permission |
 | Map not showing | No GPS data in photos, or no internet access for tiles |

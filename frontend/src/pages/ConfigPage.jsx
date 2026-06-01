@@ -5,7 +5,7 @@ import { useT, useLang, LOCALES } from '../i18n.jsx'
 export default function ConfigPage() {
   const t = useT()
   const { lang, setLang } = useLang()
-  const [cfg, setCfg]     = useState({ immich_url: '', api_key: '', stadia_api_key: '' })
+  const [cfg, setCfg]     = useState({ immich_url: '', api_key: '', stadia_api_key: '', source_type: 'immich', local_photos_path: '' })
   const [saving, setSaving]   = useState(false)
   const [testing, setTesting] = useState(false)
   const [status, setStatus]   = useState(null)
@@ -67,6 +67,39 @@ export default function ConfigPage() {
         </div>
 
         <div className="card">
+          <div className="card-title">{t.config.sourceTitle}</div>
+          <p className="text-xs text-muted" style={{ marginBottom: 12 }}>{t.config.sourceHint}</p>
+          <div style={{ display: 'flex', gap: 10 }}>
+            {[
+              { value: 'immich', label: t.config.sourceImmich, icon: '☁️' },
+              { value: 'local',  label: t.config.sourceLocal,  icon: '📁' },
+            ].map(opt => (
+              <button key={opt.value}
+                className={`btn${cfg.source_type === opt.value ? ' btn-primary' : ''}`}
+                onClick={() => setCfg(p => ({ ...p, source_type: opt.value }))}
+                style={{ flex: 1 }}>
+                {opt.icon} {opt.label}
+              </button>
+            ))}
+          </div>
+          {cfg.source_type === 'local' && (
+            <div className="form-group" style={{ marginTop: 16 }}>
+              <label className="form-label">{t.config.localPathLabel}</label>
+              <input className="form-input"
+                placeholder={t.config.localPathPlaceholder}
+                value={cfg.local_photos_path || ''}
+                onChange={e => setCfg(p => ({ ...p, local_photos_path: e.target.value }))}/>
+              <p className="text-xs text-muted mt-1">{t.config.localPathHint}</p>
+            </div>
+          )}
+          <div className="flex gap-2" style={{ marginTop: 16 }}>
+            <button className="btn btn-primary" onClick={save} disabled={saving}>
+              {saving ? <span className="spinner"/> : '💾'} {t.config.save}
+            </button>
+          </div>
+        </div>
+
+        <div className="card" style={cfg.source_type === 'local' ? { opacity: 0.45, pointerEvents: 'none' } : {}}>
           <div className="card-title">{t.config.cardTitle}</div>
           <div className="form-group">
             <label className="form-label">{t.config.urlLabel}</label>

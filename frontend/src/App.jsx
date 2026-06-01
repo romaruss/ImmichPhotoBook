@@ -1,4 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, createContext, useContext } from 'react'
+
+export const SourceContext = createContext('immich')
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import axios from 'axios'
 import { useT } from './i18n.jsx'
@@ -32,10 +34,16 @@ function Shell() {
   const [demoMode, setDemoMode] = useState(false)
   const [demoDismissed, setDemoDismissed] = useState(false)
   const [devTools, setDevTools] = useState(false)
+  const [sourceType, setSourceType] = useState('immich')
 
   useEffect(() => {
     axios.get('/api/config/test')
-      .then(r => { setConnected(r.data.connected); setDemoMode(!!r.data.demo); setDevTools(!!r.data.dev_tools) })
+      .then(r => {
+        setConnected(r.data.connected)
+        setDemoMode(!!r.data.demo)
+        setDevTools(!!r.data.dev_tools)
+        setSourceType(r.data.source_type || 'immich')
+      })
       .catch(() => setConnected(false))
   }, [])
 
@@ -131,7 +139,7 @@ function Shell() {
             <div className="sidebar-conn">
               <span className={`conn-dot${connected === true ? ' ok' : connected === false ? ' err' : ''}`}/>
               {connected === true
-                ? t.connection.connected
+                ? (sourceType === 'local' ? t.connection.connectedLocal : t.connection.connected)
                 : connected === false
                 ? t.connection.disconnected
                 : t.connection.checking}
@@ -153,6 +161,7 @@ function Shell() {
         )}
       </aside>
       <main className="main-content">
+        <SourceContext.Provider value={sourceType}>
         {demoMode && !demoDismissed && (
           <div style={{
             background: 'rgba(212,170,90,0.12)', borderBottom: '1px solid rgba(212,170,90,0.35)',
@@ -181,6 +190,7 @@ function Shell() {
           <Route path="/preview"  element={<PreviewPage devTools={devTools} />} />
           <Route path="/deep-config" element={<DeepConfigPage />} />
         </Routes>
+        </SourceContext.Provider>
       </main>
     </div>
   )

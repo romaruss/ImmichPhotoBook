@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useContext } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import axios from 'axios'
 import { useT } from '../i18n.jsx'
 import { migrateDividerStyle } from '../components/DividerEditor'
+import { SourceContext } from '../App'
 
 // ── Default config ─────────────────────────────────────────────────────────────
 const DEFAULTS = {
@@ -79,6 +80,8 @@ function SliderInput({ value, onChange, label, help, min, max, step, unit, disab
 // ── Config modal ───────────────────────────────────────────────────────────────
 function ConfigModal({ config, onChange, onClose, stadiaKeySet }) {
   const a = useT().albums
+  const sourceType = useContext(SourceContext)
+  const isLocal = sourceType === 'local'
   const [local, setLocal]               = useState({ ...config })
   const [presets, setPresets]           = useState(loadPresets)
   const [selectedPresetId, setSelectedPresetId] = useState('')
@@ -125,12 +128,17 @@ function ConfigModal({ config, onChange, onClose, stadiaKeySet }) {
       paddingBottom:5, borderBottom:'1px solid var(--border)' }}>{title}</p>
   )
 
-  const Toggle = ({ k, label, help, disabled }) => (
-    <div style={{ marginBottom:12, opacity:disabled?0.4:1 }}>
+  const Toggle = ({ k, label, help, disabled, disabledReason }) => (
+    <div style={{ marginBottom:12, opacity:disabled?0.4:1 }} title={disabled && disabledReason ? disabledReason : undefined}>
       <div style={{ display:'flex', alignItems:'center', gap:12 }}>
         <label style={{ fontSize:13, color:'var(--text)', flex:1, cursor:disabled?'not-allowed':'pointer' }}
           onClick={() => !disabled && set(k, !local[k])}>
           {label}
+          {disabled && disabledReason && (
+            <span style={{ marginLeft:6, fontSize:10, color:'var(--text3)', fontStyle:'italic' }}>
+              ⓘ
+            </span>
+          )}
         </label>
         <div onClick={() => !disabled && set(k, !local[k])}
           style={{
@@ -149,6 +157,9 @@ function ConfigModal({ config, onChange, onClose, stadiaKeySet }) {
         </div>
       </div>
       {help && <p style={{ fontSize:11, color:'var(--text3)', marginTop:3, lineHeight:1.5 }}>{help}</p>}
+      {disabled && disabledReason && (
+        <p style={{ fontSize:10, color:'var(--text3)', marginTop:2, fontStyle:'italic' }}>{disabledReason}</p>
+      )}
     </div>
   )
 
@@ -266,12 +277,16 @@ function ConfigModal({ config, onChange, onClose, stadiaKeySet }) {
           {/* Favorites */}
           <Section title={a.sectionFavorites}/>
           <Toggle k="favorites_full_page" label={a.cfgFavLabel}
-            help={a.cfgFavHelp}/>
+            help={a.cfgFavHelp}
+            disabled={isLocal}
+            disabledReason={isLocal ? a.immichOnlyTooltip : undefined}/>
 
           {/* Face crop */}
           <Section title={a.sectionFaceCrop}/>
           <Toggle k="face_crop" label={a.cfgFaceLabel}
-            help={a.cfgFaceHelp}/>
+            help={a.cfgFaceHelp}
+            disabled={isLocal}
+            disabledReason={isLocal ? a.immichOnlyTooltip : undefined}/>
 
           {/* Quality filter */}
           <Section title={a.sectionQuality}/>
